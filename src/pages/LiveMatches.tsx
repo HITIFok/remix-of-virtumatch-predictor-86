@@ -7,13 +7,15 @@ import { supabase } from "@/integrations/supabase/client";
 import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
+import { RankingTable, ResultsList } from "@/components/LeagueData";
 import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap, Wifi, WifiOff,
-  Shield, Swords, Target, TrendingUp, AlertTriangle
+  Shield, Swords, Target, AlertTriangle, MapPin, BarChart3, ListOrdered
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ScrapedMatch } from "@/lib/types";
 
 function MatchCard({
@@ -39,29 +41,19 @@ function MatchCard({
 
   return (
     <div className="bg-gradient-card rounded-xl border border-border overflow-hidden shadow-card">
-      {/* Match header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
         <span className={`text-[10px] font-display tracking-wider ${statusColor}`}>
           {statusLabel}
         </span>
-        {match.stats && (
-          <div className="flex items-center gap-1">
-            {match.stats.system && (
-              <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-fire/30 text-fire">
-                {match.stats.system === "attack" ? (
-                  <><Swords size={10} className="mr-0.5" />ATK</>
-                ) : match.stats.system === "defensive" ? (
-                  <><Shield size={10} className="mr-0.5" />DEF</>
-                ) : (
-                  <><Target size={10} className="mr-0.5" />{match.stats.system}</>
-                )}
-              </Badge>
-            )}
-          </div>
+        {match.stats?.system && (
+          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-fire/30 text-fire">
+            {match.stats.system === "attack" ? <><Swords size={10} className="mr-0.5" />ATK</> :
+             match.stats.system === "defensive" ? <><Shield size={10} className="mr-0.5" />DEF</> :
+             <><Target size={10} className="mr-0.5" />{match.stats.system}</>}
+          </Badge>
         )}
       </div>
 
-      {/* Teams & Score */}
       <div className="px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex-1">
@@ -82,7 +74,6 @@ function MatchCard({
         </div>
       </div>
 
-      {/* Odds */}
       {match.oddHome > 0 && (
         <div className="grid grid-cols-3 gap-px bg-border/30 mx-3 mb-3 rounded-lg overflow-hidden">
           <div className="bg-muted/50 text-center py-1.5">
@@ -100,35 +91,6 @@ function MatchCard({
         </div>
       )}
 
-      {/* Stats if available */}
-      {match.stats && Object.keys(match.stats).length > 0 && (
-        <div className="px-3 pb-2">
-          <div className="flex flex-wrap gap-1">
-            {match.stats.possession && (
-              <Badge variant="secondary" className="text-[9px]">
-                Poss: {match.stats.possession}
-              </Badge>
-            )}
-            {match.stats.shots && (
-              <Badge variant="secondary" className="text-[9px]">
-                Tirs: {match.stats.shots}
-              </Badge>
-            )}
-            {match.stats.corners && (
-              <Badge variant="secondary" className="text-[9px]">
-                Corners: {match.stats.corners}
-              </Badge>
-            )}
-            {match.stats.cards && (
-              <Badge variant="secondary" className="text-[9px]">
-                Cartons: {match.stats.cards}
-              </Badge>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Predict button (Premium only) */}
       <div className="px-3 pb-3">
         {hasPremium ? (
           <Button
@@ -157,9 +119,12 @@ function MatchCard({
 export default function LiveMatches() {
   const {
     matchesByLeague,
+    results,
+    ranking,
     loading,
     lastUpdate,
     error,
+    geoBlocked,
     fetchMatches,
     startAutoRefresh,
     stopAutoRefresh,
@@ -168,6 +133,7 @@ export default function LiveMatches() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
+  const [activeTab, setActiveTab] = useState("matches");
 
   useEffect(() => {
     fetchMatches();
@@ -199,13 +165,11 @@ export default function LiveMatches() {
         oddAway: match.oddAway,
       };
 
-      // Call AI
       const { data, error: fnError } = await supabase.functions.invoke("analyze-match", {
         body: { matches: [matchInput] },
       });
 
       let aiPrediction: AIPrediction | undefined;
-
       if (!fnError && data?.predictions?.[0]) {
         aiPrediction = data.predictions[0];
       }
@@ -214,7 +178,7 @@ export default function LiveMatches() {
       await saveToHistory(result);
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
       toast.success("Prédiction générée 🔥");
-    } catch (err) {
+    } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
       setPredictingId(null);
@@ -233,7 +197,7 @@ export default function LiveMatches() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-display text-sm text-foreground tracking-wider">
-              Matchs en Direct
+              Instant League
             </h2>
             {lastUpdate && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -264,15 +228,23 @@ export default function LiveMatches() {
         </div>
 
         {/* Stats bar */}
-        {totalMatches > 0 && (
+        {(totalMatches > 0 || results.length > 0 || ranking.length > 0) && (
           <div className="flex items-center gap-2 mb-4 flex-wrap">
-            <Badge variant="secondary" className="text-[10px] font-display">
-              <Trophy size={10} className="mr-1" />
-              {leagues.length} Ligues
-            </Badge>
-            <Badge variant="secondary" className="text-[10px] font-display">
-              ⚽ {totalMatches} Matchs
-            </Badge>
+            {totalMatches > 0 && (
+              <Badge variant="secondary" className="text-[10px] font-display">
+                ⚽ {totalMatches} Matchs
+              </Badge>
+            )}
+            {results.length > 0 && (
+              <Badge variant="secondary" className="text-[10px] font-display">
+                📊 {results.length} Résultats
+              </Badge>
+            )}
+            {ranking.length > 0 && (
+              <Badge variant="secondary" className="text-[10px] font-display">
+                🏆 {ranking.length} Équipes
+              </Badge>
+            )}
             {autoRefresh && (
               <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30">
                 🔄 Auto 2min
@@ -281,81 +253,135 @@ export default function LiveMatches() {
           </div>
         )}
 
+        {/* Geo-blocked warning */}
+        {geoBlocked && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-4">
+            <div className="flex items-center gap-2">
+              <MapPin size={14} className="text-amber-500" />
+              <span className="text-xs text-amber-500 font-display">
+                Site accessible uniquement depuis Madagascar
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Error state */}
-        {error && (
+        {error && !geoBlocked && (
           <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 mb-4">
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} className="text-destructive" />
               <span className="text-xs text-destructive">{error}</span>
             </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => fetchMatches()}
-              className="mt-2 text-xs"
-            >
+            <Button size="sm" variant="outline" onClick={() => fetchMatches()} className="mt-2 text-xs">
               Réessayer
             </Button>
           </div>
         )}
 
         {/* Loading state */}
-        {loading && totalMatches === 0 && (
+        {loading && totalMatches === 0 && results.length === 0 && ranking.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-12">
             <Loader2 size={32} className="text-fire animate-spin" />
             <p className="text-sm text-muted-foreground font-display tracking-wider">
-              Récupération des matchs...
+              Récupération des données...
             </p>
             <p className="text-[10px] text-muted-foreground">
-              Scraping bet261.mg/virtual via Firecrawl
+              Scraping Instant League via Firecrawl
             </p>
           </div>
         )}
 
-        {/* Matches by league */}
-        {leagues.length > 0 && (
-          <div className="space-y-6">
-            {leagues.map(league => (
-              <div key={league}>
-                <div className="flex items-center gap-2 mb-3">
-                  <Trophy size={14} className="text-gold" />
-                  <h3 className="font-display text-xs text-gold tracking-widest uppercase">{league}</h3>
-                  <Badge variant="outline" className="text-[9px] border-gold/30 text-gold">
-                    {matchesByLeague[league].length}
-                  </Badge>
-                </div>
-                <div className="space-y-3">
-                  {matchesByLeague[league].map((match, idx) => {
-                    const matchKey = `${match.home}-${match.away}`;
-                    const prediction = predictions[matchKey];
-                    return (
-                      <div key={`${league}-${idx}`}>
-                        <MatchCard
-                          match={match}
-                          onPredict={handlePredict}
-                          predicting={predictingId === matchKey}
-                        />
-                        {prediction && (
-                          <div className="mt-2">
-                            <ResultCard result={prediction} />
-                          </div>
-                        )}
+        {/* Tabs: Matches / Results / Ranking */}
+        {!loading && (totalMatches > 0 || results.length > 0 || ranking.length > 0) && (
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <TabsList className="w-full grid grid-cols-3 mb-4">
+              <TabsTrigger value="matches" className="text-xs font-display gap-1">
+                <Swords size={12} /> Matchs
+              </TabsTrigger>
+              <TabsTrigger value="results" className="text-xs font-display gap-1">
+                <BarChart3 size={12} /> Résultats
+              </TabsTrigger>
+              <TabsTrigger value="ranking" className="text-xs font-display gap-1">
+                <ListOrdered size={12} /> Classement
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="matches">
+              {leagues.length > 0 ? (
+                <div className="space-y-6">
+                  {leagues.map(league => (
+                    <div key={league}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Trophy size={14} className="text-gold" />
+                        <h3 className="font-display text-xs text-gold tracking-widest uppercase">{league}</h3>
+                        <Badge variant="outline" className="text-[9px] border-gold/30 text-gold">
+                          {matchesByLeague[league].length}
+                        </Badge>
                       </div>
-                    );
-                  })}
+                      <div className="space-y-3">
+                        {matchesByLeague[league].map((match, idx) => {
+                          const matchKey = `${match.home}-${match.away}`;
+                          const prediction = predictions[matchKey];
+                          return (
+                            <div key={`${league}-${idx}`}>
+                              <MatchCard
+                                match={match}
+                                onPredict={handlePredict}
+                                predicting={predictingId === matchKey}
+                              />
+                              {prediction && (
+                                <div className="mt-2">
+                                  <ResultCard result={prediction} />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </div>
+              ) : (
+                <div className="text-center py-8">
+                  <Swords size={32} className="mx-auto text-muted-foreground/30 mb-2" />
+                  <p className="text-xs text-muted-foreground font-display">Aucun match en cours</p>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="results">
+              {results.length > 0 ? (
+                <ResultsList results={results} />
+              ) : (
+                <div className="text-center py-8">
+                  <BarChart3 size={32} className="mx-auto text-muted-foreground/30 mb-2" />
+                  <p className="text-xs text-muted-foreground font-display">Aucun résultat disponible</p>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="ranking">
+              {ranking.length > 0 ? (
+                <div className="bg-gradient-card rounded-xl border border-border overflow-hidden p-3">
+                  <RankingTable ranking={ranking} />
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <ListOrdered size={32} className="mx-auto text-muted-foreground/30 mb-2" />
+                  <p className="text-xs text-muted-foreground font-display">Aucun classement disponible</p>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
         )}
 
         {/* Empty state */}
-        {!loading && totalMatches === 0 && !error && (
+        {!loading && totalMatches === 0 && results.length === 0 && ranking.length === 0 && !error && (
           <div className="text-center py-12">
             <Trophy size={40} className="mx-auto text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground font-display">Aucun match trouvé</p>
+            <p className="text-sm text-muted-foreground font-display">Aucune donnée trouvée</p>
             <p className="text-[10px] text-muted-foreground mt-1">
-              Cliquez sur Rafraîchir pour récupérer les matchs
+              Cliquez sur Rafraîchir pour récupérer les données
             </p>
           </div>
         )}
