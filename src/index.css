@@ -1,0 +1,152 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 6%;
+    --foreground: 210 20% 92%;
+
+    --card: 220 18% 10%;
+    --card-foreground: 210 20% 92%;
+
+    --popover: 220 18% 10%;
+    --popover-foreground: 210 20% 92%;
+
+    --primary: 18 95% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 200 80% 50%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 220 15% 15%;
+    --muted-foreground: 215 15% 55%;
+
+    --accent: 200 80% 50%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 15% 18%;
+    --input: 220 15% 18%;
+    --ring: 18 95% 55%;
+
+    --radius: 0.75rem;
+
+    --fire: 18 95% 55%;
+    --fire-glow: 30 100% 60%;
+    --ice: 200 80% 50%;
+    --ice-glow: 190 90% 65%;
+    --gold: 45 100% 55%;
+    --success: 145 70% 45%;
+
+    --gradient-fire: linear-gradient(135deg, hsl(18 95% 55%), hsl(30 100% 60%));
+    --gradient-ice: linear-gradient(135deg, hsl(200 80% 50%), hsl(190 90% 65%));
+    --gradient-premium: linear-gradient(135deg, hsl(45 100% 55%), hsl(30 100% 60%));
+    --gradient-card: linear-gradient(145deg, hsl(220 18% 12%), hsl(220 18% 8%));
+
+    --shadow-fire: 0 0 20px hsl(18 95% 55% / 0.3);
+    --shadow-ice: 0 0 20px hsl(200 80% 50% / 0.3);
+    --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.4);
+
+    --font-display: 'Orbitron', sans-serif;
+    --font-body: 'Inter', sans-serif;
+
+    --sidebar-background: 220 18% 8%;
+    --sidebar-foreground: 210 20% 92%;
+    --sidebar-primary: 18 95% 55%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 15% 15%;
+    --sidebar-accent-foreground: 210 20% 92%;
+    --sidebar-border: 220 15% 18%;
+    --sidebar-ring: 18 95% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-display);
+  }
+}
+
+@layer utilities {
+  .text-gradient-fire {
+    background: var(--gradient-fire);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .text-gradient-ice {
+    background: var(--gradient-ice);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .text-gradient-premium {
+    background: var(--gradient-premium);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .bg-gradient-fire {
+    background: var(--gradient-fire);
+  }
+  .bg-gradient-ice {
+    background: var(--gradient-ice);
+  }
+  .bg-gradient-premium {
+    background: var(--gradient-premium);
+  }
+  .bg-gradient-card {
+    background: var(--gradient-card);
+  }
+  .shadow-fire {
+    box-shadow: var(--shadow-fire);
+  }
+  .shadow-ice {
+    box-shadow: var(--shadow-ice);
+  }
+  .shadow-card {
+    box-shadow: var(--shadow-card);
+  }
+  .glow-fire {
+    filter: drop-shadow(0 0 8px hsl(18 95% 55% / 0.5));
+  }
+  .glow-ice {
+    filter: drop-shadow(0 0 8px hsl(200 80% 50% / 0.5));
+  }
+
+  .glass {
+    background: hsl(220 18% 10% / 0.7);
+    backdrop-filter: blur(12px);
+    border: 1px solid hsl(220 15% 20% / 0.5);
+  }
+
+  @keyframes pulse-fire {
+    0%, 100% { box-shadow: 0 0 10px hsl(18 95% 55% / 0.3); }
+    50% { box-shadow: 0 0 25px hsl(18 95% 55% / 0.6); }
+  }
+  .animate-pulse-fire {
+    animation: pulse-fire 2s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .animate-shimmer {
+    background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.05), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+}
