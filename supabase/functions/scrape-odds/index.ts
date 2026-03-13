@@ -1,169 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
-
-// Try Firecrawl first, then ScraperAPI as fallback for geo-restricted sites
-async function scrapeWithFirecrawl(targetUrl: string): Promise<{ markdown: string; html: string; blocked: boolean }> {
-  const apiKey = Deno.env.get("FIRECRAWL_API_KEY");
-  if (!apiKey) return { markdown: "", html: "", blocked: true };
-
-  console.log("[Firecrawl] Scraping:", targetUrl);
-  const response = await fetch("https://api.firecrawl.dev/v1/scrape", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      url: targetUrl,
-      formats: ["markdown", "html"],
-      onlyMainContent: false,
-      waitFor: 12000,
-      location: { country: "MG", languages: ["fr"] },
-    }),
-  });
-
-  const data = await response.json();
-  if (!response.ok) {
-    console.error("[Firecrawl] Error:", data);
-    return { markdown: "", html: "", blocked: true };
-  }
-
-  const markdown = data.data?.markdown || data.markdown || "";
-  const html = data.data?.html || data.html || "";
-
-  if (markdown.includes("ACCESS FORBIDDEN") || html.includes("ACCESS FORBIDDEN") || markdown.length < 100) {
-    console.log("[Firecrawl] Geo-blocked or insufficient content");
-    return { markdown, html, blocked: true };
-  }
-
-  return { markdown, html, blocked: false };
-}
-
-async function scrapeWithScraperAPI(targetUrl: string): Promise<{ markdown: string; html: string; blocked: boolean }> {
-  const apiKey = Deno.env.get("SCRAPER_API_KEY");
-  if (!apiKey) {
-    console.log("[ScraperAPI] No API key configured");
-    return { markdown: "", html: "", blocked: true };
-  }
-
-  // Try premium residential proxy first, then standard
-  const configs = [
-    { label: "premium+MG", params: `&country_code=mg&premium=true&render=true&wait_for_selector=.match,.tab-picker&session_number=123` },
-    { label: "ultra-premium+MG", params: `&country_code=mg&ultra_premium=true&render=true&session_number=456` },
-    { label: "render-only", params: `&render=true&wait_for_selector=.match,.tab-picker&session_number=789` },
-  ];
-
-  for (const config of configs) {
-    console.log(`[ScraperAPI] Trying ${config.label}:`, targetUrl);
-    const scraperUrl = `https://api.scraperapi.com/?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}${config.params}`;
-
-    try {
-      const resp = await fetch(scraperUrl, { headers: { "Accept": "text/html" } });
-
-      if (!resp.ok) {
-        console.log(`[ScraperAPI] ${config.label} failed: ${resp.status}`);
-        continue;
-      }
-
-      const html = await resp.text();
-      console.log(`[ScraperAPI] ${config.label} got HTML length:`, html.length);
-
-      if (html.includes("ACCESS FORBIDDEN") || html.length < 200) {
-        console.log(`[ScraperAPI] ${config.label} geo-blocked or empty`);
-        continue;
-      }
-
-      return { markdown: "", html, blocked: false };
-    } catch (e) {
-      console.error(`[ScraperAPI] ${config.label} error:`, e);
-      continue;
-    }
-  }
-
-  return { markdown: "", html: "", blocked: true };
-}
-
-async function parseWithAI(markdown: string, html: string) {
-  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-  if (!LOVABLE_API_KEY) return { matches: [], results: [], ranking: [] };
-
-  const content = markdown.length > 500 ? markdown : html;
-  if (content.length < 100) return { matches: [], results: [], ranking: [] };
-
-  const parsePrompt = `Analyse ce contenu HTML/Markdown d'un site de paris virtuels (bet261.mg - Instant League).
-
-Le site utilise ces composants Angular :
-- "hg-instant-league-matches .match" pour les matchs à venir
-- "hg-instant-league-ranking table" pour le classement
-- "div.tab-picker" avec onglets Résultats/Classement/Matchs
-
-Extrais TOUTES les données structurées en 3 catégories :
-
-## 1. MATCHES (matchs à venir ou en cours)
-Pour chaque match :
-- league, home, away, kickoff (HH:MM)
-- oddHome, oddDraw, oddAway (number)
-- status: "upcoming" | "live" | "finished"
-- minute (number ou null), scoreHome, scoreAway (number ou null)
-
-## 2. RESULTS (résultats des matchs terminés)
-Pour chaque résultat :
-- home, away, scoreHome (number), scoreAway (number), league, matchday
-
-## 3. RANKING (classement)
-Pour chaque équipe :
-- position, team, played, won, drawn, lost, goalsFor, goalsAgainst, goalDifference, points (tous number sauf team)
-
-Retourne un objet JSON avec { matches: [...], results: [...], ranking: [...] }.
-Si une catégorie est vide, retourne un tableau vide.
-
-CONTENU:
-${content.slice(0, 30000)}`;
-
-  const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: "Tu es un parser de données de paris sportifs virtuels. Extrais les données structurées avec précision. Retourne UNIQUEMENT du JSON valide sans markdown." },
-        { role: "user", content: parsePrompt },
-      ],
-    }),
-  });
-
-  if (!aiResponse.ok) {
-    console.error("[AI] Error:", aiResponse.status);
-    return { matches: [], results: [], ranking: [] };
-  }
-
-  const aiData = await aiResponse.json();
-  const rawContent = aiData.choices?.[0]?.message?.content || "{}";
-  let jsonStr = rawContent;
-  const jsonMatch = rawContent.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (jsonMatch) jsonStr = jsonMatch[1];
-  jsonStr = jsonStr.trim();
-
-  try {
-    const parsed = JSON.parse(jsonStr);
-    const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
-    const results = Array.isArray(parsed.results) ? parsed.results : [];
-    const ranking = Array.isArray(parsed.ranking) ? parsed.ranking : [];
-    console.log(`[AI] Parsed: ${matches.length} matches, ${results.length} results, ${ranking.length} ranking`);
-    return { matches, results, ranking };
-  } catch {
-    console.error("[AI] JSON parse failed:", jsonStr.slice(0, 300));
-    return { matches: [], results: [], ranking: [] };
-  }
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -173,32 +15,47 @@ serve(async (req) => {
   try {
     const body = await req.json().catch(() => ({}));
     const leagueSlug = body.league || "";
-    const baseUrl = "https://bet261.mg/virtual/category/instant-league";
-    const targetUrl = leagueSlug ? `${baseUrl}/${leagueSlug}` : baseUrl;
 
-    // Strategy 1: Firecrawl with MG geolocation
-    let result = await scrapeWithFirecrawl(targetUrl);
+    // Read cached data from DB (pushed by local scraper)
+    const supabaseUrl = Deno.env.get("DATABASE_URL")!;
+    const supabaseKey = Deno.env.get("DATABASE_SERVICE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Strategy 2: ScraperAPI with MG residential proxy
-    if (result.blocked) {
-      console.log("Firecrawl blocked, trying ScraperAPI fallback...");
-      result = await scrapeWithScraperAPI(targetUrl);
+    const { data: rows, error: dbError } = await supabase
+      .from("scraped_data")
+      .select("*")
+      .eq("league", leagueSlug)
+      .order("scraped_at", { ascending: false });
+
+    if (dbError) {
+      console.error("[scrape-odds] DB error:", dbError);
+      throw new Error(dbError.message);
     }
 
-    if (result.blocked) {
+    if (!rows || rows.length === 0) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Site géo-restreint. Configurez SCRAPER_API_KEY pour utiliser un proxy Madagascar.",
-          geoBlocked: true,
-          hint: "Créez un compte sur https://www.scraperapi.com/ et ajoutez la clé API.",
+          error: "Aucune donnée disponible. Lancez le scraper local depuis Madagascar.",
+          noData: true,
+          hint: "Exécutez scripts/scraper-local.py depuis un PC à Madagascar pour alimenter l'app.",
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Parse with AI
-    const { matches, results, ranking } = await parseWithAI(result.markdown, result.html);
+    // Get latest data by type
+    const getPayload = (type: string) => {
+      const row = rows.find((r: any) => r.data_type === type);
+      return row ? (Array.isArray(row.payload) ? row.payload : []) : [];
+    };
+
+    const matches = getPayload("matches");
+    const results = getPayload("results");
+    const ranking = getPayload("ranking");
+
+    const latestRow = rows[0];
+    const scrapedAt = latestRow?.scraped_at || new Date().toISOString();
 
     return new Response(
       JSON.stringify({
@@ -206,9 +63,8 @@ serve(async (req) => {
         matches,
         results,
         ranking,
-        scrapedAt: new Date().toISOString(),
-        rawLength: (result.markdown || result.html).length,
-        url: targetUrl,
+        scrapedAt,
+        source: "local-scraper",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
