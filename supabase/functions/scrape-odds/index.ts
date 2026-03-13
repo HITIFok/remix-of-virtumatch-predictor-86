@@ -86,22 +86,6 @@ async function scrapeWithScraperAPI(targetUrl: string): Promise<{ markdown: stri
   }
 
   return { markdown: "", html: "", blocked: true };
-
-  const response = await fetch(scraperUrl, { headers: { "Accept": "text/html" } });
-
-  if (!response.ok) {
-    console.error("[ScraperAPI] Error:", response.status);
-    return { markdown: "", html: "", blocked: true };
-  }
-
-  const html = await response.text();
-  console.log("[ScraperAPI] Got HTML length:", html.length);
-
-  if (html.includes("ACCESS FORBIDDEN") || html.length < 200) {
-    return { markdown: "", html, blocked: true };
-  }
-
-  return { markdown: "", html, blocked: false };
 }
 
 async function parseWithAI(markdown: string, html: string) {
