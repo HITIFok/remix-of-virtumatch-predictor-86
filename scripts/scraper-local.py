@@ -22,15 +22,15 @@ import sys
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-# URL de votre projet Lovable Cloud
-DATABASE_URL = "https://cdbqsytdrgioivnprtmd.redacted.example.com"
+# URL de votre projet Supabase
+DATABASE_URL = "https://gxmmeemzkixinsxglfaq.redacted.example.com"
 PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 
-# Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans les secrets)
-PUSH_KEY = "VOTRE_CLE_ICI"
+# Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans Edge Functions > Secrets)
+PUSH_KEY = "VOTRE_SCRAPER_PUSH_KEY"
 
-# Anon key pour l'en-tête apikey
-ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkYnFzeXRkcmdpb2l2bnBydG1kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyOTY0MTAsImV4cCI6MjA4ODg3MjQxMH0.MXWrusvYVqBlGfYhc6xWb4DGqgAUuZxIVOpz4Pt-P_k"
+# Publishable key (anon) pour l'en-tête apikey
+ANON_KEY = "sb_publishable_b4JnhE55g-HiGl1Q4J5nFw_OKxturOX"
 
 # Intervalle de rafraîchissement (secondes)
 REFRESH_INTERVAL = 120  # 2 minutes
