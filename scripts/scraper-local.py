@@ -27,7 +27,7 @@ DATABASE_URL = "https://gxmmeemzkixinsxglfaq.redacted.example.com"
 PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 
 # Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans Edge Functions > Secrets)
-PUSH_KEY = "VOTRE_SCRAPER_PUSH_KEY"
+PUSH_KEY = "REDACTED"
 
 # Publishable key (anon) pour l'en-tête apikey
 ANON_KEY = "sb_publishable_b4JnhE55g-HiGl1Q4J5nFw_OKxturOX"
