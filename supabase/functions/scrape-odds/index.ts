@@ -51,24 +51,41 @@ async function scrapeWithScraperAPI(targetUrl: string): Promise<{ markdown: stri
     return { markdown: "", html: "", blocked: true };
   }
 
-  console.log("[ScraperAPI] Scraping with MG proxy:", targetUrl);
-  const scraperUrl = `https://api.scraperapi.com/?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}&country_code=mg&render=true&wait_for_selector=.match,.tab-picker,hg-instant-league-matches&session_number=123`;
+  // Try premium residential proxy first, then standard
+  const configs = [
+    { label: "premium+MG", params: `&country_code=mg&premium=true&render=true&wait_for_selector=.match,.tab-picker&session_number=123` },
+    { label: "ultra-premium+MG", params: `&country_code=mg&ultra_premium=true&render=true&session_number=456` },
+    { label: "render-only", params: `&render=true&wait_for_selector=.match,.tab-picker&session_number=789` },
+  ];
 
-  const response = await fetch(scraperUrl, { headers: { "Accept": "text/html" } });
+  for (const config of configs) {
+    console.log(`[ScraperAPI] Trying ${config.label}:`, targetUrl);
+    const scraperUrl = `https://api.scraperapi.com/?api_key=${apiKey}&url=${encodeURIComponent(targetUrl)}${config.params}`;
 
-  if (!response.ok) {
-    console.error("[ScraperAPI] Error:", response.status);
-    return { markdown: "", html: "", blocked: true };
+    try {
+      const resp = await fetch(scraperUrl, { headers: { "Accept": "text/html" } });
+
+      if (!resp.ok) {
+        console.log(`[ScraperAPI] ${config.label} failed: ${resp.status}`);
+        continue;
+      }
+
+      const html = await resp.text();
+      console.log(`[ScraperAPI] ${config.label} got HTML length:`, html.length);
+
+      if (html.includes("ACCESS FORBIDDEN") || html.length < 200) {
+        console.log(`[ScraperAPI] ${config.label} geo-blocked or empty`);
+        continue;
+      }
+
+      return { markdown: "", html, blocked: false };
+    } catch (e) {
+      console.error(`[ScraperAPI] ${config.label} error:`, e);
+      continue;
+    }
   }
 
-  const html = await response.text();
-  console.log("[ScraperAPI] Got HTML length:", html.length);
-
-  if (html.includes("ACCESS FORBIDDEN") || html.length < 200) {
-    return { markdown: "", html, blocked: true };
-  }
-
-  return { markdown: "", html, blocked: false };
+  return { markdown: "", html: "", blocked: true };
 }
 
 async function parseWithAI(markdown: string, html: string) {
