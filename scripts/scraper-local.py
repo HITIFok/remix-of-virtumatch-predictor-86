@@ -27,7 +27,7 @@ DATABASE_URL = "REDACTED_DATABASE_URL"
 PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 
 # Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans Edge Functions > Secrets)
-PUSH_KEY = "VOTRE_SCRAPER_PUSH_KEY"
+PUSH_KEY = "REDACTED_PUSH_KEY"
 
 # Publishable key (anon) pour l'en-tête apikey
 ANON_KEY = "REDACTED_ANON_KEY"
