@@ -134,6 +134,33 @@ export type Database = {
         }
         Relationships: []
       }
+      scraped_data: {
+        Row: {
+          created_at: string
+          data_type: string
+          id: string
+          league: string | null
+          payload: Json
+          scraped_at: string
+        }
+        Insert: {
+          created_at?: string
+          data_type: string
+          id?: string
+          league?: string | null
+          payload?: Json
+          scraped_at?: string
+        }
+        Update: {
+          created_at?: string
+          data_type?: string
+          id?: string
+          league?: string | null
+          payload?: Json
+          scraped_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
