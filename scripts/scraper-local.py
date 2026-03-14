@@ -30,7 +30,7 @@ PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = "REDACTED_PUSH_KEY"
 
 # Publishable key (anon) pour l'en-tête apikey
-ANON_KEY = "REDACTED_ANON_KEY"
+ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
 
 # Intervalle de rafraîchissement (secondes)
 REFRESH_INTERVAL = 120  # 2 minutes
