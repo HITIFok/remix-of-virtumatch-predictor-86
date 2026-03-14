@@ -1,73 +1,86 @@
-# Welcome to your Lovable project
+# VirtuMatch Predictor
 
-## Project info
+Application de prédiction de matchs virtuels Instant League (bet261.mg) avec analyses statistiques avancées.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Fonctionnalités
 
-## How can I edit this code?
+- 🏆 **Matchs en direct** : Consultez les matchs de l'Instant League en temps réel
+- 📊 **Classement** : Statistiques complètes des équipes
+- 🔮 **Prédictions** : Algorithmes de prédiction basés sur les performances
+- 📱 **Interface mobile** : Design responsive optimisé pour mobile
 
-There are several ways of editing your application.
+## Technologies utilisées
 
-**Use Lovable**
+- **Frontend**: React + TypeScript + Vite
+- **UI**: shadcn-ui + Tailwind CSS
+- **Backend**: Supabase (PostgreSQL + Edge Functions)
+- **Scraper**: Python (API sporty-tech.net)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Installation
 
-Changes made via Lovable will be committed automatically to this repo.
+```bash
+# Cloner le repository
+git clone https://github.com/HITIFok/remix-of-virtumatch-predictor-86.git
 
-**Use your preferred IDE**
+# Naviguer dans le projet
+cd remix-of-virtumatch-predictor-86
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+# Installer les dépendances
+npm install
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+# Configurer les variables d'environnement
+cp .env.example .env
+# Éditer .env avec vos identifiants Supabase
 
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Lancer le serveur de développement
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Variables d'environnement
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+Créez un fichier `.env` avec :
 
-**Use GitHub Codespaces**
+```
+VITE_DATABASE_URL=https://votre-projet.redacted.example.com
+VITE_SUPABASE_PROJECT_ID=votre-project-id
+VITE_SUPABASE_PUBLISHABLE_KEY=votre-anon-key
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Scraper (Termux/Android)
 
-## What technologies are used for this project?
+Le scraper Python récupère les données depuis l'API bet261.mg :
 
-This project is built with:
+```bash
+# Dans Termux avec connexion 4G
+pip install requests
+python scripts/scraper-api.py
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Déploiement
 
-## How can I deploy this project?
+Le projet peut être déployé sur Vercel :
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+1. Créez un nouveau projet sur [Vercel](https://vercel.com)
+2. Importez le repository GitHub
+3. Ajoutez les variables d'environnement
+4. Déployez !
 
-## Can I connect a custom domain to my Lovable project?
+## Structure du projet
 
-Yes, you can!
+```
+├── src/
+│   ├── components/     # Composants React
+│   ├── pages/          # Pages de l'application
+│   ├── hooks/          # Hooks personnalisés
+│   ├── lib/            # Utilitaires et logique
+│   └── integrations/   # Intégration Supabase
+├── supabase/
+│   └── functions/      # Edge Functions Deno
+├── scripts/
+│   └── scraper-api.py  # Scraper Python
+└── public/             # Assets statiques
+```
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+## Licence
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+MIT
