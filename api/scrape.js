@@ -1,4 +1,4 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+// Vercel Serverless Function - Plain JavaScript to avoid TS issues
 
 const API_MATCHES = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/matches";
 const API_RANKING = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/ranking";
@@ -19,47 +19,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
-interface MatchData {
-  league: string;
-  home: string;
-  away: string;
-  kickoff: string;
-  oddHome: number;
-  oddDraw: number;
-  oddAway: number;
-  status: string;
-}
+module.exports = async function handler(req, res) {
+  // Set CORS headers
+  Object.entries(corsHeaders).forEach(([key, value]) => {
+    res.setHeader(key, value);
+  });
 
-interface RankingData {
-  position: number;
-  team: string;
-  played: number;
-  won: number;
-  drawn: number;
-  lost: number;
-  goalsFor: number;
-  goalsAgainst: number;
-  goalDifference: number;
-  points: number;
-}
-
-interface ResultData {
-  league: string;
-  home: string;
-  away: string;
-  scoreHome: number;
-  scoreAway: number;
-  matchday: string;
-}
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return res.status(204).set(corsHeaders).send('');
+    res.status(204).end('');
+    return;
   }
 
-  // Set CORS headers
-  res.set(corsHeaders);
+  const sendJson = (status, data) => {
+    res.status(status).json(data);
+  };
 
   try {
     // Fetch all data in parallel
@@ -71,7 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Check for geo-blocking
     if (matchesRes.status === 403 || rankingRes.status === 403 || resultsRes.status === 403) {
-      return res.status(200).json({
+      return sendJson(200, {
         success: false,
         error: "Accès bloqué - Vercel n'est pas autorisé à accéder à cette API",
         geoBlocked: true,
@@ -82,7 +56,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!matchesRes.ok || !rankingRes.ok || !resultsRes.ok) {
-      return res.status(200).json({
+      return sendJson(200, {
         success: false,
         error: `Erreur HTTP: matches=${matchesRes.status}, ranking=${rankingRes.status}, results=${resultsRes.status}`,
         matches: [],
@@ -97,7 +71,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const resultsData = await resultsRes.json();
 
     // Parse matches
-    const matches: MatchData[] = [];
+    const matches = [];
     if (matchesData?.rounds) {
       for (const round of matchesData.rounds) {
         if (round.matches) {
@@ -108,9 +82,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               home: m.homeTeam?.name || "",
               away: m.awayTeam?.name || "",
               kickoff: m.startTime || "",
-              oddHome: odds.find((o: any) => o.type === "Home")?.odds || 0,
-              oddDraw: odds.find((o: any) => o.type === "Draw")?.odds || 0,
-              oddAway: odds.find((o: any) => o.type === "Away")?.odds || 0,
+              oddHome: odds.find(o => o.type === "Home")?.odds || 0,
+              oddDraw: odds.find(o => o.type === "Draw")?.odds || 0,
+              oddAway: odds.find(o => o.type === "Away")?.odds || 0,
               status: "upcoming",
             });
           }
@@ -119,7 +93,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Parse ranking
-    const ranking: RankingData[] = [];
+    const ranking = [];
     if (rankingData?.teams) {
       for (const t of rankingData.teams) {
         ranking.push({
@@ -138,7 +112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Parse results
-    const results: ResultData[] = [];
+    const results = [];
     if (resultsData?.rounds) {
       for (const round of resultsData.rounds) {
         if (round.matches) {
@@ -157,7 +131,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    return res.status(200).json({
+    return sendJson(200, {
       success: true,
       matches,
       ranking,
@@ -172,12 +146,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   } catch (error) {
     console.error('Scrape error:', error);
-    return res.status(200).json({
+    return sendJson(200, {
       success: false,
-      error: error instanceof Error ? error.message : "Erreur inconnue",
+      error: error.message || "Erreur inconnue",
       matches: [],
       ranking: [],
       results: [],
     });
   }
-}
+};
