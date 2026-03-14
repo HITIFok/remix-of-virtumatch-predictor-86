@@ -19,7 +19,7 @@ from datetime import datetime
 DATABASE_URL = "https://gxmmeemzkixinsxglfaq.redacted.example.com"
 PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = "REDACTED"
-ANON_KEY = "sb_publishable_b4JnhE55g-HiGl1Q4J5nFw_OKxturOX"
+ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
 
 LEAGUE_ID = "8035"
 API_BASE = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}"
@@ -162,6 +162,7 @@ def push_data(data):
                 "Content-Type": "application/json",
                 "x-push-key": PUSH_KEY,
                 "apikey": ANON_KEY,
+                "Authorization": f"Bearer {ANON_KEY}",
             },
             timeout=30,
         )
