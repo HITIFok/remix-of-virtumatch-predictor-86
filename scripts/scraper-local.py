@@ -67,18 +67,35 @@ def scrape_with_selenium():
 
     print(f"🌐 Ouverture de {TARGET_URL}...")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    
+    # Augmenter le timeout de la page
+    driver.set_page_load_timeout(60)
+    driver.set_script_timeout(30)
 
     try:
         driver.get(TARGET_URL)
-
-        # Attendre le chargement des matchs
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "hg-instant-league-matches .match, hg-instant-league-ranking table, div.tab-picker"))
-        )
-        time.sleep(3)  # Attendre le rendu Angular
+        
+        # Attendre plus longtemps pour le rendu Angular
+        print("⏳ Attente du chargement de la page...")
+        time.sleep(5)
+        
+        # Essayer d'attendre les éléments, mais continuer même si timeout
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "hg-instant-league-matches, hg-instant-league-ranking, .match, table"))
+            )
+        except:
+            print("⚠️ Timeout sur les éléments, mais on continue...")
+        
+        time.sleep(5)  # Attendre le rendu Angular
 
         html = driver.page_source
         print(f"✅ Page chargée ({len(html)} caractères)")
+        
+        # Vérifier si accès interdit
+        if "ACCESS FORBIDDEN" in html or "Forbidden" in driver.title:
+            print("❌ ACCÈS INTERDIT - vérifiez que vous êtes bien à Madagascar")
+            return None
 
         data = parse_html(html, driver)
         return data
@@ -120,9 +137,38 @@ def parse_html(html, driver=None):
     matches = []
     results = []
     ranking = []
+    
+    # Debug: afficher un extrait du HTML
+    print(f"🔍 Analyse du HTML...")
+    
+    # Vérifier si la page contient des éléments instant-league
+    instant_league = soup.find_all(class_=re.compile("instant-league", re.I))
+    hg_elements = soup.find_all(re.compile("^hg-"))
+    print(f"   Éléments 'instant-league': {len(instant_league)}")
+    print(f"   Éléments 'hg-*': {len(hg_elements)}")
 
-    # Parse les matchs
-    match_elements = soup.select("hg-instant-league-matches .match, .match-row, .event-row")
+    # Parse les matchs - plusieurs sélecteurs possibles
+    selectors = [
+        "hg-instant-league-matches .match",
+        "hg-instant-league-matches .match-row",
+        ".match-row",
+        ".event-row",
+        ".match-item",
+        "[class*='match']"
+    ]
+    
+    match_elements = []
+    for selector in selectors:
+        match_elements = soup.select(selector)
+        if match_elements:
+            print(f"   Matchs trouvés avec '{selector}': {len(match_elements)}")
+            break
+    
+    if not match_elements:
+        print("   ⚠️ Aucun match trouvé avec les sélecteurs connus")
+        # Chercher tous les éléments avec 'match' dans la classe
+        all_matches = soup.find_all(class_=re.compile("match", re.I))
+        print(f"   Éléments avec 'match' dans la classe: {len(all_matches)}")
     for el in match_elements:
         try:
             home_el = el.select_one(".home, .team-home, .team:first-child")
