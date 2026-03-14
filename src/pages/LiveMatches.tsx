@@ -143,6 +143,16 @@ export default function LiveMatches() {
     stopAutoRefresh,
   } = useLiveMatches();
 
+  // Debug logs
+  console.log('LiveMatches render:', {
+    matchesCount: Object.keys(matchesByLeague).reduce((s, k) => s + matchesByLeague[k].length, 0),
+    resultsCount: results.length,
+    rankingCount: ranking.length,
+    loading,
+    error,
+    lastUpdate
+  });
+
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
