@@ -54,20 +54,56 @@ def fetch_api(url, name):
         return None
 
 
+def get_match_status(m):
+    """Détermine le statut du match"""
+    # Vérifier les champs de statut de l'API
+    if m.get("isFinished") or m.get("status") == "finished":
+        return "finished"
+    if m.get("isLive") or m.get("status") == "live":
+        return "live"
+    
+    # Vérifier via expectedStart
+    expected = m.get("expectedStart")
+    if expected:
+        try:
+            from datetime import datetime, timezone
+            start_time = datetime.fromisoformat(expected.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            
+            diff = (start_time - now).total_seconds()
+            
+            if diff < -7200:  # Commencé il y a plus de 2h = terminé
+                return "finished"
+            elif diff < 0:  # Commencé mais pas encore terminé
+                return "live"
+        except:
+            pass
+    
+    return "upcoming"
+
+
 def scrape():
     """Scrape toutes les données"""
     matches = []
     ranking = []
     results = []
     
-    # ========== MATCHS ==========
+    now = datetime.now()
+    
+    # ========== MATCHS (uniquement à venir) ==========
     data = fetch_api(API_MATCHES, "Matchs")
     if data and "rounds" in data:
         for round_data in data["rounds"]:
             for m in round_data.get("matches", []):
                 try:
+                    # Déterminer le statut du match
+                    status = get_match_status(m)
+                    
+                    # Ne garder que les matchs à venir ou en cours
+                    if status == "finished":
+                        continue
+                    
                     # Extraire les cotes depuis eventBetTypes
-                    # Structure: eventBetTypes[i].name = "1X2" → eventBetTypeItems[j].shortName = "1"/"X"/"2"
                     odd_home, odd_draw, odd_away = 0.0, 0.0, 0.0
                     
                     event_bet_types = m.get("eventBetTypes", [])
@@ -75,9 +111,8 @@ def scrape():
                         if bet_type.get("name") == "1X2":
                             items = bet_type.get("eventBetTypeItems", [])
                             for item in items:
-                                # CORRECTION: utiliser "shortName" (pas "name")
                                 short_name = (item.get("shortName") or "").upper()
-                                odd_val = item.get("odds", 0)  # "odds" (avec s)
+                                odd_val = item.get("odds", 0)
                                 
                                 if short_name == "1":
                                     odd_home = odd_val
@@ -85,7 +120,11 @@ def scrape():
                                     odd_draw = odd_val
                                 elif short_name == "2":
                                     odd_away = odd_val
-                            break  # Trouvé 1X2, on sort
+                            break
+                    
+                    # Extraire le score si live
+                    score_home = m.get("homeScore") or m.get("score", "").split(":")[0] if ":" in m.get("score", "") else None
+                    score_away = m.get("awayScore") or m.get("score", "").split(":")[1] if ":" in m.get("score", "") else None
                     
                     match = {
                         "id": m.get("id"),
@@ -94,11 +133,13 @@ def scrape():
                         "name": m.get("name", ""),
                         "round": m.get("round", ""),
                         "league": "Instant League",
-                        "status": "upcoming",
+                        "status": status,
                         "oddHome": odd_home,
                         "oddDraw": odd_draw,
                         "oddAway": odd_away,
                         "expectedStart": m.get("expectedStart", ""),
+                        "scoreHome": int(score_home) if score_home and status == "live" else None,
+                        "scoreAway": int(score_away) if score_away and status == "live" else None,
                     }
                     matches.append(match)
                     
