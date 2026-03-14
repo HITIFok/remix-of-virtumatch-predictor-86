@@ -1,1 +1,10 @@
 project_id = "cdbqsytdrgioivnprtmd"
+
+[functions.auto-scrape]
+verify_jwt = false
+
+[functions.push-odds]
+verify_jwt = false
+
+[functions.analyze-match]
+verify_jwt = false
