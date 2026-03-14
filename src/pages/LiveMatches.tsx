@@ -11,7 +11,7 @@ import { RankingTable, ResultsList } from "@/components/LeagueData";
 import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap, Wifi, WifiOff,
-  Shield, Swords, Target, AlertTriangle, MapPin, BarChart3, ListOrdered
+  Shield, Swords, Target, AlertTriangle, MapPin, BarChart3, ListOrdered, Download
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -122,10 +122,11 @@ export default function LiveMatches() {
     results,
     ranking,
     loading,
+    scraping,
     lastUpdate,
     error,
-    geoBlocked,
     fetchMatches,
+    refreshData,
     startAutoRefresh,
     stopAutoRefresh,
   } = useLiveMatches();
@@ -149,6 +150,10 @@ export default function LiveMatches() {
       setAutoRefresh(true);
       toast.success("Rafraîchissement auto activé (2 min)");
     }
+  };
+
+  const handleScrape = async () => {
+    await refreshData();
   };
 
   const handlePredict = async (match: ScrapedMatch) => {
@@ -227,6 +232,24 @@ export default function LiveMatches() {
           </div>
         </div>
 
+        {/* Scrape button */}
+        <div className="mb-4">
+          <Button
+            onClick={handleScrape}
+            disabled={scraping}
+            className="w-full bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider"
+          >
+            {scraping ? (
+              <><Loader2 size={14} className="mr-1.5 animate-spin" /> SCRAPING EN COURS...</>
+            ) : (
+              <><Download size={14} className="mr-1.5" /> SCRAPER LES DONNÉES (4G Madagascar)</>
+            )}
+          </Button>
+          <p className="text-[9px] text-muted-foreground text-center mt-1">
+            Nécessite une connexion Madagascar (4G)
+          </p>
+        </div>
+
         {/* Stats bar */}
         {(totalMatches > 0 || results.length > 0 || ranking.length > 0) && (
           <div className="flex items-center gap-2 mb-4 flex-wrap">
@@ -253,28 +276,13 @@ export default function LiveMatches() {
           </div>
         )}
 
-        {/* Geo-blocked warning */}
-        {geoBlocked && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 mb-4">
-            <div className="flex items-center gap-2">
-              <MapPin size={14} className="text-amber-500" />
-              <span className="text-xs text-amber-500 font-display">
-                Site accessible uniquement depuis Madagascar
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Error state */}
-        {error && !geoBlocked && (
+        {error && (
           <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 mb-4">
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} className="text-destructive" />
               <span className="text-xs text-destructive">{error}</span>
             </div>
-            <Button size="sm" variant="outline" onClick={() => fetchMatches()} className="mt-2 text-xs">
-              Réessayer
-            </Button>
           </div>
         )}
 
@@ -283,10 +291,7 @@ export default function LiveMatches() {
           <div className="flex flex-col items-center gap-3 py-12">
             <Loader2 size={32} className="text-fire animate-spin" />
             <p className="text-sm text-muted-foreground font-display tracking-wider">
-              Récupération des données...
-            </p>
-            <p className="text-[10px] text-muted-foreground">
-              Scraping Instant League via Firecrawl
+              Chargement des données...
             </p>
           </div>
         )}
@@ -381,7 +386,7 @@ export default function LiveMatches() {
             <Trophy size={40} className="mx-auto text-muted-foreground/30 mb-3" />
             <p className="text-sm text-muted-foreground font-display">Aucune donnée trouvée</p>
             <p className="text-[10px] text-muted-foreground mt-1">
-              Cliquez sur Rafraîchir pour récupérer les données
+              Cliquez sur "SCRAPER LES DONNÉES" pour récupérer les matchs
             </p>
           </div>
         )}
