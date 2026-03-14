@@ -5,6 +5,9 @@ Scraper bet261.mg - Instant League
 API: hg-event-api-prod.sporty-tech.net
 Structure des cotes: eventBetTypes[0].eventBetTypeItems[{shortName:"1", odds:1.71}, ...]
 
+Note: expectedStart est toujours "0001-01-01T00:00:00Z" (valeur par défaut)
+Les matchs à venir sont identifiés par active=true et bettingAllowed=true
+
 Installation:
   pip install requests
 
@@ -54,65 +57,37 @@ def fetch_api(url, name):
         return None
 
 
-def get_match_status(m):
-    """Détermine le statut du match"""
-    # Vérifier les champs de statut de l'API
-    if m.get("isFinished") or m.get("status") == "finished":
-        return "finished"
-    if m.get("isLive") or m.get("status") == "live":
-        return "live"
-    
-    # Vérifier via expectedStart
-    expected = m.get("expectedStart")
-    if expected:
-        try:
-            from datetime import datetime, timezone
-            start_time = datetime.fromisoformat(expected.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            
-            diff = (start_time - now).total_seconds()
-            
-            if diff < -7200:  # Commencé il y a plus de 2h = terminé
-                return "finished"
-            elif diff < 0:  # Commencé mais pas encore terminé
-                return "live"
-        except:
-            pass
-    
-    return "upcoming"
-
-
 def scrape():
     """Scrape toutes les données"""
     matches = []
     ranking = []
     results = []
     
-    now = datetime.now()
-    
-    # ========== MATCHS (uniquement à venir) ==========
+    # ========== MATCHS À VENIR ==========
+    # Note: L'API retourne expectedStart = "0001-01-01T00:00:00Z" pour tous les matchs
+    # Un match est à venir si les cotes sont actives (active=true, bettingAllowed=true)
     data = fetch_api(API_MATCHES, "Matchs")
     if data and "rounds" in data:
         for round_data in data["rounds"]:
+            round_num = round_data.get("roundNumber", 0)
+            
             for m in round_data.get("matches", []):
                 try:
-                    # Déterminer le statut du match
-                    status = get_match_status(m)
-                    
-                    # Ne garder que les matchs à venir ou en cours
-                    if status == "finished":
-                        continue
-                    
-                    # Extraire les cotes depuis eventBetTypes
+                    # Extraire les cotes et vérifier si le match est actif
+                    event_bet_types = m.get("eventBetTypes", [])
+                    has_active_odds = False
                     odd_home, odd_draw, odd_away = 0.0, 0.0, 0.0
                     
-                    event_bet_types = m.get("eventBetTypes", [])
                     for bet_type in event_bet_types:
                         if bet_type.get("name") == "1X2":
                             items = bet_type.get("eventBetTypeItems", [])
                             for item in items:
+                                # Vérifier si les paris sont ouverts
+                                if item.get("active") and item.get("bettingAllowed"):
+                                    has_active_odds = True
+                                
                                 short_name = (item.get("shortName") or "").upper()
-                                odd_val = item.get("odds", 0)
+                                odd_val = item.get("odds", 0) or 0
                                 
                                 if short_name == "1":
                                     odd_home = odd_val
@@ -122,24 +97,22 @@ def scrape():
                                     odd_away = odd_val
                             break
                     
-                    # Extraire le score si live
-                    score_home = m.get("homeScore") or m.get("score", "").split(":")[0] if ":" in m.get("score", "") else None
-                    score_away = m.get("awayScore") or m.get("score", "").split(":")[1] if ":" in m.get("score", "") else None
+                    # Ignorer les matchs sans cotes actives
+                    if not has_active_odds and odd_home == 0:
+                        continue
                     
                     match = {
                         "id": m.get("id"),
                         "home": m.get("homeTeam", {}).get("name", ""),
                         "away": m.get("awayTeam", {}).get("name", ""),
                         "name": m.get("name", ""),
-                        "round": m.get("round", ""),
+                        "round": round_num,
                         "league": "Instant League",
-                        "status": status,
+                        "status": "upcoming",
                         "oddHome": odd_home,
                         "oddDraw": odd_draw,
                         "oddAway": odd_away,
                         "expectedStart": m.get("expectedStart", ""),
-                        "scoreHome": int(score_home) if score_home and status == "live" else None,
-                        "scoreAway": int(score_away) if score_away and status == "live" else None,
                     }
                     matches.append(match)
                     
@@ -196,7 +169,7 @@ def scrape():
         print(f"        Cotes: {m['oddHome']} / {m['oddDraw']} / {m['oddAway']}")
     
     print(f"\n📊 Résumé:")
-    print(f"   Matchs: {len(matches)}")
+    print(f"   Matchs à venir: {len(matches)}")
     print(f"   Classement: {len(ranking)}")
     print(f"   Résultats: {len(results)}")
     
