@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Scraper bet261.mg - Version API (JSON)
-======================================
+Scraper bet261.mg - Version API
+================================
 Utilise les APIs JSON de sporty-tech.net
-À exécuter dans Termux (Android) ou sur PC
 
 Installation:
   pip install requests
@@ -14,7 +13,6 @@ Usage:
 
 import json
 import time
-import sys
 from datetime import datetime
 
 # ============ CONFIGURATION ============
@@ -23,37 +21,37 @@ PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = "REDACTED"
 ANON_KEY = "sb_publishable_b4JnhE55g-HiGl1Q4J5nFw_OKxturOX"
 
-# APIs Instant League
 LEAGUE_ID = "8035"
-API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues"
-API_MATCHES = f"{API_BASE}/{LEAGUE_ID}/matches"
-API_RANKING = f"{API_BASE}/{LEAGUE_ID}/ranking"
-API_RESULTS = f"{API_BASE}/{LEAGUE_ID}/results?skip=0&take=10"
+API_BASE = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}"
+API_MATCHES = f"{API_BASE}/matches"
+API_RANKING = f"{API_BASE}/ranking"
+API_RESULTS = f"{API_BASE}/results?skip=0&take=10"
 
-REFRESH_INTERVAL = 120  # 2 minutes
+REFRESH_INTERVAL = 120
+
+# Headers requis
+HEADERS = {
+    "Origin": "https://bet261.mg",
+    "Referer": "https://bet261.mg/",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/137.0.0.0 Mobile Safari/537.36",
+    "Accept": "application/json",
+}
 
 
 def fetch_api(url, name):
     """Récupère les données depuis l'API"""
     import requests
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36",
-        "Accept": "application/json",
-        "Origin": "https://bet261.mg",
-        "Referer": "https://bet261.mg/",
-    }
-    
     try:
         print(f"  📡 {name}...")
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = requests.get(url, headers=HEADERS, timeout=30)
         
         if resp.status_code == 200:
             data = resp.json()
-            print(f"     ✅ OK ({len(json.dumps(data))} bytes)")
+            print(f"     ✅ OK")
             return data
         else:
-            print(f"     ❌ Erreur HTTP {resp.status_code}")
+            print(f"     ❌ HTTP {resp.status_code}")
             return None
     except Exception as e:
         print(f"     ❌ Erreur: {e}")
@@ -62,86 +60,78 @@ def fetch_api(url, name):
 
 def scrape():
     """Scrape toutes les données"""
-    print(f"\n🌐 Récupération des données...")
-    
-    # Matchs
-    matches_data = fetch_api(API_MATCHES, "Matchs")
     matches = []
-    if matches_data:
-        # La structure peut varier, on essaie de parser
-        if isinstance(matches_data, list):
-            for m in matches_data:
+    ranking = []
+    results = []
+    
+    # ========== MATCHS ==========
+    data = fetch_api(API_MATCHES, "Matchs")
+    if data and "rounds" in data:
+        for round_data in data["rounds"]:
+            for m in round_data.get("matches", []):
                 try:
+                    # Extraire les cotes
+                    odd_home, odd_draw, odd_away = 0.0, 0.0, 0.0
+                    for bet_type in m.get("eventBetTypes", []):
+                        if bet_type.get("name") == "1X2":
+                            items = bet_type.get("eventBetTypeItems", [])
+                            for item in items:
+                                item_name = item.get("name", "").lower()
+                                odd_val = item.get("odd", 0)
+                                if item_name in ["1", "home"]:
+                                    odd_home = odd_val
+                                elif item_name in ["x", "draw"]:
+                                    odd_draw = odd_val
+                                elif item_name in ["2", "away"]:
+                                    odd_away = odd_val
+                    
                     match = {
-                        "home": m.get("homeTeam", m.get("home", "")),
-                        "away": m.get("awayTeam", m.get("away", "")),
+                        "id": m.get("id"),
+                        "home": m.get("homeTeam", {}).get("name", ""),
+                        "away": m.get("awayTeam", {}).get("name", ""),
+                        "name": m.get("name", ""),
+                        "round": m.get("round", ""),
                         "league": "Instant League",
-                        "status": m.get("status", "upcoming"),
+                        "status": "upcoming",
+                        "oddHome": odd_home,
+                        "oddDraw": odd_draw,
+                        "oddAway": odd_away,
+                        "expectedStart": m.get("expectedStart", ""),
                     }
-                    # Cotes
-                    if "odds" in m:
-                        odds = m["odds"]
-                        match["oddHome"] = odds.get("home", odds.get("1", 0))
-                        match["oddDraw"] = odds.get("draw", odds.get("X", 0))
-                        match["oddAway"] = odds.get("away", odds.get("2", 0))
-                    elif "homeOdds" in m:
-                        match["oddHome"] = m.get("homeOdds", 0)
-                        match["oddDraw"] = m.get("drawOdds", 0)
-                        match["oddAway"] = m.get("awayOdds", 0)
                     matches.append(match)
                 except Exception as e:
-                    pass
-        elif isinstance(matches_data, dict):
-            # Peut-être dans un champ "data" ou "matches"
-            items = matches_data.get("data", matches_data.get("matches", matches_data.get("items", [])))
-            for m in items:
-                try:
-                    match = {
-                        "home": m.get("homeTeam", m.get("homeTeamName", m.get("home", ""))),
-                        "away": m.get("awayTeam", m.get("awayTeamName", m.get("away", "")),
-                        "league": "Instant League",
-                        "status": m.get("status", "upcoming"),
-                    }
-                    if "homeOdds" in m:
-                        match["oddHome"] = float(m.get("homeOdds", 0))
-                        match["oddDraw"] = float(m.get("drawOdds", 0))
-                        match["oddAway"] = float(m.get("awayOdds", 0))
-                    matches.append(match)
-                except:
-                    pass
+                    print(f"     ⚠️ Erreur match: {e}")
     
-    # Classement
-    ranking_data = fetch_api(API_RANKING, "Classement")
-    ranking = []
-    if ranking_data:
-        items = ranking_data if isinstance(ranking_data, list) else ranking_data.get("data", ranking_data.get("ranking", []))
+    # ========== CLASSEMENT ==========
+    data = fetch_api(API_RANKING, "Classement")
+    if data:
+        items = data if isinstance(data, list) else data.get("ranking", data.get("data", []))
         for i, r in enumerate(items):
             try:
                 team = {
-                    "position": r.get("position", r.get("rank", i + 1)),
-                    "team": r.get("team", r.get("teamName", r.get("name", ""))),
+                    "position": r.get("position", i + 1),
+                    "team": r.get("team", r.get("name", r.get("teamName", ""))),
                     "played": r.get("played", r.get("gamesPlayed", 0)),
-                    "won": r.get("won", r.get("wins", 0)),
-                    "drawn": r.get("drawn", r.get("draws", 0)),
-                    "lost": r.get("lost", r.get("losses", 0)),
+                    "won": r.get("won", 0),
+                    "drawn": r.get("drawn", r.get("draw", 0)),
+                    "lost": r.get("lost", 0),
                     "goalsFor": r.get("goalsFor", r.get("gf", 0)),
                     "goalsAgainst": r.get("goalsAgainst", r.get("ga", 0)),
                     "points": r.get("points", 0),
                 }
                 ranking.append(team)
-            except:
+            except Exception as e:
                 pass
     
-    # Résultats
-    results_data = fetch_api(API_RESULTS, "Résultats")
-    results = []
-    if results_data:
-        items = results_data if isinstance(results_data, list) else results_data.get("data", results_data.get("results", []))
+    # ========== RÉSULTATS ==========
+    data = fetch_api(API_RESULTS, "Résultats")
+    if data:
+        items = data if isinstance(data, list) else data.get("results", data.get("data", []))
         for r in items:
             try:
                 result = {
-                    "home": r.get("homeTeam", r.get("home", "")),
-                    "away": r.get("awayTeam", r.get("away", "")),
+                    "home": r.get("homeTeam", {}).get("name", r.get("homeTeam", "")),
+                    "away": r.get("awayTeam", {}).get("name", r.get("awayTeam", "")),
                     "scoreHome": r.get("homeScore", r.get("scoreHome", 0)),
                     "scoreAway": r.get("awayScore", r.get("scoreAway", 0)),
                     "league": "Instant League",
@@ -196,7 +186,7 @@ def push_data(data):
 def main():
     print()
     print("=" * 50)
-    print("🏟️  SCRAPER bet261.mg - Version API")
+    print("🏟️  SCRAPER bet261.mg - Instant League")
     print("=" * 50)
     print(f"📍 Supabase: {DATABASE_URL}")
     print(f"⏱️  Intervalle: {REFRESH_INTERVAL}s")
