@@ -96,6 +96,25 @@ def scrape_with_selenium():
         if "ACCESS FORBIDDEN" in html or "Forbidden" in driver.title:
             print("❌ ACCÈS INTERDIT - vérifiez que vous êtes bien à Madagascar")
             return None
+        
+        # Sauvegarder le HTML pour debug
+        debug_file = "debug_bet261.html"
+        with open(debug_file, "w", encoding="utf-8") as f:
+            f.write(html)
+        print(f"💾 HTML sauvegardé dans: {debug_file}")
+        
+        # Vérifier le titre de la page
+        print(f"📄 Titre de la page: {driver.title}")
+        
+        # Vérifier s'il y a des iframes
+        iframes = driver.find_elements(By.TAG_NAME, "iframe")
+        print(f"🖼️ Iframes trouvés: {len(iframes)}")
+        
+        # Attendre encore un peu pour le rendu Angular
+        print("⏳ Attente supplémentaire pour le rendu Angular...")
+        time.sleep(10)  # Attendre 10 secondes de plus
+        html = driver.page_source
+        print(f"✅ HTML après attente: ({len(html)} caractères)")
 
         data = parse_html(html, driver)
         return data
