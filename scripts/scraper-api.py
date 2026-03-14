@@ -70,20 +70,37 @@ def scrape():
         for round_data in data["rounds"]:
             for m in round_data.get("matches", []):
                 try:
-                    # Extraire les cotes
+                    # Extraire les cotes - Structure: eventBetTypes[0].outcomes
                     odd_home, odd_draw, odd_away = 0.0, 0.0, 0.0
-                    for bet_type in m.get("eventBetTypes", []):
-                        if bet_type.get("name") == "1X2":
-                            items = bet_type.get("eventBetTypeItems", [])
-                            for item in items:
-                                item_name = item.get("name", "").lower()
-                                odd_val = item.get("odd", 0)
-                                if item_name in ["1", "home"]:
-                                    odd_home = odd_val
-                                elif item_name in ["x", "draw"]:
-                                    odd_draw = odd_val
-                                elif item_name in ["2", "away"]:
-                                    odd_away = odd_val
+                    
+                    # Nouvelle structure API (comme dans api/scrape.js)
+                    event_bet_types = m.get("eventBetTypes", [])
+                    if event_bet_types and len(event_bet_types) > 0:
+                        outcomes = event_bet_types[0].get("outcomes", [])
+                        for o in outcomes:
+                            otype = o.get("type", "").lower()
+                            odd_val = o.get("odds", 0)  # Note: 'odds' avec 's'
+                            if otype == "home":
+                                odd_home = odd_val
+                            elif otype == "draw":
+                                odd_draw = odd_val
+                            elif otype == "away":
+                                odd_away = odd_val
+                    
+                    # Fallback: ancienne structure si pas trouvé
+                    if odd_home == 0 and odd_draw == 0 and odd_away == 0:
+                        for bet_type in event_bet_types:
+                            if bet_type.get("name") == "1X2":
+                                items = bet_type.get("eventBetTypeItems", [])
+                                for item in items:
+                                    item_name = item.get("name", "").lower()
+                                    odd_val = item.get("odd", 0)
+                                    if item_name in ["1", "home"]:
+                                        odd_home = odd_val
+                                    elif item_name in ["x", "draw"]:
+                                        odd_draw = odd_val
+                                    elif item_name in ["2", "away"]:
+                                        odd_away = odd_val
                     
                     match = {
                         "id": m.get("id"),
