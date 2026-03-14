@@ -40,11 +40,11 @@ export function useLiveMatches() {
       }
 
       const rawData = data as ScrapedDataRaw[];
-      
-      // Get latest by type
-      const latestMatches = rawData.find(d => d.data_type === "matches");
-      const latestResults = rawData.find(d => d.data_type === "results");
-      const latestRanking = rawData.find(d => d.data_type === "ranking");
+
+      // Get latest by type (no league filter - get all)
+      const latestMatches = rawData.find((d: any) => d.data_type === "matches");
+      const latestResults = rawData.find((d: any) => d.data_type === "results");
+      const latestRanking = rawData.find((d: any) => d.data_type === "ranking");
 
       // Parse matches
       if (latestMatches?.payload) {
