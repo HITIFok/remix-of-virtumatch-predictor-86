@@ -34,10 +34,22 @@ function MatchCard({
     match.status === "finished" ? "text-muted-foreground" :
     "text-ice";
 
+  // Format kickoff time nicely
+  const formatKickoff = (kickoff: string) => {
+    if (!kickoff) return "À venir";
+    try {
+      const date = new Date(kickoff);
+      if (isNaN(date.getTime())) return kickoff;
+      return date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return kickoff;
+    }
+  };
+
   const statusLabel =
     match.status === "live" ? `🔴 LIVE ${match.minute ? `(${match.minute}')` : ""}` :
     match.status === "finished" ? "✅ Terminé" :
-    `⏰ ${match.kickoff || "À venir"}`;
+    `⏰ ${formatKickoff(match.kickoff)}`;
 
   return (
     <div className="bg-gradient-card rounded-xl border border-border overflow-hidden shadow-card">
