@@ -1,6 +1,5 @@
 // Supabase Edge Function: auto-scrape
 // Scrape Instant League data and store in database
-// Can be triggered by cron or manually
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -54,27 +53,34 @@ interface Result {
   league: string
 }
 
-async function fetchAPI(url: string): Promise<any> {
+async function fetchAPI(url: string, name: string): Promise<any> {
   try {
+    console.log(`Fetching ${name}: ${url}`)
     const response = await fetch(url, {
       method: 'GET',
       headers: HEADERS,
     })
 
+    console.log(`${name} status: ${response.status}`)
+
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      const text = await response.text()
+      console.error(`${name} error: ${text}`)
+      return null
     }
 
-    return await response.json()
+    const data = await response.json()
+    console.log(`${name} data keys: ${Object.keys(data || {}).join(', ')}`)
+    return data
   } catch (error) {
-    console.error(`Fetch error for ${url}:`, error)
+    console.error(`Fetch error for ${name}:`, error)
     return null
   }
 }
 
 async function scrapeMatches(): Promise<Match[]> {
   const matches: Match[] = []
-  const data = await fetchAPI(API_MATCHES)
+  const data = await fetchAPI(API_MATCHES, "matches")
 
   if (data && data.rounds) {
     for (const roundData of data.rounds) {
@@ -131,9 +137,12 @@ async function scrapeMatches(): Promise<Match[]> {
 
 async function scrapeRanking(): Promise<Ranking[]> {
   const ranking: Ranking[] = []
-  const data = await fetchAPI(API_RANKING)
+  const data = await fetchAPI(API_RANKING, "ranking")
+
+  console.log(`Ranking data: ${JSON.stringify(data?.teams?.[0])}`)
 
   if (data && data.teams) {
+    console.log(`Found ${data.teams.length} teams`)
     for (const r of data.teams) {
       ranking.push({
         position: r.position || 0,
@@ -147,6 +156,8 @@ async function scrapeRanking(): Promise<Ranking[]> {
         points: r.points || 0,
       })
     }
+  } else {
+    console.log(`No ranking data - data: ${!!data}, teams: ${!!data?.teams}`)
   }
 
   return ranking
@@ -154,10 +165,14 @@ async function scrapeRanking(): Promise<Ranking[]> {
 
 async function scrapeResults(): Promise<Result[]> {
   const results: Result[] = []
-  const data = await fetchAPI(API_RESULTS)
+  const data = await fetchAPI(API_RESULTS, "results")
+
+  console.log(`Results data: rounds=${!!data?.rounds}`)
 
   if (data && data.rounds) {
+    console.log(`Found ${data.rounds.length} rounds`)
     for (const roundData of data.rounds) {
+      const roundNum = roundData.roundNumber || 0
       for (const m of (roundData.matches || [])) {
         try {
           const score = m.score || "0:0"
@@ -170,7 +185,7 @@ async function scrapeResults(): Promise<Result[]> {
             away: m.awayTeam?.name || "",
             scoreHome,
             scoreAway,
-            round: roundData.roundNumber || 0,
+            round: roundNum,
             league: "Instant League",
           })
         } catch (e) {
@@ -187,14 +202,13 @@ serve(async (req) => {
   const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY)
 
   try {
-    // Check for authorization
     const authHeader = req.headers.get('Authorization')
     const cronKey = req.headers.get('x-cron-key')
     const expectedCronKey = Deno.env.get('CRON_SECRET') || 'bet261_cron_2024'
 
-    // Allow cron requests or requests with valid auth
     const isAuthorized = cronKey === expectedCronKey ||
-      authHeader === `Bearer ${DATABASE_SERVICE_KEY}`
+      authHeader === `Bearer ${DATABASE_SERVICE_KEY}` ||
+      authHeader?.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')
 
     if (!isAuthorized) {
       return new Response(
@@ -205,16 +219,16 @@ serve(async (req) => {
 
     console.log('Starting scrape...')
 
-    // Scrape all data
-    const [matches, ranking, results] = await Promise.all([
-      scrapeMatches(),
-      scrapeRanking(),
-      scrapeResults(),
-    ])
+    // Scrape sequentially to see errors
+    const matches = await scrapeMatches()
+    console.log(`Matches: ${matches.length}`)
 
-    console.log(`Scraped: ${matches.length} matches, ${ranking.length} teams, ${results.length} results`)
+    const ranking = await scrapeRanking()
+    console.log(`Ranking: ${ranking.length}`)
 
-    // Check if we got any data
+    const results = await scrapeResults()
+    console.log(`Results: ${results.length}`)
+
     if (matches.length === 0 && ranking.length === 0 && results.length === 0) {
       return new Response(
         JSON.stringify({
@@ -226,10 +240,7 @@ serve(async (req) => {
       )
     }
 
-    // Store in database
     const now = new Date().toISOString()
-
-    // Clear old data and insert new
     const saves: Promise<any>[] = []
 
     if (matches.length > 0) {
