@@ -1,4 +1,5 @@
-// Vercel Serverless Function - Plain JavaScript to avoid TS issues
+// Vercel Serverless Function - Scraper for bet261.mg Instant League
+// Correct field names: shortName ("1", "X", "2") and odds (number)
 
 const API_MATCHES = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/matches";
 const API_RANKING = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/ranking";
@@ -70,21 +71,44 @@ module.exports = async function handler(req, res) {
     const rankingData = await rankingRes.json();
     const resultsData = await resultsRes.json();
 
-    // Parse matches
+    // Parse matches - CORRECTED: use shortName and odds
     const matches = [];
     if (matchesData?.rounds) {
       for (const round of matchesData.rounds) {
         if (round.matches) {
           for (const m of round.matches) {
-            const odds = m.eventBetTypes?.[0]?.outcomes || [];
+            // Extraire les cotes depuis eventBetTypes
+            let oddHome = 0, oddDraw = 0, oddAway = 0;
+            
+            const eventBetTypes = m.eventBetTypes || [];
+            for (const betType of eventBetTypes) {
+              if (betType.name === "1X2") {
+                const items = betType.eventBetTypeItems || [];
+                for (const item of items) {
+                  const shortName = (item.shortName || "").toUpperCase();
+                  const odds = item.odds || 0;
+                  
+                  // CORRECTION: shortName est "1", "X", "2"
+                  if (shortName === "1") {
+                    oddHome = odds;
+                  } else if (shortName === "X") {
+                    oddDraw = odds;
+                  } else if (shortName === "2") {
+                    oddAway = odds;
+                  }
+                }
+                break; // Trouvé 1X2, on sort
+              }
+            }
+            
             matches.push({
               league: "Instant League",
               home: m.homeTeam?.name || "",
               away: m.awayTeam?.name || "",
-              kickoff: m.startTime || "",
-              oddHome: odds.find(o => o.type === "Home")?.odds || 0,
-              oddDraw: odds.find(o => o.type === "Draw")?.odds || 0,
-              oddAway: odds.find(o => o.type === "Away")?.odds || 0,
+              kickoff: m.expectedStart || "",
+              oddHome: oddHome,
+              oddDraw: oddDraw,
+              oddAway: oddAway,
               status: "upcoming",
             });
           }
