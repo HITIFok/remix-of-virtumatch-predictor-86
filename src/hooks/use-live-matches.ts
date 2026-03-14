@@ -55,7 +55,7 @@ export function useLiveMatches() {
           league: m.league || "Instant League",
           home: m.home || m.homeTeam || "",
           away: m.away || m.awayTeam || "",
-          kickoff: m.kickoff || "",
+          kickoff: m.kickoff || m.expectedStart || "",
           oddHome: m.oddHome || m.odd_home || 0,
           oddDraw: m.oddDraw || m.odd_draw || 0,
           oddAway: m.oddAway || m.odd_away || 0,
