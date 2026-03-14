@@ -105,19 +105,21 @@ def scrape():
     # ========== CLASSEMENT ==========
     data = fetch_api(API_RANKING, "Classement")
     if data:
-        items = data if isinstance(data, list) else data.get("ranking", data.get("data", []))
-        for i, r in enumerate(items):
+        # La structure est {"teams": [...]}
+        items = data.get("teams", [])
+        for r in items:
             try:
                 team = {
-                    "position": r.get("position", i + 1),
-                    "team": r.get("team", r.get("name", r.get("teamName", ""))),
-                    "played": r.get("played", r.get("gamesPlayed", 0)),
+                    "position": r.get("position", 0),
+                    "team": r.get("name", ""),
+                    "played": r.get("won", 0) + r.get("lost", 0) + r.get("draw", 0),
                     "won": r.get("won", 0),
-                    "drawn": r.get("drawn", r.get("draw", 0)),
+                    "drawn": r.get("draw", 0),
                     "lost": r.get("lost", 0),
-                    "goalsFor": r.get("goalsFor", r.get("gf", 0)),
-                    "goalsAgainst": r.get("goalsAgainst", r.get("ga", 0)),
+                    "goalsFor": r.get("goalsFor", 0),
+                    "goalsAgainst": r.get("goalsAgainst", 0),
                     "points": r.get("points", 0),
+                    "history": r.get("history", []),
                 }
                 ranking.append(team)
             except Exception as e:
