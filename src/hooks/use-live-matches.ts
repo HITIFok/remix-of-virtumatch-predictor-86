@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { scrapeInstantLeague } from "@/lib/scraper";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -19,17 +20,14 @@ export function useLiveMatches() {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [ranking, setRanking] = useState<RankingEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [scraping, setScraping] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch data directly from Supabase table (populated by Python scraper)
-  const fetchMatches = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-
+  // Load data from Supabase table
+  const loadFromDatabase = useCallback(async () => {
     try {
-      // Query scraped_data table directly
       const { data, error: dbError } = await supabase
         .from("scraped_data")
         .select("*")
@@ -38,15 +36,12 @@ export function useLiveMatches() {
       if (dbError) throw new Error(dbError.message);
 
       if (!data || data.length === 0) {
-        if (!silent) {
-          toast.info("Aucune donnée. Lancez le scraper Python !");
-        }
-        return;
+        return false;
       }
 
       const rawData = data as ScrapedDataRaw[];
       
-      // Group by data_type and get latest
+      // Get latest by type
       const latestMatches = rawData.find(d => d.data_type === "matches");
       const latestResults = rawData.find(d => d.data_type === "results");
       const latestRanking = rawData.find(d => d.data_type === "ranking");
@@ -110,22 +105,76 @@ export function useLiveMatches() {
       const latestScrapedAt = rawData[0]?.scraped_at;
       setLastUpdate(latestScrapedAt || new Date().toISOString());
 
-      const total = 
-        (latestMatches?.payload?.length || 0) + 
-        (latestResults?.payload?.length || 0) + 
-        (latestRanking?.payload?.length || 0);
+      return true;
+    } catch (err) {
+      console.error("Error loading from database:", err);
+      return false;
+    }
+  }, []);
 
-      if (!silent && total > 0) {
-        toast.success(`${latestMatches?.payload?.length || 0} matchs, ${latestResults?.payload?.length || 0} résultats, ${latestRanking?.payload?.length || 0} équipes 🔥`);
+  // Scrape data directly from browser (requires Madagascar IP)
+  const scrapeData = useCallback(async (silent = false) => {
+    setScraping(true);
+    setError(null);
+
+    try {
+      const result = await scrapeInstantLeague();
+
+      if (!result.success) {
+        setError(result.error || "Échec du scraping");
+        if (!silent) {
+          toast.error(result.error || "Échec du scraping");
+        }
+        
+        // Try to load existing data from DB anyway
+        await loadFromDatabase();
+      } else {
+        // Load the newly scraped data
+        await loadFromDatabase();
+        
+        if (!silent) {
+          toast.success(`✅ ${result.matches} matchs, ${result.ranking} équipes, ${result.results} résultats`);
+        }
       }
+
+      return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur inconnue";
       setError(msg);
       if (!silent) toast.error(`Erreur: ${msg}`);
+      
+      // Try to load existing data
+      await loadFromDatabase();
+      
+      return { success: false, matches: 0, results: 0, ranking: 0, error: msg };
     } finally {
-      setLoading(false);
+      setScraping(false);
     }
-  }, []);
+  }, [loadFromDatabase]);
+
+  // Fetch matches - either scrape or load from DB
+  const fetchMatches = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
+
+    // First, try to load existing data from DB
+    const hasData = await loadFromDatabase();
+
+    if (!silent) {
+      if (hasData) {
+        toast.info("Données chargées depuis le cache");
+      } else {
+        toast.info("Aucune donnée - Lancez le scraping");
+      }
+    }
+
+    setLoading(false);
+  }, [loadFromDatabase]);
+
+  // Force refresh - scrape new data
+  const refreshData = useCallback(async () => {
+    return scrapeData(false);
+  }, [scrapeData]);
 
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -156,10 +205,12 @@ export function useLiveMatches() {
     ranking,
     matchesByLeague,
     loading,
+    scraping,
     lastUpdate,
     error,
-    geoBlocked: false, // No longer using scraper, data comes from DB
+    geoBlocked: false,
     fetchMatches,
+    refreshData,
     startAutoRefresh,
     stopAutoRefresh,
   };
