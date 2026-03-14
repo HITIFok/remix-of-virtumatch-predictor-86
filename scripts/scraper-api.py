@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Scraper bet261.mg - Version API
-================================
-Utilise les APIs JSON de sporty-tech.net
+Scraper bet261.mg - Instant League
+==================================
+API: hg-event-api-prod.sporty-tech.net
+Structure des cotes: eventBetTypes[0].eventBetTypeItems[{shortName:"1", odds:1.71}, ...]
 
 Installation:
   pip install requests
@@ -22,14 +23,12 @@ PUSH_KEY = "REDACTED_PUSH_KEY"
 ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
 
 LEAGUE_ID = "8035"
-API_BASE = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}"
-API_MATCHES = f"{API_BASE}/matches"
-API_RANKING = f"{API_BASE}/ranking"
-API_RESULTS = f"{API_BASE}/results?skip=0&take=10"
+API_MATCHES = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/matches"
+API_RANKING = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/ranking"
+API_RESULTS = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/results?skip=0&take=100"
 
 REFRESH_INTERVAL = 120
 
-# Headers requis
 HEADERS = {
     "Origin": "https://bet261.mg",
     "Referer": "https://bet261.mg/",
@@ -41,15 +40,12 @@ HEADERS = {
 def fetch_api(url, name):
     """Récupère les données depuis l'API"""
     import requests
-    
     try:
         print(f"  📡 {name}...")
         resp = requests.get(url, headers=HEADERS, timeout=30)
-        
         if resp.status_code == 200:
-            data = resp.json()
             print(f"     ✅ OK")
-            return data
+            return resp.json()
         else:
             print(f"     ❌ HTTP {resp.status_code}")
             return None
@@ -70,37 +66,26 @@ def scrape():
         for round_data in data["rounds"]:
             for m in round_data.get("matches", []):
                 try:
-                    # Extraire les cotes - Structure: eventBetTypes[0].outcomes
+                    # Extraire les cotes depuis eventBetTypes
+                    # Structure: eventBetTypes[i].name = "1X2" → eventBetTypeItems[j].shortName = "1"/"X"/"2"
                     odd_home, odd_draw, odd_away = 0.0, 0.0, 0.0
                     
-                    # Nouvelle structure API (comme dans api/scrape.js)
                     event_bet_types = m.get("eventBetTypes", [])
-                    if event_bet_types and len(event_bet_types) > 0:
-                        outcomes = event_bet_types[0].get("outcomes", [])
-                        for o in outcomes:
-                            otype = o.get("type", "").lower()
-                            odd_val = o.get("odds", 0)  # Note: 'odds' avec 's'
-                            if otype == "home":
-                                odd_home = odd_val
-                            elif otype == "draw":
-                                odd_draw = odd_val
-                            elif otype == "away":
-                                odd_away = odd_val
-                    
-                    # Fallback: ancienne structure si pas trouvé
-                    if odd_home == 0 and odd_draw == 0 and odd_away == 0:
-                        for bet_type in event_bet_types:
-                            if bet_type.get("name") == "1X2":
-                                items = bet_type.get("eventBetTypeItems", [])
-                                for item in items:
-                                    item_name = item.get("name", "").lower()
-                                    odd_val = item.get("odd", 0)
-                                    if item_name in ["1", "home"]:
-                                        odd_home = odd_val
-                                    elif item_name in ["x", "draw"]:
-                                        odd_draw = odd_val
-                                    elif item_name in ["2", "away"]:
-                                        odd_away = odd_val
+                    for bet_type in event_bet_types:
+                        if bet_type.get("name") == "1X2":
+                            items = bet_type.get("eventBetTypeItems", [])
+                            for item in items:
+                                # CORRECTION: utiliser "shortName" (pas "name")
+                                short_name = (item.get("shortName") or "").upper()
+                                odd_val = item.get("odds", 0)  # "odds" (avec s)
+                                
+                                if short_name == "1":
+                                    odd_home = odd_val
+                                elif short_name == "X":
+                                    odd_draw = odd_val
+                                elif short_name == "2":
+                                    odd_away = odd_val
+                            break  # Trouvé 1X2, on sort
                     
                     match = {
                         "id": m.get("id"),
@@ -116,30 +101,28 @@ def scrape():
                         "expectedStart": m.get("expectedStart", ""),
                     }
                     matches.append(match)
+                    
                 except Exception as e:
                     print(f"     ⚠️ Erreur match: {e}")
     
     # ========== CLASSEMENT ==========
     data = fetch_api(API_RANKING, "Classement")
-    if data:
-        # La structure est {"teams": [...]}
-        items = data.get("teams", [])
-        for r in items:
+    if data and "teams" in data:
+        for r in data["teams"]:
             try:
                 team = {
                     "position": r.get("position", 0),
                     "team": r.get("name", ""),
-                    "played": r.get("won", 0) + r.get("lost", 0) + r.get("draw", 0),
-                    "won": r.get("won", 0),
-                    "drawn": r.get("draw", 0),
-                    "lost": r.get("lost", 0),
-                    "goalsFor": r.get("goalsFor", 0),
-                    "goalsAgainst": r.get("goalsAgainst", 0),
-                    "points": r.get("points", 0),
-                    "history": r.get("history", []),
+                    "played": (r.get("won", 0) or 0) + (r.get("lost", 0) or 0) + (r.get("draw", 0) or 0),
+                    "won": r.get("won", 0) or 0,
+                    "drawn": r.get("draw", 0) or 0,
+                    "lost": r.get("lost", 0) or 0,
+                    "goalsFor": r.get("goalsFor", 0) or 0,
+                    "goalsAgainst": r.get("goalsAgainst", 0) or 0,
+                    "points": r.get("points", 0) or 0,
                 }
                 ranking.append(team)
-            except Exception as e:
+            except:
                 pass
     
     # ========== RÉSULTATS ==========
@@ -148,24 +131,28 @@ def scrape():
         for round_data in data["rounds"]:
             for m in round_data.get("matches", []):
                 try:
-                    # Parser le score "5:1" en scoreHome=5, scoreAway=1
                     score = m.get("score", "0:0")
-                    score_parts = score.split(":")
-                    score_home = int(score_parts[0]) if len(score_parts) == 2 else 0
-                    score_away = int(score_parts[1]) if len(score_parts) == 2 else 0
+                    parts = score.split(":")
+                    score_home = int(parts[0]) if len(parts) == 2 else 0
+                    score_away = int(parts[1]) if len(parts) == 2 else 0
                     
                     result = {
                         "home": m.get("homeTeam", {}).get("name", ""),
                         "away": m.get("awayTeam", {}).get("name", ""),
                         "scoreHome": score_home,
                         "scoreAway": score_away,
-                        "halfTimeScore": m.get("halfTimeScore", ""),
                         "round": round_data.get("roundNumber", 0),
                         "league": "Instant League",
                     }
                     results.append(result)
                 except:
                     pass
+    
+    # Afficher les cotes du premier match pour debug
+    if matches:
+        m = matches[0]
+        print(f"\n     🎯 {m['home']} vs {m['away']}")
+        print(f"        Cotes: {m['oddHome']} / {m['oddDraw']} / {m['oddAway']}")
     
     print(f"\n📊 Résumé:")
     print(f"   Matchs: {len(matches)}")
