@@ -127,20 +127,28 @@ def scrape():
     
     # ========== RÉSULTATS ==========
     data = fetch_api(API_RESULTS, "Résultats")
-    if data:
-        items = data if isinstance(data, list) else data.get("results", data.get("data", []))
-        for r in items:
-            try:
-                result = {
-                    "home": r.get("homeTeam", {}).get("name", r.get("homeTeam", "")),
-                    "away": r.get("awayTeam", {}).get("name", r.get("awayTeam", "")),
-                    "scoreHome": r.get("homeScore", r.get("scoreHome", 0)),
-                    "scoreAway": r.get("awayScore", r.get("scoreAway", 0)),
-                    "league": "Instant League",
-                }
-                results.append(result)
-            except:
-                pass
+    if data and "rounds" in data:
+        for round_data in data["rounds"]:
+            for m in round_data.get("matches", []):
+                try:
+                    # Parser le score "5:1" en scoreHome=5, scoreAway=1
+                    score = m.get("score", "0:0")
+                    score_parts = score.split(":")
+                    score_home = int(score_parts[0]) if len(score_parts) == 2 else 0
+                    score_away = int(score_parts[1]) if len(score_parts) == 2 else 0
+                    
+                    result = {
+                        "home": m.get("homeTeam", {}).get("name", ""),
+                        "away": m.get("awayTeam", {}).get("name", ""),
+                        "scoreHome": score_home,
+                        "scoreAway": score_away,
+                        "halfTimeScore": m.get("halfTimeScore", ""),
+                        "round": round_data.get("roundNumber", 0),
+                        "league": "Instant League",
+                    }
+                    results.append(result)
+                except:
+                    pass
     
     print(f"\n📊 Résumé:")
     print(f"   Matchs: {len(matches)}")
