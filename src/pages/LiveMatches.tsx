@@ -96,7 +96,7 @@ function MatchCard({
           <Button
             size="sm"
             className="w-full bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider"
-            disabled={predicting}
+            disabled={predicting || match.oddHome <= 0}
             onClick={() => onPredict(match)}
           >
             {predicting ? (
