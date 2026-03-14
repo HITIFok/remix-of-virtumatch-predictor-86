@@ -121,13 +121,21 @@ export function useLiveMatches() {
       const result = await scrapeInstantLeague();
 
       if (!result.success) {
-        setError(result.error || "Échec du scraping");
-        if (!silent) {
-          toast.error(result.error || "Échec du scraping");
-        }
-        
         // Try to load existing data from DB anyway
-        await loadFromDatabase();
+        const hasData = await loadFromDatabase();
+        
+        // Clear error if data was loaded successfully
+        if (hasData) {
+          setError(null);
+          if (!silent) {
+            toast.success(`✅ Données chargées depuis le cache`);
+          }
+        } else {
+          setError(result.error || "Échec du scraping");
+          if (!silent) {
+            toast.error(result.error || "Échec du scraping");
+          }
+        }
       } else {
         // Load the newly scraped data
         await loadFromDatabase();
@@ -140,11 +148,22 @@ export function useLiveMatches() {
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur inconnue";
-      setError(msg);
-      if (!silent) toast.error(`Erreur: ${msg}`);
       
       // Try to load existing data
-      await loadFromDatabase();
+      const hasData = await loadFromDatabase();
+      
+      // Clear error if data was loaded successfully
+      if (hasData) {
+        setError(null);
+        if (!silent) {
+          toast.success(`✅ Données chargées depuis le cache`);
+        }
+      } else {
+        setError(msg);
+        if (!silent) {
+          toast.error(`Erreur: ${msg}`);
+        }
+      }
       
       return { success: false, matches: 0, results: 0, ranking: 0, error: msg };
     } finally {
