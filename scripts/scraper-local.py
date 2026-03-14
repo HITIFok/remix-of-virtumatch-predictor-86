@@ -60,6 +60,10 @@ def scrape_with_selenium():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    # Ignorer les erreurs SSL/certificat
+    options.add_argument("--ignore-certificate-errors")
+    options.add_argument("--ignore-ssl-errors")
+    options.add_argument("--allow-insecure-localhost")
 
     print(f"🌐 Ouverture de {TARGET_URL}...")
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
@@ -87,11 +91,15 @@ def scrape_with_requests():
     """Tentative simple avec requests (peut ne pas fonctionner si JS requis)"""
     import requests
     from bs4 import BeautifulSoup
+    import urllib3
+    
+    # Désactiver les warnings SSL
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     print(f"🌐 Tentative GET simple sur {TARGET_URL}...")
-    resp = requests.get(TARGET_URL, timeout=15, headers={
+    resp = requests.get(TARGET_URL, timeout=30, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    })
+    }, verify=False)
 
     if "ACCESS FORBIDDEN" in resp.text:
         print("❌ Accès interdit - vérifiez que vous êtes bien à Madagascar")
