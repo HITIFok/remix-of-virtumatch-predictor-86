@@ -1,11 +1,11 @@
 // Supabase Edge Function: verify-predictions
 // Vérifie les prédictions en attente et les compare aux résultats réels
+// SANS autorisation complexe - appelé depuis l'app frontend
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
-const DATABASE_SERVICE_KEY = Deno.env.get('DATABASE_SERVICE_KEY')!
 const DATABASE_ANON_KEY = Deno.env.get('DATABASE_ANON_KEY')!
 
 const LEAGUE_ID = "8035"
@@ -14,15 +14,15 @@ const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleague
 const HEADERS = {
   "Origin": "https://bet261.mg",
   "Referer": "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+  "User-Agent": "Mozilla/5.0",
   "Accept": "application/json",
 }
 
-// CORS headers for all responses
+// CORS headers
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-cron-key, apikey',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
   'Content-Type': 'application/json'
 }
 
@@ -32,36 +32,13 @@ serve(async (req) => {
     return new Response(null, { status: 204, headers: corsHeaders })
   }
 
-  const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY)
+  console.log('🔍 Verify predictions called - Method:', req.method)
+
+  // Utiliser le client avec la clé anon (pas besoin de service_role pour lire)
+  const supabase = createClient(DATABASE_URL, DATABASE_ANON_KEY)
 
   try {
-    // Vérification d'autorisation simplifiée
-    const authHeader = req.headers.get('Authorization')
-    const cronKey = req.headers.get('x-cron-key')
-    const apikey = req.headers.get('apikey')
-    
-    // Accepter plusieurs formes d'autorisation
-    const isAuthorized = 
-      cronKey === 'bet261_cron_2024' ||
-      cronKey === Deno.env.get('CRON_SECRET') ||
-      authHeader === `Bearer ${DATABASE_SERVICE_KEY}` ||
-      authHeader === `Bearer ${DATABASE_ANON_KEY}` ||
-      apikey === DATABASE_ANON_KEY ||
-      (authHeader?.startsWith('Bearer eyJ') ?? false) // JWT tokens
-
-    if (!isAuthorized) {
-      console.log('Unauthorized request. Headers:', {
-        auth: authHeader?.substring(0, 30),
-        cronKey,
-        apikey: apikey?.substring(0, 10)
-      })
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized', hint: 'Include apikey header or Authorization bearer token' }),
-        { status: 401, headers: corsHeaders }
-      )
-    }
-
-    console.log('Starting prediction verification...')
+    console.log('📊 Fetching pending predictions...')
 
     // 1. Récupérer les prédictions en attente
     const { data: pendingPredictions, error: fetchError } = await supabase
@@ -72,36 +49,38 @@ serve(async (req) => {
       .limit(50)
 
     if (fetchError) {
-      console.error('Error fetching predictions:', fetchError)
+      console.error('❌ Error fetching predictions:', fetchError)
       return new Response(
         JSON.stringify({ error: 'Failed to fetch predictions', details: fetchError.message }),
         { status: 500, headers: corsHeaders }
       )
     }
 
+    console.log(`📋 Found ${pendingPredictions?.length || 0} pending predictions`)
+
     if (!pendingPredictions || pendingPredictions.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: 'No pending predictions to verify', verified: 0 }),
+        JSON.stringify({ success: true, message: 'Aucune prédiction à vérifier', verified: 0 }),
         { status: 200, headers: corsHeaders }
       )
     }
 
-    console.log(`Found ${pendingPredictions.length} pending predictions`)
-
-    // 2. Récupérer les résultats réels de l'API
+    // 2. Récupérer les résultats depuis l'API
+    console.log('🌐 Fetching results from API...')
     const response = await fetch(API_RESULTS, { headers: HEADERS })
     
     if (!response.ok) {
-      console.error('API error:', response.status, response.statusText)
+      console.error('❌ API error:', response.status)
       return new Response(
-        JSON.stringify({ error: 'Failed to fetch results from API', status: response.status }),
+        JSON.stringify({ error: `API error: ${response.status}`, hint: 'API may be geo-blocked from Supabase servers' }),
         { status: 500, headers: corsHeaders }
       )
     }
 
     const resultsData = await response.json()
+    console.log('✅ API response received')
 
-    // Construire un map des résultats
+    // 3. Construire le map des résultats
     const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string }>()
 
     if (resultsData.rounds) {
@@ -126,12 +105,12 @@ serve(async (req) => {
       }
     }
 
-    console.log(`Found ${resultsMap.size} results in API`)
+    console.log(`📊 Found ${resultsMap.size} results in API`)
 
-    // 3. Comparer et mettre à jour les prédictions
-    const updates: Promise<any>[] = []
+    // 4. Comparer et mettre à jour
     let correct = 0
     let incorrect = 0
+    const updates: Promise<any>[] = []
 
     for (const pred of pendingPredictions) {
       const key = `${pred.home_team}|${pred.away_team}`
@@ -157,13 +136,15 @@ serve(async (req) => {
             })
             .eq('id', pred.id)
         )
+
+        console.log(`${isCorrect ? '✅' : '❌'} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome}`)
       }
     }
 
     // Exécuter les mises à jour
     await Promise.all(updates)
 
-    console.log(`Verification complete: ${correct} correct, ${incorrect} incorrect`)
+    console.log(`🎉 Verification complete: ${correct} correct, ${incorrect} incorrect`)
 
     return new Response(
       JSON.stringify({
@@ -177,9 +158,9 @@ serve(async (req) => {
     )
 
   } catch (error) {
-    console.error('Error:', error)
+    console.error('💥 Error:', error)
     return new Response(
-      JSON.stringify({ error: error.message, stack: error.stack }),
+      JSON.stringify({ error: error.message }),
       { status: 500, headers: corsHeaders }
     )
   }
