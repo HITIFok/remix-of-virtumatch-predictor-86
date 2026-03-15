@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import { useLiveMatches } from "@/hooks/use-live-matches";
+import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
 import { supabase } from "@/integrations/supabase/client";
 import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
@@ -11,11 +12,13 @@ import { RankingTable, ResultsList } from "@/components/LeagueData";
 import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap, Wifi, WifiOff,
-  Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered
+  Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered,
+  CheckCircle, XCircle, TrendingUp, Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import type { ScrapedMatch } from "@/lib/types";
 
 function MatchCard({
@@ -141,20 +144,18 @@ export default function LiveMatches() {
     stopAutoRefresh,
   } = useLiveMatches();
 
-  // Debug logs
-  console.log('LiveMatches render:', {
-    matchesCount: Object.keys(matchesByLeague).reduce((s, k) => s + matchesByLeague[k].length, 0),
-    resultsCount: results.length,
-    rankingCount: ranking.length,
-    loading,
-    error,
-    lastUpdate
-  });
+  const {
+    stats: predStats,
+    savePrediction,
+    verifyPredictions,
+    loading: predLoading
+  } = usePredictions();
 
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     fetchMatches();
@@ -208,11 +209,47 @@ export default function LiveMatches() {
       const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
       await saveToHistory(result);
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
+      
+      // Save prediction to database for tracking
+      try {
+        await savePrediction({
+          match_id: match.id,
+          home_team: match.home,
+          away_team: match.away,
+          league: match.league,
+          odd_home: match.oddHome,
+          odd_draw: match.oddDraw,
+          odd_away: match.oddAway,
+          prob_home: result.probHome,
+          prob_draw: result.probDraw,
+          prob_away: result.probAway,
+          prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
+          confidence: result.aiConfidence * 100,
+          predicted_home_score: result.scoreHome,
+          predicted_away_score: result.scoreAway,
+          predicted_score: result.exactScore
+        });
+      } catch (e) {
+        console.log('Prediction already saved or error:', e);
+      }
+      
       toast.success("Prédiction ML générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
       setPredictingId(null);
+    }
+  };
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    try {
+      const result = await verifyPredictions();
+      toast.success(`Vérifié: ${result.correct} correct, ${result.incorrect} incorrect`);
+    } catch {
+      toast.error("Erreur lors de la vérification");
+    } finally {
+      setVerifying(false);
     }
   };
 
@@ -280,6 +317,71 @@ export default function LiveMatches() {
               <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30">
                 🔄 Auto 2min
               </Badge>
+            )}
+          </div>
+        )}
+
+        {/* Prediction Stats */}
+        {predStats && predStats.total > 0 && (
+          <div className="bg-gradient-card rounded-xl border border-border p-3 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <TrendingUp size={14} className="text-fire" />
+                <span className="text-xs font-display font-bold text-foreground">Précision des Prédictions</span>
+              </div>
+              <div className="flex items-center gap-1">
+                {predStats.accuracy >= 70 ? (
+                  <CheckCircle size={12} className="text-success" />
+                ) : predStats.accuracy >= 50 ? (
+                  <TrendingUp size={12} className="text-gold" />
+                ) : (
+                  <XCircle size={12} className="text-destructive" />
+                )}
+                <span className={`text-sm font-display font-black ${
+                  predStats.accuracy >= 70 ? 'text-success' : 
+                  predStats.accuracy >= 50 ? 'text-gold' : 'text-destructive'
+                }`}>
+                  {predStats.accuracy}%
+                </span>
+              </div>
+            </div>
+            
+            <Progress value={predStats.accuracy} className="h-2 mb-2" />
+            
+            <div className="grid grid-cols-3 gap-2 text-center text-[9px]">
+              <div className="bg-muted/50 rounded p-1">
+                <span className="text-muted-foreground block">Vérifiées</span>
+                <span className="font-bold text-foreground">{predStats.correct + predStats.incorrect}</span>
+              </div>
+              <div className="bg-success/10 rounded p-1">
+                <span className="text-muted-foreground block">Correctes</span>
+                <span className="font-bold text-success">{predStats.correct}</span>
+              </div>
+              <div className="bg-destructive/10 rounded p-1">
+                <span className="text-muted-foreground block">Incorrectes</span>
+                <span className="font-bold text-destructive">{predStats.incorrect}</span>
+              </div>
+            </div>
+            
+            {predStats.pending > 0 && (
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-[9px] text-muted-foreground">
+                  {predStats.pending} en attente de vérification
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleVerify}
+                  disabled={verifying}
+                  className="text-[9px] h-6"
+                >
+                  {verifying ? (
+                    <Loader2 size={10} className="animate-spin" />
+                  ) : (
+                    <><Eye size={10} className="mr-1" /> Vérifier</>
+                  )}
+                </Button>
+              </div>
             )}
           </div>
         )}
