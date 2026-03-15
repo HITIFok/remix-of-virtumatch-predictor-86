@@ -28,27 +28,6 @@ export interface Prediction {
   created_at: string
 }
 
-export interface PredictionStats {
-  date: string
-  total_predictions: number
-  correct_predictions: number
-  incorrect_predictions: number
-  pending_predictions: number
-  accuracy: number
-  home_wins_predicted: number
-  home_wins_correct: number
-  draws_predicted: number
-  draws_correct: number
-  away_wins_predicted: number
-  away_wins_correct: number
-  high_confidence_total: number
-  high_confidence_correct: number
-  medium_confidence_total: number
-  medium_confidence_correct: number
-  low_confidence_total: number
-  low_confidence_correct: number
-}
-
 export interface AggregatedStats {
   total: number
   correct: number
@@ -65,7 +44,7 @@ export interface AggregatedStats {
     medium: { total: number; correct: number }
     low: { total: number; correct: number }
   }
-  recentAccuracy: number // Last 7 days
+  recentAccuracy: number
 }
 
 export function usePredictions() {
@@ -79,7 +58,6 @@ export function usePredictions() {
     try {
       setLoading(true)
       
-      // Charger les prédictions récentes
       const { data: predData, error: predError } = await supabase
         .from('predictions')
         .select('*')
@@ -90,7 +68,6 @@ export function usePredictions() {
 
       setPredictions((predData as Prediction[]) || [])
 
-      // Calculer les stats agrégées
       if (predData && predData.length > 0) {
         const total = predData.length
         const correct = predData.filter(p => p.status === 'correct').length
@@ -99,17 +76,14 @@ export function usePredictions() {
         const verified = correct + incorrect
         const accuracy = verified > 0 ? Math.round((correct / verified) * 100) : 0
 
-        // Par résultat
         const homePred = predData.filter(p => p.prediction === '1')
         const drawPred = predData.filter(p => p.prediction === 'X')
         const awayPred = predData.filter(p => p.prediction === '2')
 
-        // Par confiance
         const highConf = predData.filter(p => p.confidence >= 70)
         const medConf = predData.filter(p => p.confidence >= 50 && p.confidence < 70)
         const lowConf = predData.filter(p => p.confidence < 50)
 
-        // Calculer précision 7 derniers jours
         const weekAgo = new Date()
         weekAgo.setDate(weekAgo.getDate() - 7)
         const recentPreds = predData.filter(p => new Date(p.created_at) >= weekAgo)
@@ -196,7 +170,6 @@ export function usePredictions() {
         .single()
 
       if (error) {
-        // Si c'est une erreur de doublon, ignorer
         if (error.code === '23505') {
           console.log('Prediction already exists for this match today')
           return null
@@ -204,7 +177,6 @@ export function usePredictions() {
         throw error
       }
 
-      // Recharger les prédictions
       await loadPredictions()
       
       return data as Prediction
@@ -214,66 +186,99 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Sauvegarder plusieurs prédictions
-  const savePredictions = useCallback(async (preds: Array<{
-    match_id?: number
-    home_team: string
-    away_team: string
-    league?: string
-    odd_home: number
-    odd_draw: number
-    odd_away: number
-    prob_home: number
-    prob_draw: number
-    prob_away: number
-    prediction: '1' | 'X' | '2'
-    confidence: number
-    predicted_home_score?: number
-    predicted_away_score?: number
-    predicted_score?: string
-  }>) => {
-    try {
-      const { data, error } = await supabase
-        .from('predictions')
-        .insert(preds.map(p => ({
-          ...p,
-          league: p.league || 'Instant League',
-          status: 'pending'
-        })))
-        .select()
-
-      if (error) throw error
-
-      await loadPredictions()
-      
-      return data as Prediction[]
-    } catch (err) {
-      console.error('Error saving predictions:', err)
-      throw err
-    }
-  }, [loadPredictions])
-
-  // Vérifier les prédictions (appel à la Edge Function)
+  // Vérifier les prédictions - VERSION SIMPLIFIÉE sans Edge Function
   const verifyPredictions = useCallback(async () => {
     try {
-      // Appeler avec les bons headers
-      const { data, error } = await supabase.functions.invoke('verify-predictions', {
-        method: 'POST',
-        headers: {
-          'x-cron-key': 'bet261_cron_2024',
-          'apikey': import.meta.env.VITE_DATABASE_ANON_KEY || ''
-        }
-      })
+      // 1. Récupérer les prédictions en attente
+      const { data: pending, error: fetchError } = await supabase
+        .from('predictions')
+        .select('*')
+        .eq('status', 'pending')
+        .limit(50)
 
-      if (error) {
-        console.error('Edge function error:', error)
-        throw new Error(error.message || 'Erreur de la fonction')
+      if (fetchError) throw fetchError
+
+      if (!pending || pending.length === 0) {
+        return { success: true, message: 'Aucune prédiction à vérifier', verified: 0 }
       }
 
-      // Recharger les données
+      // 2. Récupérer les résultats depuis l'API (directement depuis le navigateur)
+      const LEAGUE_ID = "8035"
+      const API_URL = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=50`
+      
+      const HEADERS = {
+        'User-Agent': 'Mozilla/5.0',
+        'Accept': 'application/json',
+        'Origin': 'https://bet261.mg',
+        'Referer': 'https://bet261.mg/'
+      }
+
+      const response = await fetch(API_URL, { headers: HEADERS })
+      
+      if (!response.ok) {
+        throw new Error(`Erreur API: ${response.status}`)
+      }
+
+      const resultsData = await response.json()
+
+      // 3. Construire le map des résultats
+      const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string }>()
+      
+      if (resultsData.rounds) {
+        for (const round of resultsData.rounds) {
+          for (const m of (round.matches || [])) {
+            const home = m.homeTeam?.name
+            const away = m.awayTeam?.name
+            const score = m.score || "0:0"
+            const [h, a] = score.split(":")
+            const homeScore = parseInt(h) || 0
+            const awayScore = parseInt(a) || 0
+            const outcome = homeScore > awayScore ? '1' : homeScore < awayScore ? '2' : 'X'
+            
+            if (home && away) {
+              resultsMap.set(`${home}|${away}`, { homeScore, awayScore, outcome })
+            }
+          }
+        }
+      }
+
+      // 4. Comparer et mettre à jour
+      let correct = 0
+      let incorrect = 0
+
+      for (const pred of pending) {
+        const key = `${pred.home_team}|${pred.away_team}`
+        const result = resultsMap.get(key)
+
+        if (result) {
+          const isCorrect = pred.prediction === result.outcome
+          
+          if (isCorrect) correct++
+          else incorrect++
+
+          await supabase
+            .from('predictions')
+            .update({
+              actual_home_score: result.homeScore,
+              actual_away_score: result.awayScore,
+              actual_outcome: result.outcome,
+              actual_score: `${result.homeScore}:${result.awayScore}`,
+              status: isCorrect ? 'correct' : 'incorrect',
+              verified_at: new Date().toISOString()
+            })
+            .eq('id', pred.id)
+        }
+      }
+
+      // 5. Recharger les prédictions
       await loadPredictions()
 
-      return data
+      return { 
+        success: true, 
+        correct, 
+        incorrect, 
+        verified: correct + incorrect 
+      }
     } catch (err) {
       console.error('Error verifying predictions:', err)
       throw err
@@ -291,7 +296,6 @@ export function usePredictions() {
     loading,
     error,
     savePrediction,
-    savePredictions,
     verifyPredictions,
     refresh: loadPredictions
   }
