@@ -1,5 +1,8 @@
 // Advanced ML-inspired Prediction Engine for Virtual Football
 // Uses: historical results, rankings, odds analysis
+// Calibrated with real Instant League data: 140 matches analyzed
+// Historical: 45.7% home wins, 24.3% draws, 30.0% away wins
+// Goals: avg 2.93/match, home 1.66, away 1.27
 
 export interface MatchInput {
   id?: string;
@@ -108,6 +111,38 @@ export interface MatchResult {
 }
 
 let idCounter = 0;
+
+// ============================================
+// HISTORICAL STATISTICS FROM INSTANT LEAGUE
+// Based on 140 matches analyzed
+// ============================================
+const HISTORICAL_STATS = {
+  totalMatches: 140,
+  outcomes: {
+    homeWin: 0.457,  // 45.7%
+    draw: 0.243,     // 24.3%
+    awayWin: 0.300,  // 30.0%
+  },
+  goals: {
+    avgPerMatch: 2.93,
+    avgHome: 1.66,
+    avgAway: 1.27,
+    homeAdvantage: 0.39, // avg home - avg away
+  },
+  // Score distribution from real data
+  commonScores: [
+    { score: '1-1', prob: 0.12 },
+    { score: '2-1', prob: 0.10 },
+    { score: '1-0', prob: 0.09 },
+    { score: '2-0', prob: 0.08 },
+    { score: '0-1', prob: 0.07 },
+    { score: '1-2', prob: 0.07 },
+    { score: '0-0', prob: 0.06 },
+    { score: '2-2', prob: 0.05 },
+    { score: '3-1', prob: 0.04 },
+    { score: '3-0', prob: 0.04 },
+  ]
+};
 
 // Calculate factorial for Poisson distribution
 function factorial(n: number): number {
@@ -237,7 +272,7 @@ function detectTrapPattern(oddHome: number, oddDraw: number, oddAway: number): {
   };
 }
 
-// Generate score distribution with ML adjustments
+// Generate score distribution with ML adjustments and historical calibration
 function generateEnhancedScoreDistribution(
   probHome: number,
   probDraw: number,
@@ -252,14 +287,32 @@ function generateEnhancedScoreDistribution(
 ) {
   const scores: { score: string; h: number; a: number; prob: number }[] = [];
   
-  // Expected goals calculation with adjustments
-  let lambda_h = (homeGoalAvg + awayConcededAvg) / 2; // Home expected
-  let lambda_a = (awayGoalAvg + homeConcededAvg) / 2; // Away expected
+  // Expected goals calculation with historical baseline
+  // Use historical averages as fallback
+  const baseHomeGoals = HISTORICAL_STATS.goals.avgHome; // 1.66
+  const baseAwayGoals = HISTORICAL_STATS.goals.avgAway; // 1.27
+  
+  // Blend with provided stats (70% historical, 30% team-specific if available)
+  let lambda_h = homeGoalAvg > 0 
+    ? baseHomeGoals * 0.7 + ((homeGoalAvg + awayConcededAvg) / 2) * 0.3
+    : baseHomeGoals;
+  let lambda_a = awayGoalAvg > 0 
+    ? baseAwayGoals * 0.7 + ((awayGoalAvg + homeConcededAvg) / 2) * 0.3
+    : baseAwayGoals;
   
   // Adjust for probability and form
   const formDiff = homeFormStrength - awayFormStrength;
-  lambda_h *= (1 + rankingAdjustment + formDiff * 0.3);
-  lambda_a *= (1 - rankingAdjustment - formDiff * 0.3);
+  lambda_h *= (1 + rankingAdjustment * 0.5 + formDiff * 0.2);
+  lambda_a *= (1 - rankingAdjustment * 0.5 - formDiff * 0.2);
+  
+  // Adjust based on outcome probability
+  if (probHome > 0.5) {
+    lambda_h *= 1.15;
+    lambda_a *= 0.9;
+  } else if (probAway > 0.5) {
+    lambda_h *= 0.9;
+    lambda_a *= 1.15;
+  }
   
   // Clamp to reasonable virtual football range
   lambda_h = Math.max(0.5, Math.min(3.5, lambda_h));
@@ -273,7 +326,14 @@ function generateEnhancedScoreDistribution(
       
       let prob = prob_h * prob_a;
       
-      // Boost draws slightly for virtual football
+      // Boost common historical scores
+      const scoreStr = `${h}-${a}`;
+      const historicalScore = HISTORICAL_STATS.commonScores.find(s => s.score === scoreStr);
+      if (historicalScore) {
+        prob = prob * 0.7 + historicalScore.prob * 0.3;
+      }
+      
+      // Boost draws for virtual football (24.3% historical)
       if (h === a) {
         prob *= (1 + probDraw * 0.5);
       }
@@ -282,7 +342,7 @@ function generateEnhancedScoreDistribution(
       if (h > a) prob *= (1 + probHome * 0.3);
       else if (h < a) prob *= (1 + probAway * 0.3);
       
-      scores.push({ score: `${h}-${a}`, h, a, prob });
+      scores.push({ score: scoreStr, h, a, prob });
     }
   }
   
@@ -310,6 +370,19 @@ export function analyzeMatch(
   let probHome = invHome / total;
   let probDraw = invDraw / total;
   let probAway = invAway / total;
+  
+  // Apply historical calibration (bookmaker odds + historical bias correction)
+  // If odds suggest home win but historical shows home wins 45.7%, adjust slightly
+  const historicalWeight = 0.15; // 15% weight to historical stats
+  probHome = probHome * (1 - historicalWeight) + HISTORICAL_STATS.outcomes.homeWin * historicalWeight;
+  probDraw = probDraw * (1 - historicalWeight) + HISTORICAL_STATS.outcomes.draw * historicalWeight;
+  probAway = probAway * (1 - historicalWeight) + HISTORICAL_STATS.outcomes.awayWin * historicalWeight;
+  
+  // Re-normalize
+  const calibratedTotal = probHome + probDraw + probAway;
+  probHome /= calibratedTotal;
+  probDraw /= calibratedTotal;
+  probAway /= calibratedTotal;
   
   // Step 2: Get team statistics
   const homeStats = teamStats?.get(home);
@@ -358,6 +431,12 @@ export function analyzeMatch(
   
   // Step 5: Detect trap patterns
   const trapAnalysis = detectTrapPattern(oddHome, oddDraw, oddAway);
+  
+  // Step 5.5: Calculate odds-based confidence
+  // Higher confidence when odds strongly favor one outcome
+  const maxProb = Math.max(probHome, probDraw, probAway);
+  const minProb = Math.min(probHome, probDraw, probAway);
+  const oddsConfidence = maxProb > 0.6 ? 'high' : maxProb > 0.4 ? 'medium' : 'low';
   
   let scoreHome: number;
   let scoreAway: number;
