@@ -256,13 +256,19 @@ export function usePredictions() {
   // Vérifier les prédictions (appel à la Edge Function)
   const verifyPredictions = useCallback(async () => {
     try {
+      // Appeler avec les bons headers
       const { data, error } = await supabase.functions.invoke('verify-predictions', {
+        method: 'POST',
         headers: {
-          'x-cron-key': 'bet261_cron_2024'
+          'x-cron-key': 'bet261_cron_2024',
+          'apikey': import.meta.env.VITE_DATABASE_ANON_KEY || ''
         }
       })
 
-      if (error) throw error
+      if (error) {
+        console.error('Edge function error:', error)
+        throw new Error(error.message || 'Erreur de la fonction')
+      }
 
       // Recharger les données
       await loadPredictions()
