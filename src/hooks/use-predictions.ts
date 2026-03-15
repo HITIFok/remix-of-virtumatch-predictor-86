@@ -186,23 +186,41 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier les prédictions via Edge Function
+  // Vérifier les prédictions - appel direct à l'Edge Function via fetch
   const verifyPredictions = useCallback(async () => {
     try {
-      // Appeler l'Edge Function avec l'apikey
-      const { data, error } = await supabase.functions.invoke('verify-predictions', {
+      const supabaseUrl = import.meta.env.VITE_DATABASE_URL
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+      
+      if (!supabaseUrl || !anonKey) {
+        throw new Error('Configuration Supabase manquante')
+      }
+
+      // Appel direct via fetch (plus fiable que supabase.functions.invoke)
+      const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
         method: 'POST',
         headers: {
-          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || ''}`
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`
         }
       })
 
-      if (error) {
-        console.error('Edge function error:', error)
-        throw new Error(error.message || 'Erreur de la fonction')
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Edge Function error:', response.status, errorText)
+        
+        if (response.status === 404) {
+          throw new Error('Edge Function non trouvée. Déployez-la depuis Supabase.')
+        } else if (response.status === 401) {
+          throw new Error('Non autorisé. Vérifiez la configuration.')
+        } else {
+          throw new Error(`Erreur ${response.status}: ${errorText}`)
+        }
       }
 
+      const data = await response.json()
+      
       // Recharger les données
       await loadPredictions()
 

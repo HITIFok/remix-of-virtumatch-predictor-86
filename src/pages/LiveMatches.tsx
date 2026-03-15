@@ -258,11 +258,15 @@ export default function LiveMatches() {
       }
     } catch (err) {
       console.error('Verify error:', err);
-      const msg = err instanceof Error ? err.message : 'Erreur lors de la vérification';
+      let msg = err instanceof Error ? err.message : 'Erreur lors de la vérification';
       
-      // Message plus utile si l'API est bloquée
-      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        toast.error('Connexion à l\'API impossible. Réessaie depuis Madagascar.');
+      // Messages d'erreur spécifiques
+      if (msg.includes('Edge Function non trouvée')) {
+        toast.error('⚠️ Edge Function non déployée. Déployez "verify-predictions" depuis Supabase.');
+      } else if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        toast.error('Connexion impossible. Essayez depuis Termux avec: python3 verify_all.py');
+      } else if (msg.includes('403') || msg.includes('API')) {
+        toast.error('API bloquée. Exécutez depuis Madagascar: python3 verify_all.py');
       } else {
         toast.error(msg);
       }
