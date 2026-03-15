@@ -246,15 +246,26 @@ export default function LiveMatches() {
     try {
       const result = await verifyPredictions();
       console.log('Verify result:', result);
+      
       if (result?.success) {
-        toast.success(`✅ Vérifié: ${result.correct || 0} correct, ${result.incorrect || 0} incorrect`);
+        if (result.verified > 0) {
+          toast.success(`✅ Vérifié: ${result.correct} correct, ${result.incorrect} incorrect`);
+        } else {
+          toast.info('Aucun résultat trouvé pour les prédictions en attente');
+        }
       } else {
         toast.info(result?.message || 'Aucune prédiction à vérifier');
       }
     } catch (err) {
       console.error('Verify error:', err);
       const msg = err instanceof Error ? err.message : 'Erreur lors de la vérification';
-      toast.error(msg);
+      
+      // Message plus utile si l'API est bloquée
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        toast.error('Connexion à l\'API impossible. Réessaie depuis Madagascar.');
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setVerifying(false);
     }
