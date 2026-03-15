@@ -186,99 +186,27 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier les prédictions - VERSION SIMPLIFIÉE sans Edge Function
+  // Vérifier les prédictions via Edge Function
   const verifyPredictions = useCallback(async () => {
     try {
-      // 1. Récupérer les prédictions en attente
-      const { data: pending, error: fetchError } = await supabase
-        .from('predictions')
-        .select('*')
-        .eq('status', 'pending')
-        .limit(50)
-
-      if (fetchError) throw fetchError
-
-      if (!pending || pending.length === 0) {
-        return { success: true, message: 'Aucune prédiction à vérifier', verified: 0 }
-      }
-
-      // 2. Récupérer les résultats depuis l'API (directement depuis le navigateur)
-      const LEAGUE_ID = "8035"
-      const API_URL = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=50`
-      
-      const HEADERS = {
-        'User-Agent': 'Mozilla/5.0',
-        'Accept': 'application/json',
-        'Origin': 'https://bet261.mg',
-        'Referer': 'https://bet261.mg/'
-      }
-
-      const response = await fetch(API_URL, { headers: HEADERS })
-      
-      if (!response.ok) {
-        throw new Error(`Erreur API: ${response.status}`)
-      }
-
-      const resultsData = await response.json()
-
-      // 3. Construire le map des résultats
-      const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string }>()
-      
-      if (resultsData.rounds) {
-        for (const round of resultsData.rounds) {
-          for (const m of (round.matches || [])) {
-            const home = m.homeTeam?.name
-            const away = m.awayTeam?.name
-            const score = m.score || "0:0"
-            const [h, a] = score.split(":")
-            const homeScore = parseInt(h) || 0
-            const awayScore = parseInt(a) || 0
-            const outcome = homeScore > awayScore ? '1' : homeScore < awayScore ? '2' : 'X'
-            
-            if (home && away) {
-              resultsMap.set(`${home}|${away}`, { homeScore, awayScore, outcome })
-            }
-          }
+      // Appeler l'Edge Function avec l'apikey
+      const { data, error } = await supabase.functions.invoke('verify-predictions', {
+        method: 'POST',
+        headers: {
+          'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || ''}`
         }
+      })
+
+      if (error) {
+        console.error('Edge function error:', error)
+        throw new Error(error.message || 'Erreur de la fonction')
       }
 
-      // 4. Comparer et mettre à jour
-      let correct = 0
-      let incorrect = 0
-
-      for (const pred of pending) {
-        const key = `${pred.home_team}|${pred.away_team}`
-        const result = resultsMap.get(key)
-
-        if (result) {
-          const isCorrect = pred.prediction === result.outcome
-          
-          if (isCorrect) correct++
-          else incorrect++
-
-          await supabase
-            .from('predictions')
-            .update({
-              actual_home_score: result.homeScore,
-              actual_away_score: result.awayScore,
-              actual_outcome: result.outcome,
-              actual_score: `${result.homeScore}:${result.awayScore}`,
-              status: isCorrect ? 'correct' : 'incorrect',
-              verified_at: new Date().toISOString()
-            })
-            .eq('id', pred.id)
-        }
-      }
-
-      // 5. Recharger les prédictions
+      // Recharger les données
       await loadPredictions()
 
-      return { 
-        success: true, 
-        correct, 
-        incorrect, 
-        verified: correct + incorrect 
-      }
+      return data
     } catch (err) {
       console.error('Error verifying predictions:', err)
       throw err
