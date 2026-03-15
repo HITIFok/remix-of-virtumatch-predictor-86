@@ -117,11 +117,11 @@ let idCounter = 0;
 // Based on 140 matches analyzed
 // ============================================
 const HISTORICAL_STATS = {
-  totalMatches: 140,
+  totalMatches: 300,
   outcomes: {
-    homeWin: 0.457,  // 45.7%
-    draw: 0.243,     // 24.3%
-    awayWin: 0.300,  // 30.0%
+    homeWin: 0.457,  // 45.7% - 137 matchs
+    draw: 0.270,     // 27.0% - 81 matchs
+    awayWin: 0.273,  // 27.3% - 82 matchs
   },
   goals: {
     avgPerMatch: 2.93,
