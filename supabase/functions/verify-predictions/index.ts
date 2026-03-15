@@ -1,22 +1,12 @@
 // Supabase Edge Function: verify-predictions
-// Vérifie les prédictions en attente et les compare aux résultats réels
-// SANS autorisation complexe - appelé depuis l'app frontend
+// Vérifie les prédictions en attente en utilisant les résultats STOCKÉS dans scraped_data
+// NE fait PLUS d'appel API direct - utilise les données scrapées par Python/Termux
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
-const DATABASE_ANON_KEY = Deno.env.get('DATABASE_ANON_KEY')!
-
-const LEAGUE_ID = "8035"
-const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=50`
-
-const HEADERS = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0",
-  "Accept": "application/json",
-}
+const DATABASE_SERVICE_KEY = Deno.env.get('DATABASE_SERVICE_KEY')!
 
 // CORS headers
 const corsHeaders = {
@@ -29,13 +19,14 @@ const corsHeaders = {
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
+    console.log('📡 CORS preflight request')
     return new Response(null, { status: 204, headers: corsHeaders })
   }
 
   console.log('🔍 Verify predictions called - Method:', req.method)
 
-  // Utiliser le client avec la clé anon (pas besoin de service_role pour lire)
-  const supabase = createClient(DATABASE_URL, DATABASE_ANON_KEY)
+  // Utiliser SERVICE_ROLE pour pouvoir écrire dans predictions
+  const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY)
 
   try {
     console.log('📊 Fetching pending predictions...')
@@ -65,47 +56,59 @@ serve(async (req) => {
       )
     }
 
-    // 2. Récupérer les résultats depuis l'API
-    console.log('🌐 Fetching results from API...')
-    const response = await fetch(API_RESULTS, { headers: HEADERS })
+    // 2. Récupérer les résultats DEPUIS LA TABLE scraped_data (pas d'appel API !)
+    console.log('📦 Fetching results from scraped_data table...')
     
-    if (!response.ok) {
-      console.error('❌ API error:', response.status)
+    const { data: scrapedResults, error: scrapeError } = await supabase
+      .from('scraped_data')
+      .select('payload, scraped_at')
+      .eq('data_type', 'results')
+      .eq('league', 'Instant League')
+      .order('scraped_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (scrapeError || !scrapedResults) {
+      console.error('❌ No scraped results found:', scrapeError)
       return new Response(
-        JSON.stringify({ error: `API error: ${response.status}`, hint: 'API may be geo-blocked from Supabase servers' }),
-        { status: 500, headers: corsHeaders }
+        JSON.stringify({ 
+          error: 'Pas de résultats scrapés disponibles. Exécutez refresh_matches.py depuis Termux.',
+          hint: 'Les résultats doivent être scrapés depuis Madagascar'
+        }),
+        { status: 200, headers: corsHeaders }
       )
     }
 
-    const resultsData = await response.json()
-    console.log('✅ API response received')
+    console.log(`✅ Found scraped results from ${scrapedResults.scraped_at}`)
 
-    // 3. Construire le map des résultats
+    // 3. Construire le map des résultats depuis le payload
     const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string }>()
+    const resultsPayload = scrapedResults.payload as Array<{
+      home: string
+      away: string
+      scoreHome: number
+      scoreAway: number
+      round: number
+      league: string
+    }>
 
-    if (resultsData.rounds) {
-      for (const roundData of resultsData.rounds) {
-        for (const match of (roundData.matches || [])) {
-          const homeTeam = match.homeTeam?.name
-          const awayTeam = match.awayTeam?.name
-          const score = match.score || "0:0"
-          const parts = score.split(":")
-          const homeScore = parseInt(parts[0]) || 0
-          const awayScore = parseInt(parts[1]) || 0
+    for (const result of resultsPayload) {
+      const homeTeam = result.home
+      const awayTeam = result.away
+      const homeScore = result.scoreHome
+      const awayScore = result.scoreAway
 
-          let outcome: string
-          if (homeScore > awayScore) outcome = '1'
-          else if (homeScore < awayScore) outcome = '2'
-          else outcome = 'X'
+      let outcome: string
+      if (homeScore > awayScore) outcome = '1'
+      else if (homeScore < awayScore) outcome = '2'
+      else outcome = 'X'
 
-          if (homeTeam && awayTeam) {
-            resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome })
-          }
-        }
+      if (homeTeam && awayTeam) {
+        resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome })
       }
     }
 
-    console.log(`📊 Found ${resultsMap.size} results in API`)
+    console.log(`📊 Found ${resultsMap.size} results in scraped data`)
 
     // 4. Comparer et mettre à jour
     let correct = 0
@@ -152,7 +155,9 @@ serve(async (req) => {
         verified: updates.length,
         correct,
         incorrect,
-        stillPending: pendingPredictions.length - updates.length
+        stillPending: pendingPredictions.length - updates.length,
+        scrapedAt: scrapedResults.scraped_at,
+        source: 'scraped_data table'
       }),
       { status: 200, headers: corsHeaders }
     )
