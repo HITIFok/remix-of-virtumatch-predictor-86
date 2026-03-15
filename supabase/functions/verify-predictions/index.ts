@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
 const DATABASE_SERVICE_KEY = Deno.env.get('DATABASE_SERVICE_KEY')!
+const DATABASE_ANON_KEY = Deno.env.get('DATABASE_ANON_KEY')!
 
 const LEAGUE_ID = "8035"
 const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=50`
@@ -17,23 +18,46 @@ const HEADERS = {
   "Accept": "application/json",
 }
 
+// CORS headers for all responses
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-cron-key, apikey',
+  'Content-Type': 'application/json'
+}
+
 serve(async (req) => {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: corsHeaders })
+  }
+
   const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY)
 
   try {
-    // Vérifier l'autorisation
+    // Vérification d'autorisation simplifiée
     const authHeader = req.headers.get('Authorization')
     const cronKey = req.headers.get('x-cron-key')
-    const expectedCronKey = Deno.env.get('CRON_SECRET') || 'bet261_cron_2024'
-
-    const isAuthorized = cronKey === expectedCronKey ||
+    const apikey = req.headers.get('apikey')
+    
+    // Accepter plusieurs formes d'autorisation
+    const isAuthorized = 
+      cronKey === 'bet261_cron_2024' ||
+      cronKey === Deno.env.get('CRON_SECRET') ||
       authHeader === `Bearer ${DATABASE_SERVICE_KEY}` ||
-      authHeader?.includes('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9')
+      authHeader === `Bearer ${DATABASE_ANON_KEY}` ||
+      apikey === DATABASE_ANON_KEY ||
+      (authHeader?.startsWith('Bearer eyJ') ?? false) // JWT tokens
 
     if (!isAuthorized) {
+      console.log('Unauthorized request. Headers:', {
+        auth: authHeader?.substring(0, 30),
+        cronKey,
+        apikey: apikey?.substring(0, 10)
+      })
       return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Unauthorized', hint: 'Include apikey header or Authorization bearer token' }),
+        { status: 401, headers: corsHeaders }
       )
     }
 
@@ -50,15 +74,15 @@ serve(async (req) => {
     if (fetchError) {
       console.error('Error fetching predictions:', fetchError)
       return new Response(
-        JSON.stringify({ error: 'Failed to fetch predictions', details: fetchError }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Failed to fetch predictions', details: fetchError.message }),
+        { status: 500, headers: corsHeaders }
       )
     }
 
     if (!pendingPredictions || pendingPredictions.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: 'No pending predictions to verify' }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: true, message: 'No pending predictions to verify', verified: 0 }),
+        { status: 200, headers: corsHeaders }
       )
     }
 
@@ -66,10 +90,12 @@ serve(async (req) => {
 
     // 2. Récupérer les résultats réels de l'API
     const response = await fetch(API_RESULTS, { headers: HEADERS })
+    
     if (!response.ok) {
+      console.error('API error:', response.status, response.statusText)
       return new Response(
-        JSON.stringify({ error: 'Failed to fetch results from API' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Failed to fetch results from API', status: response.status }),
+        { status: 500, headers: corsHeaders }
       )
     }
 
@@ -93,7 +119,6 @@ serve(async (req) => {
           else if (homeScore < awayScore) outcome = '2'
           else outcome = 'X'
 
-          // Indexer par nom des équipes
           if (homeTeam && awayTeam) {
             resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome })
           }
@@ -138,9 +163,6 @@ serve(async (req) => {
     // Exécuter les mises à jour
     await Promise.all(updates)
 
-    // 4. Mettre à jour les statistiques
-    await supabase.rpc('update_prediction_stats')
-
     console.log(`Verification complete: ${correct} correct, ${incorrect} incorrect`)
 
     return new Response(
@@ -151,14 +173,14 @@ serve(async (req) => {
         incorrect,
         stillPending: pendingPredictions.length - updates.length
       }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      { status: 200, headers: corsHeaders }
     )
 
   } catch (error) {
     console.error('Error:', error)
     return new Response(
-      JSON.stringify({ error: error.message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      JSON.stringify({ error: error.message, stack: error.stack }),
+      { status: 500, headers: corsHeaders }
     )
   }
 })

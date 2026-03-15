@@ -245,9 +245,16 @@ export default function LiveMatches() {
     setVerifying(true);
     try {
       const result = await verifyPredictions();
-      toast.success(`Vérifié: ${result.correct} correct, ${result.incorrect} incorrect`);
-    } catch {
-      toast.error("Erreur lors de la vérification");
+      console.log('Verify result:', result);
+      if (result?.success) {
+        toast.success(`✅ Vérifié: ${result.correct || 0} correct, ${result.incorrect || 0} incorrect`);
+      } else {
+        toast.info(result?.message || 'Aucune prédiction à vérifier');
+      }
+    } catch (err) {
+      console.error('Verify error:', err);
+      const msg = err instanceof Error ? err.message : 'Erreur lors de la vérification';
+      toast.error(msg);
     } finally {
       setVerifying(false);
     }
