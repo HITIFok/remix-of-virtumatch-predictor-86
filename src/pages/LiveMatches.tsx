@@ -189,24 +189,14 @@ export default function LiveMatches() {
         oddAway: match.oddAway,
       };
 
-      // Try AI prediction first
-      const { data, error: fnError } = await supabase.functions.invoke("analyze-match", {
-        body: { matches: [matchInput] },
-      });
-
-      let aiPrediction: AIPrediction | undefined;
-      if (!fnError && data?.predictions?.[0]) {
-        aiPrediction = data.predictions[0];
-      }
-
       // Build team stats map from ranking data
       const teamStatsMap = buildTeamStatsMap(ranking);
       
       // Prepare historical results
       const historicalResults = prepareHistoricalResults(results);
 
-      // Enhanced prediction with ML analysis
-      const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
+      // Local prediction (no external AI needed)
+      const result = analyzeMatch(matchInput, undefined, teamStatsMap, historicalResults);
       await saveToHistory(result);
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
       
@@ -233,7 +223,7 @@ export default function LiveMatches() {
         console.log('Prediction already saved or error:', e);
       }
       
-      toast.success("Prédiction ML générée 🔥");
+      toast.success("Prédiction générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
@@ -388,7 +378,7 @@ export default function LiveMatches() {
             {predStats.pending > 0 && (
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[9px] text-muted-foreground">
-                  {predStats.pending} en attente (v2.2)
+                  {predStats.pending} en attente (v2.3)
                 </span>
                 <Button
                   size="sm"
