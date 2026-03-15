@@ -4,14 +4,14 @@ import BottomNav from "@/components/BottomNav";
 import { useLiveMatches } from "@/hooks/use-live-matches";
 import { isPremium } from "@/lib/storage";
 import { supabase } from "@/integrations/supabase/client";
-import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
+import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
 import { RankingTable, ResultsList } from "@/components/LeagueData";
 import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap, Wifi, WifiOff,
-  Shield, Swords, Target, AlertTriangle, MapPin, BarChart3, ListOrdered, Download
+  Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -134,11 +134,9 @@ export default function LiveMatches() {
     results,
     ranking,
     loading,
-    scraping,
     lastUpdate,
     error,
     fetchMatches,
-    refreshData,
     startAutoRefresh,
     stopAutoRefresh,
   } = useLiveMatches();
@@ -174,9 +172,7 @@ export default function LiveMatches() {
     }
   };
 
-  const handleScrape = async () => {
-    await refreshData();
-  };
+
 
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
@@ -192,6 +188,7 @@ export default function LiveMatches() {
         oddAway: match.oddAway,
       };
 
+      // Try AI prediction first
       const { data, error: fnError } = await supabase.functions.invoke("analyze-match", {
         body: { matches: [matchInput] },
       });
@@ -201,10 +198,17 @@ export default function LiveMatches() {
         aiPrediction = data.predictions[0];
       }
 
-      const result = analyzeMatch(matchInput, aiPrediction);
+      // Build team stats map from ranking data
+      const teamStatsMap = buildTeamStatsMap(ranking);
+      
+      // Prepare historical results
+      const historicalResults = prepareHistoricalResults(results);
+
+      // Enhanced prediction with ML analysis
+      const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
       await saveToHistory(result);
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
-      toast.success("Prédiction générée 🔥");
+      toast.success("Prédiction ML générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
@@ -252,24 +256,6 @@ export default function LiveMatches() {
               {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             </Button>
           </div>
-        </div>
-
-        {/* Scrape button */}
-        <div className="mb-4">
-          <Button
-            onClick={handleScrape}
-            disabled={scraping}
-            className="w-full bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider"
-          >
-            {scraping ? (
-              <><Loader2 size={14} className="mr-1.5 animate-spin" /> SCRAPING EN COURS...</>
-            ) : (
-              <><Download size={14} className="mr-1.5" /> SCRAPER LES DONNÉES (4G Madagascar)</>
-            )}
-          </Button>
-          <p className="text-[9px] text-muted-foreground text-center mt-1">
-            Nécessite une connexion Madagascar (4G)
-          </p>
         </div>
 
         {/* Stats bar */}
@@ -408,7 +394,7 @@ export default function LiveMatches() {
             <Trophy size={40} className="mx-auto text-muted-foreground/30 mb-3" />
             <p className="text-sm text-muted-foreground font-display">Aucune donnée trouvée</p>
             <p className="text-[10px] text-muted-foreground mt-1">
-              Cliquez sur "SCRAPER LES DONNÉES" pour récupérer les matchs
+              Les données se mettent à jour automatiquement
             </p>
           </div>
         )}
