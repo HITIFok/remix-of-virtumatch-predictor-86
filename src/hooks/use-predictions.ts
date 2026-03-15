@@ -186,27 +186,47 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier les prédictions - utilise la même méthode que auto-scrape
+  // Vérifier les prédictions - appel direct via fetch avec timeout
   const verifyPredictions = useCallback(async () => {
     try {
-      // Utiliser supabase.functions.invoke() comme auto-scrape (méthode officielle)
-      const { data, error } = await supabase.functions.invoke('verify-predictions', {
+      const supabaseUrl = import.meta.env.VITE_DATABASE_URL
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+      
+      console.log('🔍 Calling verify-predictions...')
+      
+      // Appel direct avec fetch et timeout de 30 secondes
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000)
+      
+      const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`
+        },
+        signal: controller.signal
       })
-
-      if (error) {
-        console.error('Edge Function error:', error)
-        throw new Error(`Erreur: ${error.message}`)
+      
+      clearTimeout(timeoutId)
+      
+      console.log('📡 Response status:', response.status)
+      
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ Error response:', errorText)
+        throw new Error(`Erreur ${response.status}: ${errorText}`)
       }
-
-      console.log('Verification result:', data)
+      
+      const data = await response.json()
+      console.log('✅ Verification result:', data)
       
       // Recharger les données
       await loadPredictions()
 
       return data
     } catch (err) {
-      console.error('Error verifying predictions:', err)
+      console.error('❌ Error verifying predictions:', err)
       throw err
     }
   }, [loadPredictions])
