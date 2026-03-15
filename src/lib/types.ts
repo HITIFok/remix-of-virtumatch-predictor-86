@@ -1,12 +1,15 @@
 export interface ScrapedMatch {
+  id?: number;
   league: string;
   home: string;
   away: string;
-  kickoff: string;
+  kickoff?: string;
+  expectedStart?: string;
   oddHome: number;
   oddDraw: number;
   oddAway: number;
-  status: "upcoming" | "live" | "finished";
+  status: string;
+  round?: number;
   minute?: number | null;
   scoreHome?: number | null;
   scoreAway?: number | null;
@@ -19,6 +22,7 @@ export interface MatchResult {
   scoreHome: number;
   scoreAway: number;
   league?: string;
+  round?: number;
   matchday?: string | number;
 }
 
