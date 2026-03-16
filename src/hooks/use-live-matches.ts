@@ -34,45 +34,41 @@ export function useLiveMatches() {
   // Load data from Supabase table for the selected league
   const loadFromDatabase = useCallback(async (leagueName?: string) => {
     try {
-      // Pour l'instant, charger toutes les données car le nom de ligue peut varier
+      const targetLeague = leagueName || selectedLeague.name;
+      console.log(`🔍 Loading data for league: ${targetLeague}`);
+
+      // Charger uniquement les données pour cette ligue
       const { data, error: dbError } = await supabase
         .from("scraped_data")
         .select("*")
+        .eq("league", targetLeague)
         .order("scraped_at", { ascending: false });
 
       if (dbError) throw new Error(dbError.message);
 
       if (!data || data.length === 0) {
+        console.log(`❌ No data found for league: ${targetLeague}`);
+        // Vider les données si aucune donnée pour cette ligue
+        setMatches([]);
+        setResults([]);
+        setRanking([]);
         return false;
       }
 
       const rawData = data as ScrapedDataRaw[];
-
-      // Filtrer par ligue si spécifié
-      const targetLeague = leagueName || selectedLeague.name;
-      const filteredData = rawData.filter(d => d.league === targetLeague || !d.league);
-
-      if (filteredData.length === 0) {
-        // Essayer avec "Instant League" comme fallback
-        const instantLeagueData = rawData.filter(d => d.league === "Instant League");
-        if (instantLeagueData.length === 0) {
-          return false;
-        }
-      }
-
-      const dataToUse = filteredData.length > 0 ? filteredData : rawData;
+      console.log(`✅ Found ${rawData.length} entries for ${targetLeague}`);
 
       // Get latest by type
-      const latestMatches = dataToUse.find((d: any) => d.data_type === "matches");
-      const latestResults = dataToUse.find((d: any) => d.data_type === "results");
-      const latestRanking = dataToUse.find((d: any) => d.data_type === "ranking");
+      const latestMatches = rawData.find((d: any) => d.data_type === "matches");
+      const latestResults = rawData.find((d: any) => d.data_type === "results");
+      const latestRanking = rawData.find((d: any) => d.data_type === "ranking");
 
       // Parse matches
       if (latestMatches?.payload) {
         const parsedMatches = Array.isArray(latestMatches.payload)
           ? latestMatches.payload
           : [];
-        console.log(`📋 Parsing ${parsedMatches.length} matches from DB`);
+        console.log(`📋 Parsing ${parsedMatches.length} matches for ${targetLeague}`);
         setMatches(parsedMatches.map((m: any) => ({
           league: m.league || targetLeague,
           home: m.home || "",
@@ -90,6 +86,7 @@ export function useLiveMatches() {
           round: m.round,
         })));
       } else {
+        console.log(`❌ No matches payload for ${targetLeague}`);
         setMatches([]);
       }
 
@@ -98,6 +95,7 @@ export function useLiveMatches() {
         const parsedResults = Array.isArray(latestResults.payload)
           ? latestResults.payload
           : [];
+        console.log(`📊 Parsing ${parsedResults.length} results for ${targetLeague}`);
         setResults(parsedResults.map((r: any) => ({
           home: r.home || r.homeTeam || "",
           away: r.away || r.awayTeam || "",
@@ -115,6 +113,7 @@ export function useLiveMatches() {
         const parsedRanking = Array.isArray(latestRanking.payload)
           ? latestRanking.payload
           : [];
+        console.log(`🏆 Parsing ${parsedRanking.length} teams for ${targetLeague}`);
         setRanking(parsedRanking.map((t: any) => ({
           position: t.position || t.rank || 0,
           team: t.team || t.name || "",
@@ -132,7 +131,7 @@ export function useLiveMatches() {
       }
 
       // Set last update time
-      const latestScrapedAt = dataToUse[0]?.scraped_at;
+      const latestScrapedAt = rawData[0]?.scraped_at;
       setLastUpdate(latestScrapedAt || new Date().toISOString());
 
       return true;
@@ -157,7 +156,6 @@ export function useLiveMatches() {
         if (hasData) {
           setError(null);
           if (!silent) {
-            // Ne pas afficher d'erreur si on a des données en cache
             console.log("✅ Données chargées depuis le cache");
           }
         } else {
@@ -199,7 +197,7 @@ export function useLiveMatches() {
     }
   }, [selectedLeagueId, selectedLeague, loadFromDatabase]);
 
-  // Fetch matches - load from DB first, don't call Edge Function automatically
+  // Fetch matches - load from DB first
   const fetchMatches = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
@@ -253,11 +251,17 @@ export function useLiveMatches() {
 
   // Change league
   const changeLeague = useCallback(async (leagueId: LeagueId) => {
+    console.log(`🔄 Changing league to: ${leagueId}`);
+
     // Stop auto-refresh if active
     if (autoScrapeActive) {
       stopAutoRefresh();
     }
 
+    // Get new league info
+    const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
+
+    // Update state immediately
     setSelectedLeagueId(leagueId);
 
     // Clear current data
@@ -265,16 +269,18 @@ export function useLiveMatches() {
     setResults([]);
     setRanking([]);
     setError(null);
+    setLastUpdate(null);
 
-    // Load data for new league from cache
-    const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
     if (newLeague) {
       setLoading(true);
+
+      // Load data for new league
       const hasData = await loadFromDatabase(newLeague.name);
 
       if (!hasData) {
         setError(`Aucune donnée pour ${newLeague.name}. Cliquez sur refresh pour actualiser.`);
       }
+
       setLoading(false);
     }
   }, [autoScrapeActive, stopAutoRefresh, loadFromDatabase]);
