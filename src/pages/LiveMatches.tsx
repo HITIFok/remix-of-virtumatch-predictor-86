@@ -217,7 +217,21 @@ export default function LiveMatches() {
           confidence: result.aiConfidence * 100,
           predicted_home_score: result.scoreHome,
           predicted_away_score: result.scoreAway,
-          predicted_score: result.exactScore
+          predicted_score: result.exactScore,
+          // Champs supplémentaires pour éviter N/A
+          winner_1x2: result.winner1X2,
+          gg_result: result.ggResult,
+          total_goals: result.totalGoals,
+          parity: result.parity,
+          over_under_15: result.overUnder15,
+          over_under_25: result.overUnder25,
+          over_under_35: result.overUnder35,
+          prob_gg: result.probGG,
+          prob_gn: result.probGN,
+          btts_prob: result.bttsProb,
+          over25_prob: result.over25Prob,
+          first_half_goal_prob: result.firstHalfGoalProb,
+          expected_goals: result.expectedGoals,
         });
       } catch (e) {
         console.log('Prediction already saved or error:', e);
