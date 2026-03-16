@@ -137,9 +137,12 @@ export default function LiveMatches() {
     results,
     ranking,
     loading,
+    scraping,
     lastUpdate,
     error,
+    autoScrapeActive,
     fetchMatches,
+    refreshData,
     startAutoRefresh,
     stopAutoRefresh,
   } = useLiveMatches();
@@ -151,7 +154,6 @@ export default function LiveMatches() {
     loading: predLoading
   } = usePredictions();
 
-  const [autoRefresh, setAutoRefresh] = useState(false);
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
@@ -162,14 +164,10 @@ export default function LiveMatches() {
   }, []);
 
   const toggleAutoRefresh = () => {
-    if (autoRefresh) {
+    if (autoScrapeActive) {
       stopAutoRefresh();
-      setAutoRefresh(false);
-      toast.info("Rafraîchissement auto désactivé");
     } else {
       startAutoRefresh();
-      setAutoRefresh(true);
-      toast.success("Rafraîchissement auto activé (2 min)");
     }
   };
 
@@ -289,17 +287,17 @@ export default function LiveMatches() {
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              variant={autoRefresh ? "default" : "outline"}
+              variant={autoScrapeActive ? "default" : "outline"}
               onClick={toggleAutoRefresh}
-              className={`text-xs ${autoRefresh ? "bg-gradient-fire text-primary-foreground" : ""}`}
+              className={`text-xs ${autoScrapeActive ? "bg-gradient-fire text-primary-foreground" : ""}`}
             >
-              {autoRefresh ? <Wifi size={14} /> : <WifiOff size={14} />}
+              {autoScrapeActive ? <Wifi size={14} /> : <WifiOff size={14} />}
             </Button>
             <Button
               size="sm"
               variant="outline"
-              onClick={() => fetchMatches()}
-              disabled={loading}
+              onClick={() => refreshData()}
+              disabled={loading || scraping}
               className="text-xs"
             >
               {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
@@ -325,9 +323,9 @@ export default function LiveMatches() {
                 🏆 {ranking.length} Équipes
               </Badge>
             )}
-            {autoRefresh && (
+            {autoScrapeActive && (
               <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30">
-                🔄 Auto 2min
+                🔄 Auto 30s
               </Badge>
             )}
           </div>
@@ -378,7 +376,7 @@ export default function LiveMatches() {
             {predStats.pending > 0 && (
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[9px] text-muted-foreground">
-                  {predStats.pending} en attente (v2.4)
+                  {predStats.pending} en attente (v2.5)
                 </span>
                 <Button
                   size="sm"
