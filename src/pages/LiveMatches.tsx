@@ -378,7 +378,7 @@ export default function LiveMatches() {
             {predStats.pending > 0 && (
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[9px] text-muted-foreground">
-                  {predStats.pending} en attente (v2.7)
+                  {predStats.pending} en attente (v2.8)
                 </span>
                 <Button
                   size="sm"
