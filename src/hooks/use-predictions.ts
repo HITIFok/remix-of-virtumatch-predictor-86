@@ -167,6 +167,20 @@ export function usePredictions() {
     predicted_home_score?: number
     predicted_away_score?: number
     predicted_score?: string
+    // Champs supplémentaires pour éviter N/A
+    gg_result?: string
+    total_goals?: number
+    parity?: string
+    over_under_15?: string
+    over_under_25?: string
+    over_under_35?: string
+    prob_gg?: number
+    prob_gn?: number
+    btts_prob?: number
+    over25_prob?: number
+    first_half_goal_prob?: number
+    expected_goals?: number
+    winner_1x2?: string
   }) => {
     try {
       const deviceId = getDeviceId()
@@ -182,7 +196,9 @@ export function usePredictions() {
           away: pred.away_team,
           score_home: pred.predicted_home_score,
           score_away: pred.predicted_away_score,
-          exact_score: pred.predicted_score
+          exact_score: pred.predicted_score,
+          // Calculer le winner_1x2 si non fourni
+          winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
         })
         .select()
         .single()
