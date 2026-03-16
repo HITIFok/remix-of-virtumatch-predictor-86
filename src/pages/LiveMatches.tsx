@@ -35,6 +35,7 @@ function MatchCard({
   const statusColor =
     match.status === "live" ? "text-success" :
     match.status === "finished" ? "text-muted-foreground" :
+    match.status === "betting" ? "text-fire" :
     "text-ice";
 
   // Format kickoff time nicely
@@ -52,6 +53,7 @@ function MatchCard({
   const statusLabel =
     match.status === "live" ? `🔴 LIVE ${match.minute ? `(${match.minute}')` : ""}` :
     match.status === "finished" ? "✅ Terminé" :
+    match.status === "betting" ? "🟢 Paris ouverts" :
     `⏰ ${formatKickoff(match.kickoff)}`;
 
   return (
@@ -74,7 +76,7 @@ function MatchCard({
           <div className="flex-1">
             <p className="text-sm font-display font-bold text-foreground truncate">{match.home}</p>
           </div>
-          {match.status !== "upcoming" && match.scoreHome != null ? (
+          {match.status === "live" || match.status === "finished" ? (
             <div className="flex items-center gap-1 mx-3">
               <span className="text-lg font-display font-black text-foreground">{match.scoreHome}</span>
               <span className="text-xs text-muted-foreground">-</span>
@@ -376,7 +378,7 @@ export default function LiveMatches() {
             {predStats.pending > 0 && (
               <div className="mt-2 flex items-center justify-between">
                 <span className="text-[9px] text-muted-foreground">
-                  {predStats.pending} en attente (v2.5)
+                  {predStats.pending} en attente (v2.7)
                 </span>
                 <Button
                   size="sm"
