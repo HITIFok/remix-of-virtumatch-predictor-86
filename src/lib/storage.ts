@@ -21,76 +21,103 @@ export async function getHistory(): Promise<MatchResult[]> {
   const { data, error } = await supabase
     .from("predictions")
     .select("*")
-    .eq("device_id", deviceId)
     .order("created_at", { ascending: false })
     .limit(200);
 
   if (error || !data) return [];
 
-  return data.map(row => ({
+  // Filtrer par device_id si disponible, sinon retourner toutes les prédictions
+  const filteredData = deviceId
+    ? data.filter(row => row.device_id === deviceId || !row.device_id)
+    : data;
+
+  return filteredData.map(row => ({
     id: row.id,
-    home: row.home,
-    away: row.away,
-    league: "",
+    home: row.home || row.home_team,
+    away: row.away || row.away_team,
+    league: row.league || "Instant League",
     oddHome: Number(row.odd_home),
     oddDraw: Number(row.odd_draw),
     oddAway: Number(row.odd_away),
     probHome: Number(row.prob_home),
     probDraw: Number(row.prob_draw),
     probAway: Number(row.prob_away),
-    winner1X2: row.winner_1x2,
-    firstHalfGoalProb: Number(row.first_half_goal_prob),
-    expectedGoals: Number(row.expected_goals),
-    goalsHome: Number(row.goals_home),
-    goalsAway: Number(row.goals_away),
-    scoreHome: row.score_home,
-    scoreAway: row.score_away,
-    exactScore: row.exact_score,
-    probGG: Number(row.prob_gg),
-    probGN: Number(row.prob_gn),
-    ggResult: row.gg_result,
-    totalGoals: row.total_goals,
-    parity: row.parity,
-    overUnder15: row.over_under_15,
-    overUnder25: row.over_under_25,
-    overUnder35: row.over_under_35,
+    winner1X2: row.winner_1x2 || (row.prediction === '1' ? `1 — ${row.home || row.home_team}` : row.prediction === '2' ? `2 — ${row.away || row.away_team}` : 'X (Nul)'),
+    firstHalfGoalProb: Number(row.first_half_goal_prob) || 0.5,
+    expectedGoals: Number(row.expected_goals) || 2.5,
+    goalsHome: Number(row.goals_home) || 1.5,
+    goalsAway: Number(row.goals_away) || 1,
+    scoreHome: row.score_home ?? row.predicted_home_score ?? 0,
+    scoreAway: row.score_away ?? row.predicted_away_score ?? 0,
+    exactScore: row.exact_score || row.predicted_score || "0-0",
+    probGG: Number(row.prob_gg) || 0.5,
+    probGN: Number(row.prob_gn) || 0.5,
+    ggResult: row.gg_result || "N/A",
+    totalGoals: row.total_goals || 0,
+    parity: row.parity || "Pair",
+    overUnder15: row.over_under_15 || "N/A",
+    overUnder25: row.over_under_25 || "N/A",
+    overUnder35: row.over_under_35 || "N/A",
     timestamp: new Date(row.created_at).getTime(),
-    aiConfidence: 0,
+    aiConfidence: Number(row.confidence) / 100 || 0,
     aiReasoning: "",
     isAntiTrap: false,
     firstHalfGoal: false,
     tendency: "",
     dangerLevel: "safe" as const,
     topScores: [],
-    bttsProb: 0,
-    over25Prob: 0,
+    bttsProb: Number(row.prob_gg) || 0,
+    over25Prob: 0.5,
     firstHalfScore: "0-0",
     systemHome: "équilibré",
     systemAway: "équilibré",
     possessionHome: 50,
     possessionAway: 50,
+    // Statut de vérification
+    status: row.status,
+    actualOutcome: row.actual_outcome,
+    actualScore: row.actual_score,
   }));
 }
 
 export async function saveToHistory(result: MatchResult) {
   const deviceId = getDeviceId();
+
+  // Déterminer la prédiction (1, X, ou 2)
+  const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
+  const confidence = Math.round(result.aiConfidence * 100);
+
   await supabase.from("predictions").insert({
+    // Colonnes principales
+    home_team: result.home,
+    away_team: result.away,
     home: result.home,
     away: result.away,
+    league: result.league || "Instant League",
+    // Cotes
     odd_home: result.oddHome,
     odd_draw: result.oddDraw,
     odd_away: result.oddAway,
+    // Probabilités
     prob_home: result.probHome,
     prob_draw: result.probDraw,
     prob_away: result.probAway,
+    // Prédiction
+    prediction: prediction,
+    confidence: confidence,
     winner_1x2: result.winner1X2,
+    // Scores
+    predicted_home_score: result.scoreHome,
+    predicted_away_score: result.scoreAway,
+    predicted_score: result.exactScore,
+    score_home: result.scoreHome,
+    score_away: result.scoreAway,
+    exact_score: result.exactScore,
+    // Autres données
     first_half_goal_prob: result.firstHalfGoalProb,
     expected_goals: result.expectedGoals,
     goals_home: result.goalsHome,
     goals_away: result.goalsAway,
-    score_home: result.scoreHome,
-    score_away: result.scoreAway,
-    exact_score: result.exactScore,
     prob_gg: result.probGG,
     prob_gn: result.probGN,
     gg_result: result.ggResult,
@@ -99,7 +126,9 @@ export async function saveToHistory(result: MatchResult) {
     over_under_15: result.overUnder15,
     over_under_25: result.overUnder25,
     over_under_35: result.overUnder35,
+    // Métadonnées
     device_id: deviceId,
+    status: 'pending',
   });
 }
 
