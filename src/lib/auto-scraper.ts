@@ -3,57 +3,42 @@
 
 import { supabase } from "@/integrations/supabase/client";
 
-interface ScrapedMatch {
-  id: number;
-  home: string;
-  away: string;
-  round: number;
-  league: string;
-  status: string;
-  oddHome: number;
-  oddDraw: number;
-  oddAway: number;
-  expectedStart: string;
-}
+// Liste des ligues disponibles
+export const AVAILABLE_LEAGUES = [
+  { id: "8035", name: "English League", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  { id: "8060", name: "Coupe d'Afrique", flag: "🌍" },
+  { id: "8056", name: "Champions League", flag: "🏆" },
+  { id: "8036", name: "Italian League", flag: "🇮🇹" },
+  { id: "8037", name: "Spanish League", flag: "🇪🇸" },
+  { id: "8042", name: "French League", flag: "🇫🇷" },
+  { id: "8043", name: "German League", flag: "🇩🇪" },
+  { id: "8044", name: "Portuguese League", flag: "🇵🇹" },
+] as const;
 
-interface ScrapedRanking {
-  position: number;
-  team: string;
-  played: number;
-  won: number;
-  drawn: number;
-  lost: number;
-  goalsFor: number;
-  goalsAgainst: number;
-  points: number;
-}
-
-interface ScrapedResult {
-  home: string;
-  away: string;
-  scoreHome: number;
-  scoreAway: number;
-  round: number;
-  league: string;
-}
+export type LeagueId = typeof AVAILABLE_LEAGUES[number]["id"];
+export type LeagueInfo = typeof AVAILABLE_LEAGUES[number];
 
 let scrapeIntervalId: ReturnType<typeof setInterval> | null = null;
 
 // Appeler l'Edge Function auto-scrape qui peut accéder à l'API
-export async function runScrape(): Promise<{
+export async function runScrape(leagueId: LeagueId = "8035"): Promise<{
   success: boolean;
   matches: number;
   ranking: number;
   results: number;
   error?: string;
+  league?: string;
 }> {
   try {
-    console.log("🔄 Calling auto-scrape Edge Function...");
+    console.log(`🔄 Calling auto-scrape Edge Function for league ${leagueId}...`);
 
     const { data, error } = await supabase.functions.invoke('auto-scrape', {
       method: 'POST',
       headers: {
         'x-cron-key': 'REDACTED_CRON_SECRET',
+      },
+      body: {
+        league_id: leagueId,
       },
     });
 
@@ -76,6 +61,7 @@ export async function runScrape(): Promise<{
         matches: data.saved?.matches || 0,
         ranking: data.saved?.ranking || 0,
         results: data.saved?.results || 0,
+        league: data.league,
       };
     } else {
       return {
@@ -99,7 +85,7 @@ export async function runScrape(): Promise<{
 }
 
 // Démarrer le scraping automatique
-export function startAutoScrape(intervalMs: number = 30000): void {
+export function startAutoScrape(intervalMs: number = 30000, leagueId?: LeagueId): void {
   if (scrapeIntervalId) {
     console.log("⚠️ Auto-scrape already running");
     return;
@@ -108,10 +94,10 @@ export function startAutoScrape(intervalMs: number = 30000): void {
   console.log(`🚀 Starting auto-scrape every ${intervalMs / 1000}s`);
 
   // Scrap immédiat
-  runScrape();
+  runScrape(leagueId);
 
   // Puis à intervalles réguliers
-  scrapeIntervalId = setInterval(runScrape, intervalMs);
+  scrapeIntervalId = setInterval(() => runScrape(leagueId), intervalMs);
 }
 
 // Arrêter le scraping automatique
