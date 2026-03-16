@@ -52,21 +52,26 @@ export function useLiveMatches() {
         const parsedMatches = Array.isArray(latestMatches.payload) 
           ? latestMatches.payload 
           : [];
+        console.log(`📋 Parsing ${parsedMatches.length} matches from DB`);
+        console.log('Sample match:', parsedMatches[0]);
         setMatches(parsedMatches.map((m: any) => ({
           league: m.league || "Instant League",
-          home: m.home || m.homeTeam || "",
-          away: m.away || m.awayTeam || "",
+          home: m.home || "",
+          away: m.away || "",
           kickoff: m.kickoff || m.expectedStart || "",
-          oddHome: m.oddHome || m.odd_home || 0,
-          oddDraw: m.oddDraw || m.odd_draw || 0,
-          oddAway: m.oddAway || m.odd_away || 0,
+          oddHome: m.oddHome || 0,
+          oddDraw: m.oddDraw || 0,
+          oddAway: m.oddAway || 0,
           status: m.status || "upcoming",
           minute: m.minute || null,
-          scoreHome: m.scoreHome ?? m.score_home ?? null,
-          scoreAway: m.scoreAway ?? m.score_away ?? null,
+          scoreHome: m.scoreHome ?? null,
+          scoreAway: m.scoreAway ?? null,
           stats: m.stats || null,
           id: m.id,
+          round: m.round,
         })));
+      } else {
+        console.log('⚠️ No matches payload found');
       }
 
       // Parse results
