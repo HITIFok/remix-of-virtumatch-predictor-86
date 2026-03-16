@@ -1,5 +1,5 @@
-// Auto-scraper via Supabase Edge Function (pas direct depuis navigateur à cause du certificat SSL invalide)
-// L'Edge Function peut ignorer les erreurs de certificat
+// Auto-scraper via Supabase Edge Function
+// L'Edge Function doit être déployée sur Supabase
 
 import { supabase } from "@/integrations/supabase/client";
 
@@ -20,7 +20,7 @@ export type LeagueInfo = typeof AVAILABLE_LEAGUES[number];
 
 let scrapeIntervalId: ReturnType<typeof setInterval> | null = null;
 
-// Appeler l'Edge Function auto-scrape qui peut accéder à l'API
+// Appeler l'Edge Function auto-scrape
 export async function runScrape(leagueId: LeagueId = "8035"): Promise<{
   success: boolean;
   matches: number;
@@ -44,6 +44,18 @@ export async function runScrape(leagueId: LeagueId = "8035"): Promise<{
 
     if (error) {
       console.error("Edge Function error:", error);
+
+      // Retourner un message plus explicite
+      if (error.message?.includes('Failed to send') || error.message?.includes('fetch')) {
+        return {
+          success: false,
+          matches: 0,
+          ranking: 0,
+          results: 0,
+          error: "Edge Function non déployée. Déployez 'auto-scrape' sur Supabase ou utilisez le scraper Python.",
+        };
+      }
+
       return {
         success: false,
         matches: 0,
