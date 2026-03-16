@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { runScrape } from "@/lib/auto-scraper";
+import { runScrape, AVAILABLE_LEAGUES, type LeagueId, type LeagueInfo } from "@/lib/auto-scraper";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -10,6 +10,7 @@ interface ScrapedDataRaw {
   id: string;
   data_type: string;
   league: string | null;
+  league_id?: string;
   payload: any;
   scraped_at: string;
   created_at: string;
@@ -24,14 +25,21 @@ export function useLiveMatches() {
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [autoScrapeActive, setAutoScrapeActive] = useState(false);
+  const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load data from Supabase table
-  const loadFromDatabase = useCallback(async () => {
+  // Obtenir la ligue sélectionnée
+  const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
+
+  // Load data from Supabase table for the selected league
+  const loadFromDatabase = useCallback(async (leagueName?: string) => {
     try {
+      const targetLeague = leagueName || selectedLeague.name;
+
       const { data, error: dbError } = await supabase
         .from("scraped_data")
         .select("*")
+        .eq("league", targetLeague)
         .order("scraped_at", { ascending: false });
 
       if (dbError) throw new Error(dbError.message);
@@ -49,13 +57,12 @@ export function useLiveMatches() {
 
       // Parse matches
       if (latestMatches?.payload) {
-        const parsedMatches = Array.isArray(latestMatches.payload) 
-          ? latestMatches.payload 
+        const parsedMatches = Array.isArray(latestMatches.payload)
+          ? latestMatches.payload
           : [];
-        console.log(`📋 Parsing ${parsedMatches.length} matches from DB`);
-        console.log('Sample match:', parsedMatches[0]);
+        console.log(`📋 Parsing ${parsedMatches.length} matches from DB for ${targetLeague}`);
         setMatches(parsedMatches.map((m: any) => ({
-          league: m.league || "Instant League",
+          league: m.league || targetLeague,
           home: m.home || "",
           away: m.away || "",
           kickoff: m.kickoff || m.expectedStart || "",
@@ -71,7 +78,7 @@ export function useLiveMatches() {
           round: m.round,
         })));
       } else {
-        console.log('⚠️ No matches payload found');
+        setMatches([]);
       }
 
       // Parse results
@@ -84,9 +91,11 @@ export function useLiveMatches() {
           away: r.away || r.awayTeam || "",
           scoreHome: r.scoreHome ?? r.score_home ?? r.homeScore ?? 0,
           scoreAway: r.scoreAway ?? r.score_away ?? r.awayScore ?? 0,
-          league: r.league || "Instant League",
+          league: r.league || targetLeague,
           matchday: r.matchday || r.round || "",
         })));
+      } else {
+        setResults([]);
       }
 
       // Parse ranking
@@ -106,6 +115,8 @@ export function useLiveMatches() {
           goalDifference: t.goalDifference || t.goal_diff || t.gd || 0,
           points: t.points || t.pts || 0,
         })));
+      } else {
+        setRanking([]);
       }
 
       // Set last update time
@@ -117,20 +128,20 @@ export function useLiveMatches() {
       console.error("Error loading from database:", err);
       return false;
     }
-  }, []);
+  }, [selectedLeague]);
 
-  // Scrape data directly from browser
+  // Scrape data via Edge Function
   const scrapeData = useCallback(async (silent = false) => {
     setScraping(true);
     setError(null);
 
     try {
-      const result = await runScrape();
+      const result = await runScrape(selectedLeagueId);
 
       if (!result.success) {
         // Try to load existing data from DB anyway
         const hasData = await loadFromDatabase();
-        
+
         if (hasData) {
           setError(null);
           if (!silent) {
@@ -145,18 +156,18 @@ export function useLiveMatches() {
       } else {
         // Load the newly scraped data
         await loadFromDatabase();
-        
+
         if (!silent) {
-          toast.success(`✅ ${result.matches} matchs, ${result.ranking} équipes, ${result.results} résultats`);
+          toast.success(`✅ ${selectedLeague.flag} ${result.matches} matchs, ${result.ranking} équipes, ${result.results} résultats`);
         }
       }
 
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur inconnue";
-      
+
       const hasData = await loadFromDatabase();
-      
+
       if (hasData) {
         setError(null);
         if (!silent) {
@@ -168,12 +179,12 @@ export function useLiveMatches() {
           toast.error(`Erreur: ${msg}`);
         }
       }
-      
+
       return { success: false, matches: 0, results: 0, ranking: 0, error: msg };
     } finally {
       setScraping(false);
     }
-  }, [loadFromDatabase]);
+  }, [selectedLeagueId, selectedLeague, loadFromDatabase]);
 
   // Fetch matches - load from DB and optionally scrape
   const fetchMatches = useCallback(async (silent = false) => {
@@ -185,7 +196,7 @@ export function useLiveMatches() {
 
     if (!silent) {
       if (hasData) {
-        toast.info("Données chargées");
+        toast.info(`📊 ${selectedLeague.flag} ${selectedLeague.name} chargé`);
       } else {
         // No data - try to scrape
         await scrapeData(false);
@@ -193,7 +204,7 @@ export function useLiveMatches() {
     }
 
     setLoading(false);
-  }, [loadFromDatabase, scrapeData]);
+  }, [loadFromDatabase, scrapeData, selectedLeague]);
 
   // Force refresh - scrape new data
   const refreshData = useCallback(async () => {
@@ -203,19 +214,19 @@ export function useLiveMatches() {
   // Start auto-scraping (every 30 seconds)
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    
+
     setAutoScrapeActive(true);
-    
+
     // Scrape immediately
     scrapeData(true);
-    
+
     // Then every 30 seconds
     intervalRef.current = setInterval(() => {
       scrapeData(true);
     }, AUTO_SCRAPE_INTERVAL);
-    
-    toast.success("🔄 Auto-scraping activé (30s)");
-  }, [scrapeData]);
+
+    toast.success(`🔄 Auto-scraping activé (30s) pour ${selectedLeague.flag} ${selectedLeague.name}`);
+  }, [scrapeData, selectedLeague]);
 
   // Stop auto-scraping
   const stopAutoRefresh = useCallback(() => {
@@ -227,6 +238,43 @@ export function useLiveMatches() {
     toast.info("⏹️ Auto-scraping désactivé");
   }, []);
 
+  // Change league
+  const changeLeague = useCallback(async (leagueId: LeagueId) => {
+    // Stop auto-refresh if active
+    if (autoScrapeActive) {
+      stopAutoRefresh();
+    }
+
+    setSelectedLeagueId(leagueId);
+
+    // Clear current data
+    setMatches([]);
+    setResults([]);
+    setRanking([]);
+    setError(null);
+
+    // Load data for new league
+    const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
+    if (newLeague) {
+      setLoading(true);
+      const hasData = await loadFromDatabase(newLeague.name);
+
+      if (!hasData) {
+        // No data for this league - try to scrape
+        const result = await runScrape(leagueId);
+        if (result.success) {
+          await loadFromDatabase(newLeague.name);
+          toast.success(`✅ ${newLeague.flag} ${newLeague.name} chargé`);
+        } else {
+          toast.error(`❌ Impossible de charger ${newLeague.name}`);
+        }
+      } else {
+        toast.info(`📊 ${newLeague.flag} ${newLeague.name} chargé`);
+      }
+      setLoading(false);
+    }
+  }, [autoScrapeActive, stopAutoRefresh, loadFromDatabase]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -237,7 +285,7 @@ export function useLiveMatches() {
   }, []);
 
   const matchesByLeague = matches.reduce<Record<string, ScrapedMatch[]>>((acc, m) => {
-    const league = m.league || "Instant League";
+    const league = m.league || selectedLeague.name;
     if (!acc[league]) acc[league] = [];
     acc[league].push(m);
     return acc;
@@ -254,9 +302,13 @@ export function useLiveMatches() {
     error,
     autoScrapeActive,
     geoBlocked: false,
+    selectedLeagueId,
+    selectedLeague,
+    availableLeagues: AVAILABLE_LEAGUES,
     fetchMatches,
     refreshData,
     startAutoRefresh,
     stopAutoRefresh,
+    changeLeague,
   };
 }
