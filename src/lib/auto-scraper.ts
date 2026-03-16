@@ -1,17 +1,7 @@
-// Auto-scraper direct depuis le navigateur (fonctionne depuis Madagascar)
-// Scrape l'API sporty-tech.net et envoie les données à Supabase
+// Auto-scraper via Supabase Edge Function (pas direct depuis navigateur à cause du certificat SSL invalide)
+// L'Edge Function peut ignorer les erreurs de certificat
 
 import { supabase } from "@/integrations/supabase/client";
-
-const LEAGUE_ID = "8035";
-const API_MATCHES = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/matches`;
-const API_RANKING = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/ranking`;
-const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=100`;
-
-const HEADERS = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
-};
 
 interface ScrapedMatch {
   id: number;
@@ -24,7 +14,6 @@ interface ScrapedMatch {
   oddDraw: number;
   oddAway: number;
   expectedStart: string;
-  hasActiveOdds: boolean;
 }
 
 interface ScrapedRanking {
@@ -50,139 +39,7 @@ interface ScrapedResult {
 
 let scrapeIntervalId: ReturnType<typeof setInterval> | null = null;
 
-async function fetchAPI(url: string): Promise<any> {
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: HEADERS,
-    });
-
-    if (!response.ok) {
-      console.error(`API error: ${response.status}`);
-      return null;
-    }
-
-    return await response.json();
-  } catch (error) {
-    console.error('Fetch error:', error);
-    return null;
-  }
-}
-
-async function scrapeMatches(): Promise<ScrapedMatch[]> {
-  const matches: ScrapedMatch[] = [];
-  const data = await fetchAPI(API_MATCHES);
-
-  if (data && data.rounds) {
-    for (const roundData of data.rounds) {
-      const roundNum = roundData.roundNumber || 0;
-
-      for (const m of (roundData.matches || [])) {
-        try {
-          let hasActiveOdds = false;
-          let oddHome = 0, oddDraw = 0, oddAway = 0;
-
-          const eventBetTypes = m.eventBetTypes || [];
-          for (const betType of eventBetTypes) {
-            if (betType.name === "1X2") {
-              const items = betType.eventBetTypeItems || [];
-              for (const item of items) {
-                if (item.active && item.bettingAllowed) {
-                  hasActiveOdds = true;
-                }
-
-                const shortName = (item.shortName || "").toUpperCase();
-                const oddVal = item.odds || 0;
-
-                if (shortName === "1") oddHome = oddVal;
-                else if (shortName === "X") oddDraw = oddVal;
-                else if (shortName === "2") oddAway = oddVal;
-              }
-              break;
-            }
-          }
-
-          // Garder TOUS les matchs
-          const status = hasActiveOdds ? "betting" : "upcoming";
-
-          matches.push({
-            id: m.id,
-            home: m.homeTeam?.name || "",
-            away: m.awayTeam?.name || "",
-            round: roundNum,
-            league: "Instant League",
-            status,
-            oddHome,
-            oddDraw,
-            oddAway,
-            expectedStart: m.expectedStart || "",
-            hasActiveOdds,
-          });
-        } catch (e) {
-          console.error("Error parsing match:", e);
-        }
-      }
-    }
-  }
-
-  return matches;
-}
-
-async function scrapeRanking(): Promise<ScrapedRanking[]> {
-  const ranking: ScrapedRanking[] = [];
-  const data = await fetchAPI(API_RANKING);
-
-  if (data && data.teams) {
-    for (const r of data.teams) {
-      ranking.push({
-        position: r.position || 0,
-        team: r.name || "",
-        played: (r.won || 0) + (r.lost || 0) + (r.draw || 0),
-        won: r.won || 0,
-        drawn: r.draw || 0,
-        lost: r.lost || 0,
-        goalsFor: r.goalsFor || 0,
-        goalsAgainst: r.goalsAgainst || 0,
-        points: r.points || 0,
-      });
-    }
-  }
-
-  return ranking;
-}
-
-async function scrapeResults(): Promise<ScrapedResult[]> {
-  const results: ScrapedResult[] = [];
-  const data = await fetchAPI(API_RESULTS);
-
-  if (data && data.rounds) {
-    for (const roundData of data.rounds) {
-      const roundNum = roundData.roundNumber || 0;
-      for (const m of (roundData.matches || [])) {
-        try {
-          const score = m.score || "0:0";
-          const parts = score.split(":");
-          const scoreHome = parts.length === 2 ? parseInt(parts[0]) : 0;
-          const scoreAway = parts.length === 2 ? parseInt(parts[1]) : 0;
-
-          results.push({
-            home: m.homeTeam?.name || "",
-            away: m.awayTeam?.name || "",
-            scoreHome,
-            scoreAway,
-            round: roundNum,
-            league: "Instant League",
-          });
-        } catch (e) {
-          console.error("Error parsing result:", e);
-        }
-      }
-    }
-  }
-
-  return results;
-}
-
+// Appeler l'Edge Function auto-scrape qui peut accéder à l'API
 export async function runScrape(): Promise<{
   success: boolean;
   matches: number;
@@ -191,58 +48,44 @@ export async function runScrape(): Promise<{
   error?: string;
 }> {
   try {
-    console.log("🔄 Auto-scraping...");
+    console.log("🔄 Calling auto-scrape Edge Function...");
 
-    const [matches, ranking, results] = await Promise.all([
-      scrapeMatches(),
-      scrapeRanking(),
-      scrapeResults(),
-    ]);
+    const { data, error } = await supabase.functions.invoke('auto-scrape', {
+      method: 'POST',
+      headers: {
+        'x-cron-key': 'REDACTED_CRON_SECRET',
+      },
+    });
 
-    console.log(`📊 Scraped: ${matches.length} matches, ${ranking.length} teams, ${results.length} results`);
-
-    if (matches.length === 0 && ranking.length === 0 && results.length === 0) {
-      return { success: false, matches: 0, ranking: 0, results: 0, error: "Aucune donnée - API bloquée?" };
+    if (error) {
+      console.error("Edge Function error:", error);
+      return {
+        success: false,
+        matches: 0,
+        ranking: 0,
+        results: 0,
+        error: error.message,
+      };
     }
 
-    // Sauvegarder dans Supabase
-    const now = new Date().toISOString();
+    console.log("📊 Scrape result:", data);
 
-    if (matches.length > 0) {
-      await supabase.from('scraped_data').upsert({
-        data_type: 'matches',
-        league: 'Instant League',
-        payload: matches,
-        scraped_at: now,
-      }, { onConflict: 'data_type,league' });
+    if (data?.success) {
+      return {
+        success: true,
+        matches: data.saved?.matches || 0,
+        ranking: data.saved?.ranking || 0,
+        results: data.saved?.results || 0,
+      };
+    } else {
+      return {
+        success: false,
+        matches: 0,
+        ranking: 0,
+        results: 0,
+        error: data?.error || "Échec du scraping",
+      };
     }
-
-    if (ranking.length > 0) {
-      await supabase.from('scraped_data').upsert({
-        data_type: 'ranking',
-        league: 'Instant League',
-        payload: ranking,
-        scraped_at: now,
-      }, { onConflict: 'data_type,league' });
-    }
-
-    if (results.length > 0) {
-      await supabase.from('scraped_data').upsert({
-        data_type: 'results',
-        league: 'Instant League',
-        payload: results,
-        scraped_at: now,
-      }, { onConflict: 'data_type,league' });
-    }
-
-    console.log("✅ Data saved to Supabase");
-
-    return {
-      success: true,
-      matches: matches.length,
-      ranking: ranking.length,
-      results: results.length,
-    };
   } catch (error) {
     console.error("Scrape error:", error);
     return {
