@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { scrapeInstantLeague } from "@/lib/scraper";
+import { runScrape } from "@/lib/auto-scraper";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 import { toast } from "sonner";
 
-const REFRESH_INTERVAL = 2 * 60 * 1000;
+const AUTO_SCRAPE_INTERVAL = 30000; // 30 secondes
 
 interface ScrapedDataRaw {
   id: string;
@@ -23,6 +23,7 @@ export function useLiveMatches() {
   const [scraping, setScraping] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [autoScrapeActive, setAutoScrapeActive] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load data from Supabase table
@@ -41,7 +42,7 @@ export function useLiveMatches() {
 
       const rawData = data as ScrapedDataRaw[];
 
-      // Get latest by type (no league filter - get all)
+      // Get latest by type
       const latestMatches = rawData.find((d: any) => d.data_type === "matches");
       const latestResults = rawData.find((d: any) => d.data_type === "results");
       const latestRanking = rawData.find((d: any) => d.data_type === "ranking");
@@ -64,6 +65,7 @@ export function useLiveMatches() {
           scoreHome: m.scoreHome ?? m.score_home ?? null,
           scoreAway: m.scoreAway ?? m.score_away ?? null,
           stats: m.stats || null,
+          id: m.id,
         })));
       }
 
@@ -112,19 +114,18 @@ export function useLiveMatches() {
     }
   }, []);
 
-  // Scrape data directly from browser (requires Madagascar IP)
+  // Scrape data directly from browser
   const scrapeData = useCallback(async (silent = false) => {
     setScraping(true);
     setError(null);
 
     try {
-      const result = await scrapeInstantLeague();
+      const result = await runScrape();
 
       if (!result.success) {
         // Try to load existing data from DB anyway
         const hasData = await loadFromDatabase();
         
-        // Clear error if data was loaded successfully
         if (hasData) {
           setError(null);
           if (!silent) {
@@ -149,10 +150,8 @@ export function useLiveMatches() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erreur inconnue";
       
-      // Try to load existing data
       const hasData = await loadFromDatabase();
       
-      // Clear error if data was loaded successfully
       if (hasData) {
         setError(null);
         if (!silent) {
@@ -171,45 +170,66 @@ export function useLiveMatches() {
     }
   }, [loadFromDatabase]);
 
-  // Fetch matches - either scrape or load from DB
+  // Fetch matches - load from DB and optionally scrape
   const fetchMatches = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
 
-    // First, try to load existing data from DB
+    // Load existing data from DB
     const hasData = await loadFromDatabase();
 
     if (!silent) {
       if (hasData) {
-        toast.info("Données chargées depuis le cache");
+        toast.info("Données chargées");
       } else {
-        toast.info("Aucune donnée - Lancez le scraping");
+        // No data - try to scrape
+        await scrapeData(false);
       }
     }
 
     setLoading(false);
-  }, [loadFromDatabase]);
+  }, [loadFromDatabase, scrapeData]);
 
   // Force refresh - scrape new data
   const refreshData = useCallback(async () => {
     return scrapeData(false);
   }, [scrapeData]);
 
+  // Start auto-scraping (every 30 seconds)
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = setInterval(() => fetchMatches(true), REFRESH_INTERVAL);
-  }, [fetchMatches]);
+    
+    setAutoScrapeActive(true);
+    
+    // Scrape immediately
+    scrapeData(true);
+    
+    // Then every 30 seconds
+    intervalRef.current = setInterval(() => {
+      scrapeData(true);
+    }, AUTO_SCRAPE_INTERVAL);
+    
+    toast.success("🔄 Auto-scraping activé (30s)");
+  }, [scrapeData]);
 
+  // Stop auto-scraping
   const stopAutoRefresh = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    setAutoScrapeActive(false);
+    toast.info("⏹️ Auto-scraping désactivé");
   }, []);
 
+  // Cleanup on unmount
   useEffect(() => {
-    return () => stopAutoRefresh();
-  }, [stopAutoRefresh]);
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+    };
+  }, []);
 
   const matchesByLeague = matches.reduce<Record<string, ScrapedMatch[]>>((acc, m) => {
     const league = m.league || "Instant League";
@@ -227,6 +247,7 @@ export function useLiveMatches() {
     scraping,
     lastUpdate,
     error,
+    autoScrapeActive,
     geoBlocked: false,
     fetchMatches,
     refreshData,
