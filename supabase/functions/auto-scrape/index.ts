@@ -7,10 +7,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
 const DATABASE_SERVICE_KEY = Deno.env.get('DATABASE_SERVICE_KEY')!
 
-const LEAGUE_ID = "8035"
-const API_MATCHES = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/matches`
-const API_RANKING = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/ranking`
-const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=100`
+// Liste des ligues disponibles
+export const LEAGUES: Record<string, { id: string; name: string; flag: string }> = {
+  "8035": { id: "8035", name: "English League", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  "8060": { id: "8060", name: "Coupe d'Afrique", flag: "🌍" },
+  "8056": { id: "8056", name: "Champions League", flag: "🏆" },
+  "8036": { id: "8036", name: "Italian League", flag: "🇮🇹" },
+  "8037": { id: "8037", name: "Spanish League", flag: "🇪🇸" },
+  "8042": { id: "8042", name: "French League", flag: "🇫🇷" },
+  "8043": { id: "8043", name: "German League", flag: "🇩🇪" },
+  "8044": { id: "8044", name: "Portuguese League", flag: "🇵🇹" },
+}
 
 const HEADERS = {
   "Origin": "https://bet261.mg",
@@ -25,6 +32,7 @@ interface Match {
   away: string
   round: number
   league: string
+  leagueId: string
   status: string
   oddHome: number
   oddDraw: number
@@ -78,8 +86,9 @@ async function fetchAPI(url: string, name: string): Promise<any> {
   }
 }
 
-async function scrapeMatches(): Promise<Match[]> {
+async function scrapeMatches(leagueId: string, leagueName: string): Promise<Match[]> {
   const matches: Match[] = []
+  const API_MATCHES = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${leagueId}/matches`
   const data = await fetchAPI(API_MATCHES, "matches")
 
   if (data && data.rounds) {
@@ -118,7 +127,8 @@ async function scrapeMatches(): Promise<Match[]> {
             home: m.homeTeam?.name || "",
             away: m.awayTeam?.name || "",
             round: roundNum,
-            league: "Instant League",
+            league: leagueName,
+            leagueId: leagueId,
             status: "upcoming",
             oddHome,
             oddDraw,
@@ -135,8 +145,9 @@ async function scrapeMatches(): Promise<Match[]> {
   return matches
 }
 
-async function scrapeRanking(): Promise<Ranking[]> {
+async function scrapeRanking(leagueId: string): Promise<Ranking[]> {
   const ranking: Ranking[] = []
+  const API_RANKING = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${leagueId}/ranking`
   const data = await fetchAPI(API_RANKING, "ranking")
 
   console.log(`Ranking data: ${JSON.stringify(data?.teams?.[0])}`)
@@ -163,8 +174,9 @@ async function scrapeRanking(): Promise<Ranking[]> {
   return ranking
 }
 
-async function scrapeResults(): Promise<Result[]> {
+async function scrapeResults(leagueId: string, leagueName: string): Promise<Result[]> {
   const results: Result[] = []
+  const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${leagueId}/results?skip=0&take=100`
   const data = await fetchAPI(API_RESULTS, "results")
 
   console.log(`Results data: rounds=${!!data?.rounds}`)
@@ -186,7 +198,7 @@ async function scrapeResults(): Promise<Result[]> {
             scoreHome,
             scoreAway,
             round: roundNum,
-            league: "Instant League",
+            league: leagueName,
           })
         } catch (e) {
           console.error("Error parsing result:", e)
@@ -204,7 +216,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get('Authorization')
     const cronKey = req.headers.get('x-cron-key')
-    const expectedCronKey = Deno.env.get('CRON_SECRET') || 'bet261_cron_2024'
+    const expectedCronKey = Deno.env.get('CRON_SECRET') || 'bet261_cron_2024_mada'
 
     const isAuthorized = cronKey === expectedCronKey ||
       authHeader === `Bearer ${DATABASE_SERVICE_KEY}` ||
@@ -217,16 +229,32 @@ serve(async (req) => {
       )
     }
 
-    console.log('Starting scrape...')
+    // Lire le body pour obtenir league_id
+    let leagueId = "8035" // Default: English League
+    let body: any = {}
+
+    try {
+      body = await req.json()
+      if (body.league_id) {
+        leagueId = body.league_id
+      }
+    } catch {
+      // Pas de body, utiliser default
+    }
+
+    const leagueInfo = LEAGUES[leagueId] || LEAGUES["8035"]
+    const leagueName = leagueInfo.name
+
+    console.log(`Starting scrape for league: ${leagueName} (${leagueId})...`)
 
     // Scrape sequentially to see errors
-    const matches = await scrapeMatches()
+    const matches = await scrapeMatches(leagueId, leagueName)
     console.log(`Matches: ${matches.length}`)
 
-    const ranking = await scrapeRanking()
+    const ranking = await scrapeRanking(leagueId)
     console.log(`Ranking: ${ranking.length}`)
 
-    const results = await scrapeResults()
+    const results = await scrapeResults(leagueId, leagueName)
     console.log(`Results: ${results.length}`)
 
     if (matches.length === 0 && ranking.length === 0 && results.length === 0) {
@@ -234,7 +262,9 @@ serve(async (req) => {
         JSON.stringify({
           success: false,
           error: 'No data retrieved - API may be geo-blocked or unavailable',
-          hint: 'Use Python scraper from Madagascar'
+          hint: 'Use Python scraper from Madagascar',
+          league: leagueName,
+          league_id: leagueId
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       )
@@ -243,11 +273,15 @@ serve(async (req) => {
     const now = new Date().toISOString()
     const saves: Promise<any>[] = []
 
+    // Utiliser le nom de la ligue comme clé unique
+    const leagueKey = leagueName.replace(/\s+/g, '_').toLowerCase()
+
     if (matches.length > 0) {
       saves.push(
         supabase.from('scraped_data').upsert({
           data_type: 'matches',
-          league: 'Instant League',
+          league: leagueName,
+          league_id: leagueId,
           payload: matches,
           scraped_at: now,
         }, { onConflict: 'data_type,league' })
@@ -258,7 +292,8 @@ serve(async (req) => {
       saves.push(
         supabase.from('scraped_data').upsert({
           data_type: 'ranking',
-          league: 'Instant League',
+          league: leagueName,
+          league_id: leagueId,
           payload: ranking,
           scraped_at: now,
         }, { onConflict: 'data_type,league' })
@@ -269,7 +304,8 @@ serve(async (req) => {
       saves.push(
         supabase.from('scraped_data').upsert({
           data_type: 'results',
-          league: 'Instant League',
+          league: leagueName,
+          league_id: leagueId,
           payload: results,
           scraped_at: now,
         }, { onConflict: 'data_type,league' })
@@ -281,6 +317,8 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
+        league: leagueName,
+        league_id: leagueId,
         scraped_at: now,
         saved: {
           matches: matches.length,

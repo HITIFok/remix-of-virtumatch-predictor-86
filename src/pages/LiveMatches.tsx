@@ -13,10 +13,17 @@ import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap, Wifi, WifiOff,
   Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered,
-  CheckCircle, XCircle, TrendingUp, Eye
+  CheckCircle, XCircle, TrendingUp, Eye, ChevronDown
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import type { ScrapedMatch } from "@/lib/types";
@@ -143,10 +150,14 @@ export default function LiveMatches() {
     lastUpdate,
     error,
     autoScrapeActive,
+    selectedLeagueId,
+    selectedLeague,
+    availableLeagues,
     fetchMatches,
     refreshData,
     startAutoRefresh,
     stopAutoRefresh,
+    changeLeague,
   } = useLiveMatches();
 
   const {
@@ -287,11 +298,39 @@ export default function LiveMatches() {
       <div className="max-w-lg mx-auto px-4">
         <AppHeader />
 
+        {/* League Selector */}
+        <div className="mb-4">
+          <Select
+            value={selectedLeagueId}
+            onValueChange={(value) => changeLeague(value as any)}
+            disabled={loading || scraping}
+          >
+            <SelectTrigger className="w-full bg-gradient-card border-border">
+              <SelectValue>
+                <span className="flex items-center gap-2">
+                  <span className="text-lg">{selectedLeague.flag}</span>
+                  <span className="font-display font-bold">{selectedLeague.name}</span>
+                </span>
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {availableLeagues.map((league) => (
+                <SelectItem key={league.id} value={league.id}>
+                  <span className="flex items-center gap-2">
+                    <span className="text-lg">{league.flag}</span>
+                    <span className="font-display">{league.name}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {/* Controls */}
         <div className="flex items-center justify-between mb-4">
           <div>
             <h2 className="font-display text-sm text-foreground tracking-wider">
-              Instant League
+              {selectedLeague.flag} {selectedLeague.name}
             </h2>
             {lastUpdate && (
               <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
