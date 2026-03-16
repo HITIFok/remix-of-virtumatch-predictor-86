@@ -2,6 +2,16 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/integrations/supabase/client'
 
+// Device ID for tracking predictions per device
+function getDeviceId(): string {
+  let id = localStorage.getItem("virtuxxs_device_id");
+  if (!id) {
+    id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem("virtuxxs_device_id", id);
+  }
+  return id;
+}
+
 export interface Prediction {
   id: string
   match_id: number | null
@@ -159,12 +169,20 @@ export function usePredictions() {
     predicted_score?: string
   }) => {
     try {
+      const deviceId = getDeviceId()
       const { data, error } = await supabase
         .from('predictions')
         .insert({
           ...pred,
           league: pred.league || 'Instant League',
-          status: 'pending'
+          status: 'pending',
+          device_id: deviceId,
+          // Ajouter les alias pour compatibilité avec storage.ts
+          home: pred.home_team,
+          away: pred.away_team,
+          score_home: pred.predicted_home_score,
+          score_away: pred.predicted_away_score,
+          exact_score: pred.predicted_score
         })
         .select()
         .single()
