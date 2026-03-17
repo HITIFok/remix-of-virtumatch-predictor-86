@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
+import AnimatedBackground from "@/components/AnimatedBackground";
 import MatchForm from "@/components/MatchForm";
 import ResultCard from "@/components/ResultCard";
 import PremiumGate from "@/components/PremiumGate";
@@ -8,6 +9,7 @@ import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } fr
 import { saveToHistory } from "@/lib/storage";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Sparkles, TrendingUp } from "lucide-react";
 
 export default function Index() {
   const [results, setResults] = useState<MatchResult[]>([]);
@@ -23,7 +25,7 @@ export default function Index() {
       });
 
       let aiPredictions: (AIPrediction | undefined)[] = [];
-      
+
       if (error) {
         console.warn("AI analysis failed, using math fallback:", error);
         toast.error("IA indisponible, analyse mathématique utilisée");
@@ -41,7 +43,7 @@ export default function Index() {
       }
 
       const analyzed = matches.map((m, i) => analyzeMatch(m, aiPredictions[i]));
-      
+
       for (const r of analyzed) {
         await saveToHistory(r);
       }
@@ -50,7 +52,7 @@ export default function Index() {
     } catch (err) {
       console.error("Analysis error:", err);
       // Full fallback
-      const analyzed = matches.map(m => analyzeMatch(m));
+      const analyzed = matches.map((m) => analyzeMatch(m));
       for (const r of analyzed) {
         await saveToHistory(r);
       }
@@ -62,19 +64,24 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <div className="max-w-lg mx-auto px-4">
+    <div className="min-h-screen bg-background pb-24 relative">
+      <AnimatedBackground />
+      <div className="max-w-lg mx-auto px-4 relative z-10">
         <AppHeader />
-        <PremiumGate onUnlocked={() => forceUpdate(n => n + 1)} />
+        <PremiumGate onUnlocked={() => forceUpdate((n) => n + 1)} />
         <div className="mt-6">
           <MatchForm onAnalyze={handleAnalyze} loading={loading} />
         </div>
         {results.length > 0 && (
           <div className="mt-6 space-y-4">
-            <h2 className="font-display text-sm text-muted-foreground tracking-widest uppercase">
-              Résultats d'analyse
-            </h2>
-            {results.map(r => (
+            <div className="flex items-center gap-2">
+              <TrendingUp className="text-fire" size={16} />
+              <h2 className="font-display text-sm text-gradient-fire tracking-widest uppercase font-bold">
+                Résultats d'analyse
+              </h2>
+              <Sparkles className="text-gold animate-bounce-subtle" size={14} />
+            </div>
+            {results.map((r) => (
               <ResultCard key={r.id} result={r} />
             ))}
           </div>
