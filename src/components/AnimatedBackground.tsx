@@ -1,16 +1,11 @@
 import { useEffect, useState } from 'react';
 
 export default function AnimatedBackground() {
-  const [particleCount, setParticleCount] = useState(12);
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    // Détecter si mobile et ajuster les performances
     const checkMobile = () => {
-      const mobile = window.innerWidth < 768;
-      setIsMobile(mobile);
-      // Moins de particules sur mobile pour de meilleures performances
-      setParticleCount(mobile ? 8 : 15);
+      setIsMobile(window.innerWidth < 768);
     };
     
     checkMobile();
@@ -21,47 +16,57 @@ export default function AnimatedBackground() {
 
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden animated-multicolor">
-      {/* Orbes animés multicolores - moins d'orbes sur mobile */}
+      {/* Orbes colorés - Positions fixes pour être toujours visibles */}
       <div className="absolute inset-0">
-        {/* Fire orb - Orange */}
-        <div className="orb orb-fire animate-orb-1" />
+        {/* Fire orb - Orange - Coin supérieur gauche */}
+        <div 
+          className="orb orb-fire animate-orb-1" 
+          style={{ top: '-100px', left: '-100px' }}
+        />
         
-        {/* Ice orb - Cyan */}
-        <div className="orb orb-ice animate-orb-2" />
+        {/* Ice orb - Cyan - Coin supérieur droit */}
+        <div 
+          className="orb orb-ice animate-orb-2" 
+          style={{ top: '10%', right: '-80px' }}
+        />
         
-        {/* Gold orb */}
-        <div className="orb orb-gold animate-orb-3" />
+        {/* Gold orb - Centre-bas */}
+        <div 
+          className="orb orb-gold animate-orb-3" 
+          style={{ bottom: '20%', left: '30%' }}
+        />
         
-        {/* Purple orb */}
-        <div className="orb orb-purple animate-orb-4" />
+        {/* Purple orb - Centre */}
+        <div 
+          className="orb orb-purple animate-orb-4" 
+          style={{ top: '40%', left: '50%' }}
+        />
         
-        {/* Green orb - caché sur mobile */}
+        {/* Green orb - Coin inférieur droit */}
         {!isMobile && (
-          <div className="orb orb-green animate-orb-5" />
+          <div 
+            className="orb orb-green animate-orb-5" 
+            style={{ bottom: '-50px', right: '-50px' }}
+          />
         )}
         
-        {/* Pink orb */}
-        <div className="orb orb-pink animate-orb-6" />
-        
-        {/* Orbes secondaires - seulement sur desktop */}
-        {!isMobile && (
-          <>
-            <div className="orb orb-cyan animate-orb-1" style={{ animationDelay: '-12s', animationDirection: 'reverse' }} />
-            <div className="orb orb-orange animate-orb-3" style={{ animationDelay: '-8s' }} />
-          </>
-        )}
+        {/* Pink orb - Gauche */}
+        <div 
+          className="orb orb-pink animate-orb-6" 
+          style={{ top: '60%', left: '-60px' }}
+        />
       </div>
 
-      {/* Particules flottantes - nombre adaptatif */}
+      {/* Particules flottantes - Nombre réduit sur mobile */}
       <div className="particles-3d">
-        {[...Array(particleCount)].map((_, i) => (
+        {[...Array(isMobile ? 6 : 10)].map((_, i) => (
           <div
             key={i}
             className="particle-3d"
             style={{
-              left: `${(i / particleCount) * 100}%`,
-              animationDelay: `${(i * 1.5) % 20}s`,
-              animationDuration: `${15 + (i % 5) * 3}s`,
+              left: `${10 + (i * 8)}%`,
+              animationDelay: `${i * 2}s`,
+              animationDuration: `${18 + (i % 3) * 4}s`,
             }}
           />
         ))}
