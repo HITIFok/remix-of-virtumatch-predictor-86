@@ -65,11 +65,44 @@ export function usePredictions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Charger les prédictions
-  const loadPredictions = useCallback(async () => {
+  // Vérifier automatiquement les prédictions en attente
+  const autoVerifyPredictions = useCallback(async () => {
+    try {
+      const supabaseUrl = import.meta.env.VITE_DATABASE_URL
+      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+      
+      // Vérifier silencieusement en arrière-plan
+      const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+          'Authorization': `Bearer ${anonKey}`
+        }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        console.log('✅ Auto-verification:', data)
+        return data
+      }
+    } catch (err) {
+      console.log('Auto-verify skipped:', err)
+    }
+    return null
+  }, [])
+
+  // Charger les prédictions (avec vérification automatique)
+  const loadPredictions = useCallback(async (skipAutoVerify = false) => {
     try {
       setLoading(true)
       
+      // D'abord vérifier automatiquement les prédictions en attente
+      if (!skipAutoVerify) {
+        await autoVerifyPredictions()
+      }
+      
+      // Ensuite charger les prédictions (maintenant à jour)
       const { data: predData, error: predError } = await supabase
         .from('predictions')
         .select('*')
@@ -239,7 +272,7 @@ export function usePredictions() {
         throw error
       }
 
-      await loadPredictions()
+      await loadPredictions(true) // Skip auto-verify after save (just saved)
       
       return data as Prediction
     } catch (err) {
@@ -248,55 +281,25 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier les prédictions via Edge Function
+  // Vérifier manuellement les prédictions via Edge Function (optionnel)
   const verifyPredictions = useCallback(async () => {
     try {
-      const supabaseUrl = import.meta.env.VITE_DATABASE_URL
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+      const result = await autoVerifyPredictions()
+      await loadPredictions(true)
       
-      console.log('🔍 Calling verify-predictions...')
-      
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 60000)
-      
-      const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': anonKey,
-          'Authorization': `Bearer ${anonKey}`
-        },
-        signal: controller.signal
-      })
-      
-      clearTimeout(timeoutId)
-      
-      console.log('📡 Response status:', response.status)
-      
-      const data = await response.json()
-      
-      if (!response.ok) {
-        throw new Error(data.error || `Erreur ${response.status}`)
-      }
-      
-      console.log('✅ Verification result:', data)
-      
-      // Recharger les données
-      await loadPredictions()
-
       return {
         success: true,
-        verified: data.verified || 0,
-        correct: data.correct || 0,
-        incorrect: data.incorrect || 0,
-        stillPending: data.stillPending || 0,
-        totalResults: data.totalResults || 0
+        verified: result?.verified || 0,
+        correct: result?.correct || 0,
+        incorrect: result?.incorrect || 0,
+        stillPending: result?.stillPending || 0,
+        totalResults: result?.totalResults || 0
       }
     } catch (err) {
       console.error('❌ Error verifying predictions:', err)
       throw err
     }
-  }, [loadPredictions])
+  }, [autoVerifyPredictions, loadPredictions])
 
   // Charger au montage
   useEffect(() => {
@@ -310,6 +313,6 @@ export function usePredictions() {
     error,
     savePrediction,
     verifyPredictions,
-    refresh: loadPredictions
+    refresh: () => loadPredictions(false)
   }
 }
