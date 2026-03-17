@@ -77,7 +77,7 @@ export default function Shop() {
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Envoyez le montant au numéro :
                 </p>
-                <p className="font-display text-sm text-fire mt-1 tracking-wider font-bold">+261 38 947 9206</p>
+                <p className="font-display text-sm text-fire mt-1 tracking-wider font-bold">+261 38 30 610 76</p>
               </div>
             </div>
 
@@ -96,7 +96,7 @@ export default function Shop() {
 
           <div className="border-t border-border/50 pt-4 space-y-3">
             <a
-              href="https://wa.me/+261331443048"
+              href="https://wa.me/+261383061076"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-3 bg-success/10 border border-success/30 rounded-xl p-3.5 hover:bg-success/20 transition-all duration-300 hover:scale-[1.02]"
@@ -106,11 +106,11 @@ export default function Shop() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-foreground">WhatsApp</p>
-                <p className="text-xs text-muted-foreground">0331443048</p>
+                <p className="text-xs text-muted-foreground">0383061076</p>
               </div>
             </a>
             <a
-              href="https://facebook.com/NgU darker"
+              href="https://facebook.com/hitif"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-3 bg-ice/10 border border-ice/30 rounded-xl p-3.5 hover:bg-ice/20 transition-all duration-300 hover:scale-[1.02]"
@@ -120,7 +120,7 @@ export default function Shop() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-foreground">Facebook</p>
-                <p className="text-xs text-muted-foreground">NgU darker</p>
+                <p className="text-xs text-muted-foreground">hitif</p>
               </div>
             </a>
           </div>
