@@ -26,131 +26,6 @@ interface ScrapedDataRaw {
   created_at: string;
 }
 
-// API base URL
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
-
-// Fetch directly from API (browser-side) with short timeout
-async function fetchFromAPI(leagueId: string, leagueName: string, timeout = 5000): Promise<{
-  matches: ScrapedMatch[];
-  results: MatchResult[];
-  ranking: RankingEntry[];
-} | null> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-    const matchesRes = await fetch(`${API_BASE}/${leagueId}/matches`, {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-      signal: controller.signal,
-      mode: "cors",
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!matchesRes.ok) return null;
-
-    const matchesData = await matchesRes.json();
-    const matches: ScrapedMatch[] = [];
-
-    if (matchesData?.rounds) {
-      for (const rd of matchesData.rounds) {
-        const roundNum = rd.roundNumber || 0;
-        for (const m of rd.matches || []) {
-          let oddHome = 0, oddDraw = 0, oddAway = 0;
-
-          for (const bt of m.eventBetTypes || []) {
-            if (bt.name === "1X2") {
-              for (const it of bt.eventBetTypeItems || []) {
-                const sn = (it.shortName || "").toUpperCase();
-                const val = parseFloat(it.odds) || 0;
-                if (sn === "1") oddHome = val;
-                else if (sn === "X") oddDraw = val;
-                else if (sn === "2") oddAway = val;
-              }
-              break;
-            }
-          }
-
-          const now = new Date();
-          const kickoff = m.expectedStart ? new Date(m.expectedStart) : null;
-          let status = "upcoming";
-          if (kickoff && kickoff < now) status = "betting";
-
-          if (oddHome > 0 || oddDraw > 0 || oddAway > 0) {
-            matches.push({
-              id: m.id,
-              home: m.homeTeam?.name || "",
-              away: m.awayTeam?.name || "",
-              round: roundNum,
-              league: leagueName,
-              status,
-              kickoff: m.expectedStart || "",
-              oddHome, oddDraw, oddAway,
-              minute: null,
-              scoreHome: null,
-              scoreAway: null,
-              stats: null,
-            });
-          }
-        }
-      }
-    }
-
-    // Fetch ranking and results in parallel
-    const [rankingRes, resultsRes] = await Promise.all([
-      fetch(`${API_BASE}/${leagueId}/ranking`, { headers: { "Accept": "application/json" }, mode: "cors" }).catch(() => null),
-      fetch(`${API_BASE}/${leagueId}/results?skip=0&take=100`, { headers: { "Accept": "application/json" }, mode: "cors" }).catch(() => null),
-    ]);
-
-    const ranking: RankingEntry[] = [];
-    if (rankingRes?.ok) {
-      const rankingData = await rankingRes.json();
-      if (rankingData?.teams) {
-        for (const t of rankingData.teams) {
-          ranking.push({
-            position: t.position || 0,
-            team: t.name || "",
-            played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
-            won: t.won || 0,
-            drawn: t.draw || 0,
-            lost: t.lost || 0,
-            goalsFor: t.goalsFor || 0,
-            goalsAgainst: t.goalsAgainst || 0,
-            goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
-            points: t.points || 0,
-          });
-        }
-      }
-    }
-
-    const results: MatchResult[] = [];
-    if (resultsRes?.ok) {
-      const resultsData = await resultsRes.json();
-      if (resultsData?.rounds) {
-        for (const rd of resultsData.rounds) {
-          for (const m of rd.matches || []) {
-            const score = String(m.score || "0:0").split(":");
-            results.push({
-              home: m.homeTeam?.name || "",
-              away: m.awayTeam?.name || "",
-              scoreHome: parseInt(score[0]) || 0,
-              scoreAway: parseInt(score[1]) || 0,
-              league: leagueName,
-              matchday: String(rd.roundNumber || ""),
-            });
-          }
-        }
-      }
-    }
-
-    return { matches, results, ranking };
-  } catch (err) {
-    console.log(`API fetch error for ${leagueName}:`, err);
-    return null;
-  }
-}
-
 export function useLiveMatches() {
   const [matches, setMatches] = useState<ScrapedMatch[]>([]);
   const [results, setResults] = useState<MatchResult[]>([]);
@@ -161,19 +36,13 @@ export function useLiveMatches() {
   const [error, setError] = useState<string | null>(null);
   const [autoScrapeActive, setAutoScrapeActive] = useState(false);
   const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
-  const [dataSource, setDataSource] = useState<"api" | "cache" | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
-  // Charger les données depuis le cache Supabase (RAPIDE)
-  const loadFromCache = useCallback(async (leagueName: string): Promise<{
-    matches: ScrapedMatch[];
-    results: MatchResult[];
-    ranking: RankingEntry[];
-    scrapedAt: string;
-  } | null> => {
-    console.log(`📦 Loading cache for: "${leagueName}"`);
+  // Charger les données depuis Supabase
+  const loadFromDatabase = useCallback(async (leagueName: string): Promise<boolean> => {
+    console.log(`📦 Loading from Supabase: "${leagueName}"`);
 
     try {
       const { data, error: dbError } = await supabase
@@ -182,13 +51,13 @@ export function useLiveMatches() {
         .eq("league", leagueName);
 
       if (dbError) {
-        console.error("DB Error:", dbError);
+        console.error("❌ DB Error:", dbError);
         throw new Error(dbError.message);
       }
 
       if (!data || data.length === 0) {
-        console.log(`❌ No cache for: "${leagueName}"`);
-        return null;
+        console.log(`❌ No data for: "${leagueName}"`);
+        return false;
       }
 
       console.log(`✅ Found ${data.length} entries for "${leagueName}"`);
@@ -198,117 +67,105 @@ export function useLiveMatches() {
       const resultsEntry = rawData.find(d => d.data_type === "results");
       const rankingEntry = rawData.find(d => d.data_type === "ranking");
 
-      const parsedMatches = matchesEntry?.payload && Array.isArray(matchesEntry.payload)
-        ? matchesEntry.payload.map((m: any) => ({
-            league: m.league || leagueName,
-            home: m.home || "",
-            away: m.away || "",
-            kickoff: m.kickoff || m.expectedStart || "",
-            oddHome: m.oddHome || 0,
-            oddDraw: m.oddDraw || 0,
-            oddAway: m.oddAway || 0,
-            status: m.status || "upcoming",
-            minute: m.minute || null,
-            scoreHome: m.scoreHome ?? null,
-            scoreAway: m.scoreAway ?? null,
-            stats: m.stats || null,
-            id: m.id,
-            round: m.round,
-          }))
-        : [];
+      // Parser les matchs
+      if (matchesEntry?.payload && Array.isArray(matchesEntry.payload)) {
+        const parsed = matchesEntry.payload.map((m: any) => ({
+          league: m.league || leagueName,
+          home: m.home || "",
+          away: m.away || "",
+          kickoff: m.kickoff || m.expectedStart || "",
+          oddHome: m.oddHome || 0,
+          oddDraw: m.oddDraw || 0,
+          oddAway: m.oddAway || 0,
+          status: m.status || "upcoming",
+          minute: m.minute || null,
+          scoreHome: m.scoreHome ?? null,
+          scoreAway: m.scoreAway ?? null,
+          stats: m.stats || null,
+          id: m.id,
+          round: m.round,
+        }));
+        console.log(`📋 ${parsed.length} matches loaded`);
+        setMatches(parsed);
+      } else {
+        setMatches([]);
+      }
 
-      const parsedResults = resultsEntry?.payload && Array.isArray(resultsEntry.payload)
-        ? resultsEntry.payload.map((r: any) => ({
-            home: r.home || "",
-            away: r.away || "",
-            scoreHome: r.scoreHome ?? 0,
-            scoreAway: r.scoreAway ?? 0,
-            league: r.league || leagueName,
-            matchday: r.matchday || r.round || "",
-          }))
-        : [];
+      // Parser les résultats
+      if (resultsEntry?.payload && Array.isArray(resultsEntry.payload)) {
+        const parsed = resultsEntry.payload.map((r: any) => ({
+          home: r.home || "",
+          away: r.away || "",
+          scoreHome: r.scoreHome ?? 0,
+          scoreAway: r.scoreAway ?? 0,
+          league: r.league || leagueName,
+          matchday: r.matchday || r.round || "",
+        }));
+        console.log(`📊 ${parsed.length} results loaded`);
+        setResults(parsed);
+      } else {
+        setResults([]);
+      }
 
-      const parsedRanking = rankingEntry?.payload && Array.isArray(rankingEntry.payload)
-        ? rankingEntry.payload.map((t: any) => ({
-            position: t.position || 0,
-            team: t.team || t.name || "",
-            played: t.played || 0,
-            won: t.won || 0,
-            drawn: t.drawn || t.draw || 0,
-            lost: t.lost || 0,
-            goalsFor: t.goalsFor || 0,
-            goalsAgainst: t.goalsAgainst || 0,
-            goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
-            points: t.points || 0,
-          }))
-        : [];
+      // Parser le classement
+      if (rankingEntry?.payload && Array.isArray(rankingEntry.payload)) {
+        const parsed = rankingEntry.payload.map((t: any) => ({
+          position: t.position || 0,
+          team: t.team || t.name || "",
+          played: t.played || 0,
+          won: t.won || 0,
+          drawn: t.drawn || t.draw || 0,
+          lost: t.lost || 0,
+          goalsFor: t.goalsFor || 0,
+          goalsAgainst: t.goalsAgainst || 0,
+          goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
+          points: t.points || 0,
+        }));
+        console.log(`🏆 ${parsed.length} teams loaded`);
+        setRanking(parsed);
+      } else {
+        setRanking([]);
+      }
 
-      console.log(`📊 Cache loaded: ${parsedMatches.length} matches, ${parsedResults.length} results, ${parsedRanking.length} teams`);
+      // Date de mise à jour
+      const scrapedAt = matchesEntry?.scraped_at || rawData[0]?.scraped_at;
+      setLastUpdate(scrapedAt || new Date().toISOString());
 
-      return {
-        matches: parsedMatches,
-        results: parsedResults,
-        ranking: parsedRanking,
-        scrapedAt: matchesEntry?.scraped_at || new Date().toISOString(),
-      };
+      return true;
     } catch (err) {
-      console.error("Cache error:", err);
-      return null;
+      console.error("❌ Error:", err);
+      return false;
     }
   }, []);
 
-  // Charger les données : Cache d'abord, puis API en arrière-plan
-  const fetchMatches = useCallback(async (leagueId: LeagueId, leagueName: string, forceAPI = false) => {
+  // Charger les données
+  const fetchMatches = useCallback(async (leagueId: LeagueId, leagueName: string) => {
     setLoading(true);
     setError(null);
 
-    // 1. Charger depuis le cache immédiatement
-    const cacheData = await loadFromCache(leagueName);
+    const hasData = await loadFromDatabase(leagueName);
 
-    if (cacheData) {
-      setMatches(cacheData.matches);
-      setResults(cacheData.results);
-      setRanking(cacheData.ranking);
-      setLastUpdate(cacheData.scrapedAt);
-      setDataSource("cache");
+    if (!hasData) {
+      setError(`Aucune donnée pour ${leagueName}. Exécutez le scraper.`);
     }
 
     setLoading(false);
-
-    // 2. Essayer l'API en arrière-plan (si forceAPI ou auto-refresh)
-    if (forceAPI || autoScrapeActive) {
-      console.log(`🔄 Trying API for ${leagueName}...`);
-      const apiData = await fetchFromAPI(leagueId, leagueName);
-
-      if (apiData && apiData.matches.length > 0) {
-        console.log(`✅ API: ${apiData.matches.length} matches`);
-        setMatches(apiData.matches);
-        setResults(apiData.results);
-        setRanking(apiData.ranking);
-        setLastUpdate(new Date().toISOString());
-        setDataSource("api");
-      }
-    }
-
-    if (!cacheData) {
-      setError("Aucune donnée disponible.");
-    }
-  }, [loadFromCache, autoScrapeActive]);
+  }, [loadFromDatabase]);
 
   // Refresh manuel
   const refreshData = useCallback(async () => {
     setScraping(true);
-    await fetchMatches(selectedLeagueId, selectedLeague.name, true);
+    await fetchMatches(selectedLeagueId, selectedLeague.name);
     setScraping(false);
   }, [fetchMatches, selectedLeagueId, selectedLeague.name]);
 
-  // Auto-refresh
+  // Auto-refresh (toutes les 30s)
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     setAutoScrapeActive(true);
-    fetchMatches(selectedLeagueId, selectedLeague.name, true);
+    fetchMatches(selectedLeagueId, selectedLeague.name);
     intervalRef.current = setInterval(() => {
-      fetchMatches(selectedLeagueId, selectedLeague.name, true);
+      fetchMatches(selectedLeagueId, selectedLeague.name);
     }, 30000);
   }, [fetchMatches, selectedLeagueId, selectedLeague.name]);
 
@@ -335,11 +192,8 @@ export function useLiveMatches() {
     setRanking([]);
     setError(null);
     setLastUpdate(null);
-    setDataSource(null);
-    setLoading(true);
 
-    // Charger avec les paramètres directs (pas via state)
-    await fetchMatches(leagueId, newLeague.name, false);
+    await fetchMatches(leagueId, newLeague.name);
   }, [autoScrapeActive, stopAutoRefresh, fetchMatches]);
 
   // Cleanup
@@ -351,7 +205,7 @@ export function useLiveMatches() {
 
   // Charger au montage
   useEffect(() => {
-    fetchMatches(selectedLeagueId, selectedLeague.name, false);
+    fetchMatches(selectedLeagueId, selectedLeague.name);
   }, []);
 
   const matchesByLeague = matches.reduce<Record<string, ScrapedMatch[]>>((acc, m) => {
@@ -375,11 +229,11 @@ export function useLiveMatches() {
     selectedLeagueId,
     selectedLeague,
     availableLeagues: AVAILABLE_LEAGUES,
-    fetchMatches: () => fetchMatches(selectedLeagueId, selectedLeague.name, false),
+    fetchMatches: () => fetchMatches(selectedLeagueId, selectedLeague.name),
     refreshData,
     startAutoRefresh,
     stopAutoRefresh,
     changeLeague,
-    dataSource,
+    dataSource: "cache" as const,
   };
 }
