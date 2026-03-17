@@ -1,5 +1,5 @@
 // Supabase Edge Function: verify-predictions
-// Vérifie les prédictions en attente en appelant l'API (comme auto-scrape)
+// Vérifie les prédictions en attente en récupérant les résultats de TOUTES les ligues
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
@@ -7,8 +7,19 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
 const DATABASE_SERVICE_KEY = Deno.env.get('DATABASE_SERVICE_KEY')!
 
-const LEAGUE_ID = "8035"
-const API_RESULTS = `https://hg-event-api-prod.sporty-tech.net/api/instantleagues/${LEAGUE_ID}/results?skip=0&take=50`
+const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues"
+
+// Toutes les ligues
+const LEAGUES = [
+  { id: "8035", name: "English League" },
+  { id: "8060", name: "Coupe d'Afrique" },
+  { id: "8056", name: "Champions League" },
+  { id: "8036", name: "Italian League" },
+  { id: "8037", name: "Spanish League" },
+  { id: "8042", name: "French League" },
+  { id: "8043", name: "German League" },
+  { id: "8044", name: "Portuguese League" },
+]
 
 const HEADERS = {
   "Origin": "https://bet261.mg",
@@ -25,30 +36,69 @@ const corsHeaders = {
   'Content-Type': 'application/json'
 }
 
+async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>> {
+  const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>()
+
+  try {
+    const response = await fetch(`${API_BASE}/${leagueId}/results?skip=0&take=200`, { headers: HEADERS })
+
+    if (!response.ok) {
+      console.log(`⚠️ League ${leagueId}: API returned ${response.status}`)
+      return resultsMap
+    }
+
+    const data = await response.json()
+
+    if (data.rounds) {
+      for (const roundData of data.rounds) {
+        for (const match of (roundData.matches || [])) {
+          const homeTeam = match.homeTeam?.name
+          const awayTeam = match.awayTeam?.name
+          const score = match.score || "0:0"
+          const parts = score.split(":")
+          const homeScore = parseInt(parts[0]) || 0
+          const awayScore = parseInt(parts[1]) || 0
+
+          let outcome: string
+          if (homeScore > awayScore) outcome = '1'
+          else if (homeScore < awayScore) outcome = '2'
+          else outcome = 'X'
+
+          if (homeTeam && awayTeam) {
+            resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome, league: LEAGUES.find(l => l.id === leagueId)?.name || 'Unknown' })
+          }
+        }
+      }
+    }
+
+    console.log(`✅ League ${leagueId}: ${resultsMap.size} results`)
+  } catch (err) {
+    console.log(`❌ League ${leagueId}: ${err.message}`)
+  }
+
+  return resultsMap
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    console.log('📡 CORS preflight request')
     return new Response(null, { status: 204, headers: corsHeaders })
   }
 
-  console.log('🔍 Verify predictions called - Method:', req.method)
+  console.log('🔍 Verify predictions called')
 
   const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY)
 
   try {
-    console.log('📊 Fetching pending predictions...')
-
     // 1. Récupérer les prédictions en attente
     const { data: pendingPredictions, error: fetchError } = await supabase
       .from('predictions')
       .select('*')
       .eq('status', 'pending')
       .order('created_at', { ascending: true })
-      .limit(50)
+      .limit(100)
 
     if (fetchError) {
-      console.error('❌ Error fetching predictions:', fetchError)
       return new Response(
         JSON.stringify({ error: 'Failed to fetch predictions', details: fetchError.message }),
         { status: 500, headers: corsHeaders }
@@ -64,56 +114,21 @@ serve(async (req) => {
       )
     }
 
-    // 2. Appeler l'API pour les résultats (comme auto-scrape)
-    console.log('🌐 Fetching results from API...')
-    const response = await fetch(API_RESULTS, { headers: HEADERS })
-    
-    console.log(`📡 API response status: ${response.status}`)
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('❌ API error:', response.status, errorText)
-      return new Response(
-        JSON.stringify({ 
-          error: `API error: ${response.status}`, 
-          details: errorText,
-          hint: 'API peut être geo-bloqué depuis les serveurs Supabase'
-        }),
-        { status: 200, headers: corsHeaders }
-      )
-    }
+    // 2. Récupérer les résultats de TOUTES les ligues en parallèle
+    console.log('🌐 Fetching results from ALL leagues...')
+    const allResults = await Promise.all(LEAGUES.map(l => fetchResults(l.id)))
 
-    const resultsData = await response.json()
-    console.log('✅ API response received')
-
-    // 3. Construire le map des résultats
-    const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string }>()
-
-    if (resultsData.rounds) {
-      for (const roundData of resultsData.rounds) {
-        for (const match of (roundData.matches || [])) {
-          const homeTeam = match.homeTeam?.name
-          const awayTeam = match.awayTeam?.name
-          const score = match.score || "0:0"
-          const parts = score.split(":")
-          const homeScore = parseInt(parts[0]) || 0
-          const awayScore = parseInt(parts[1]) || 0
-
-          let outcome: string
-          if (homeScore > awayScore) outcome = '1'
-          else if (homeScore < awayScore) outcome = '2'
-          else outcome = 'X'
-
-          if (homeTeam && awayTeam) {
-            resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome })
-          }
-        }
+    // Combiner tous les résultats
+    const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>()
+    for (const leagueResults of allResults) {
+      for (const [key, value] of leagueResults) {
+        resultsMap.set(key, value)
       }
     }
 
-    console.log(`📊 Found ${resultsMap.size} results in API`)
+    console.log(`📊 Total results: ${resultsMap.size}`)
 
-    // 4. Comparer et mettre à jour
+    // 3. Comparer et mettre à jour
     let correct = 0
     let incorrect = 0
     const updates: Promise<any>[] = []
@@ -143,7 +158,7 @@ serve(async (req) => {
             .eq('id', pred.id)
         )
 
-        console.log(`${isCorrect ? '✅' : '❌'} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome}`)
+        console.log(`${isCorrect ? '✅' : '❌'} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome} (${result.league})`)
       }
     }
 
@@ -158,7 +173,8 @@ serve(async (req) => {
         verified: updates.length,
         correct,
         incorrect,
-        stillPending: pendingPredictions.length - updates.length
+        stillPending: pendingPredictions.length - updates.length,
+        totalResults: resultsMap.size
       }),
       { status: 200, headers: corsHeaders }
     )
