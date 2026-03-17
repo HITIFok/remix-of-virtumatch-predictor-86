@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import { usePredictions, type Prediction, type AggregatedStats } from "@/hooks/use-predictions";
@@ -7,11 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  History as HistoryIcon, Eye, CheckCircle, XCircle, Clock,
+  History as HistoryIcon, CheckCircle, XCircle, Clock,
   TrendingUp, Target, AlertTriangle, Trophy, RefreshCw, Loader2,
-  BarChart3, Percent
+  BarChart3
 } from "lucide-react";
-import { toast } from "sonner";
 
 function PredictionCard({ prediction }: { prediction: Prediction }) {
   const statusColor = 
@@ -227,32 +226,8 @@ function StatsOverview({ stats }: { stats: AggregatedStats | null }) {
 }
 
 export default function History() {
-  const { predictions, stats, loading, verifyPredictions, refresh } = usePredictions();
-  const [verifying, setVerifying] = useState(false);
+  const { predictions, stats, loading, refresh } = usePredictions();
   const [activeTab, setActiveTab] = useState("stats");
-
-  const handleVerify = async () => {
-    setVerifying(true);
-    try {
-      const result = await verifyPredictions();
-      console.log('Verify result:', result);
-
-      if (result?.success) {
-        if (result.verified > 0) {
-          toast.success(`Vérifié: ${result.correct} correct, ${result.incorrect} incorrect (${result.verified} total)`);
-        } else {
-          toast.info('Aucun nouveau résultat trouvé pour les prédictions en attente');
-        }
-      } else {
-        toast.info(result?.message || 'Aucune prédiction à vérifier');
-      }
-    } catch (err) {
-      console.error('Verify error:', err);
-      toast.error(err instanceof Error ? err.message : 'Erreur lors de la vérification');
-    } finally {
-      setVerifying(false);
-    }
-  };
 
   const pendingPredictions = predictions.filter(p => p.status === 'pending');
   const verifiedPredictions = predictions.filter(p => p.status !== 'pending');
@@ -272,29 +247,15 @@ export default function History() {
               Historique & Stats
             </h2>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => refresh()}
-              disabled={loading}
-              className="text-xs"
-            >
-              {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-            </Button>
-            <Button
-              size="sm"
-              className="bg-gradient-fire text-primary-foreground text-xs"
-              onClick={handleVerify}
-              disabled={verifying || pendingPredictions.length === 0}
-            >
-              {verifying ? (
-                <><Loader2 size={14} className="mr-1 animate-spin" /> Vérification...</>
-              ) : (
-                <><Eye size={14} className="mr-1" /> Vérifier ({pendingPredictions.length})</>
-              )}
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => refresh()}
+            disabled={loading}
+            className="text-xs"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+          </Button>
         </div>
 
         {/* Loading state */}
@@ -370,7 +331,7 @@ export default function History() {
                   <Clock size={32} className="mx-auto text-muted-foreground/30 mb-2" />
                   <p className="text-sm text-muted-foreground">Aucune prédiction vérifiée</p>
                   <p className="text-[10px] text-muted-foreground mt-1">
-                    Cliquez sur "Vérifier" pour comparer avec les résultats
+                    Les résultats seront comparés automatiquement
                   </p>
                 </div>
               ) : (
