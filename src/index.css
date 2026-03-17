@@ -88,15 +88,21 @@
 
 /* ===== ANIMATED 3D MULTICOLOR BACKGROUND ===== */
 @layer utilities {
-  /* Container principal */
+  /* Container principal - Arrière-plan toujours visible */
   .animated-multicolor {
-    background: linear-gradient(135deg, #1a0a2e 0%, #0f1628 25%, #1a0a2e 50%, #0a1628 75%, #1a0a2e 100%);
+    /* Couleur de base visible même si l'animation échoue */
+    background-color: #1a0a2e;
+    background-image: linear-gradient(135deg, 
+      #2d1b4e 0%,   /* Violet foncé visible */
+      #1a2a4a 20%,  /* Bleu nuit */
+      #2d1b4e 40%,  /* Violet */
+      #1a2a4a 60%,  /* Bleu nuit */
+      #2d1b4e 80%,  /* Violet */
+      #1a2a4a 100%  /* Bleu nuit */
+    );
     background-size: 400% 400%;
     animation: gradient-shift-bg 15s ease infinite;
     -webkit-animation: gradient-shift-bg 15s ease infinite;
-    will-change: background-position;
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
   }
 
   @keyframes gradient-shift-bg {
@@ -104,17 +110,17 @@
     50% { background-position: 100% 50%; }
   }
 
-  /* Orbes colorés - Optimisés pour mobile */
+  /* Orbes colorés - Toujours visibles */
   .orb {
     position: absolute;
     border-radius: 50%;
-    opacity: 0.8;
-    will-change: transform, opacity;
-    -webkit-backface-visibility: hidden;
-    backface-visibility: hidden;
+    opacity: 0.7;
+    pointer-events: none;
+    /* Forcer le rendu GPU */
     -webkit-transform: translateZ(0);
     transform: translateZ(0);
-    contain: strict;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
   .orb-fire {
@@ -233,31 +239,15 @@
     }
   }
 
-  /* Animated orbs - 3D floating effect - Optimisé pour GPU */
+  /* Animated orbs - Position fixe avec animation subtile */
   @keyframes orb-1 {
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      top: 0%;
-      left: 0%;
-    }
-    25% { 
-      -webkit-transform: translate3d(80px, 60px, 0) scale(1.2);
-      transform: translate3d(80px, 60px, 0) scale(1.2);
-      top: 15%;
-      left: 20%;
     }
     50% { 
-      -webkit-transform: translate3d(40px, 80px, 0) scale(0.9);
-      transform: translate3d(40px, 80px, 0) scale(0.9);
-      top: 30%;
-      left: 10%;
-    }
-    75% { 
-      -webkit-transform: translate3d(-30px, 50px, 0) scale(1.1);
-      transform: translate3d(-30px, 50px, 0) scale(1.1);
-      top: 20%;
-      left: 5%;
+      -webkit-transform: translate3d(30px, 40px, 0) scale(1.1);
+      transform: translate3d(30px, 40px, 0) scale(1.1);
     }
   }
 
@@ -265,26 +255,10 @@
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      top: 40%;
-      right: 0%;
-    }
-    25% { 
-      -webkit-transform: translate3d(-60px, -40px, 0) scale(1.15);
-      transform: translate3d(-60px, -40px, 0) scale(1.15);
-      top: 30%;
-      right: 15%;
     }
     50% { 
-      -webkit-transform: translate3d(-90px, 30px, 0) scale(0.85);
-      transform: translate3d(-90px, 30px, 0) scale(0.85);
-      top: 55%;
-      right: 20%;
-    }
-    75% { 
-      -webkit-transform: translate3d(-40px, -30px, 0) scale(1.05);
-      transform: translate3d(-40px, -30px, 0) scale(1.05);
-      top: 35%;
-      right: 10%;
+      -webkit-transform: translate3d(-40px, 30px, 0) scale(1.15);
+      transform: translate3d(-40px, 30px, 0) scale(1.15);
     }
   }
 
@@ -292,20 +266,10 @@
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      bottom: 0%;
-      left: 15%;
     }
-    33% { 
-      -webkit-transform: translate3d(50px, -60px, 0) scale(1.2);
-      transform: translate3d(50px, -60px, 0) scale(1.2);
-      bottom: 30%;
-      left: 35%;
-    }
-    66% { 
-      -webkit-transform: translate3d(-30px, -30px, 0) scale(0.9);
-      transform: translate3d(-30px, -30px, 0) scale(0.9);
-      bottom: 20%;
-      left: 20%;
+    50% { 
+      -webkit-transform: translate3d(25px, -35px, 0) scale(1.1);
+      transform: translate3d(25px, -35px, 0) scale(1.1);
     }
   }
 
@@ -313,26 +277,10 @@
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      top: 20%;
-      left: 40%;
-    }
-    25% { 
-      -webkit-transform: translate3d(-40px, 60px, 0) scale(1.1);
-      transform: translate3d(-40px, 60px, 0) scale(1.1);
-      top: 35%;
-      left: 35%;
     }
     50% { 
-      -webkit-transform: translate3d(25px, 30px, 0) scale(0.95);
-      transform: translate3d(25px, 30px, 0) scale(0.95);
-      top: 25%;
-      left: 50%;
-    }
-    75% { 
-      -webkit-transform: translate3d(-15px, 45px, 0) scale(1.05);
-      transform: translate3d(-15px, 45px, 0) scale(1.05);
-      top: 30%;
-      left: 42%;
+      -webkit-transform: translate3d(-30px, 25px, 0) scale(1.08);
+      transform: translate3d(-30px, 25px, 0) scale(1.08);
     }
   }
 
@@ -340,14 +288,10 @@
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      bottom: 20%;
-      right: 10%;
     }
     50% { 
-      -webkit-transform: translate3d(-60px, -45px, 0) scale(1.15);
-      transform: translate3d(-60px, -45px, 0) scale(1.15);
-      bottom: 40%;
-      right: 25%;
+      -webkit-transform: translate3d(-25px, -30px, 0) scale(1.12);
+      transform: translate3d(-25px, -30px, 0) scale(1.12);
     }
   }
 
@@ -355,20 +299,10 @@
     0%, 100% { 
       -webkit-transform: translate3d(0, 0, 0) scale(1);
       transform: translate3d(0, 0, 0) scale(1);
-      top: 50%;
-      left: 5%;
     }
-    33% { 
-      -webkit-transform: translate3d(30px, -35px, 0) scale(1.1);
-      transform: translate3d(30px, -35px, 0) scale(1.1);
-      top: 40%;
-      left: 15%;
-    }
-    66% { 
-      -webkit-transform: translate3d(-20px, -20px, 0) scale(0.9);
-      transform: translate3d(-20px, -20px, 0) scale(0.9);
-      top: 60%;
-      left: 8%;
+    50% { 
+      -webkit-transform: translate3d(20px, -25px, 0) scale(1.05);
+      transform: translate3d(20px, -25px, 0) scale(1.05);
     }
   }
 
