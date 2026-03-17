@@ -45,16 +45,18 @@ export interface AggregatedStats {
   pending: number
   accuracy: number
   byOutcome: {
-    home: { predicted: number; correct: number }
-    draw: { predicted: number; correct: number }
-    away: { predicted: number; correct: number }
+    home: { predicted: number; correct: number; accuracy: number }
+    draw: { predicted: number; correct: number; accuracy: number }
+    away: { predicted: number; correct: number; accuracy: number }
   }
   byConfidence: {
-    high: { total: number; correct: number }
-    medium: { total: number; correct: number }
-    low: { total: number; correct: number }
+    high: { total: number; correct: number; accuracy: number }
+    medium: { total: number; correct: number; accuracy: number }
+    low: { total: number; correct: number; accuracy: number }
   }
   recentAccuracy: number
+  recentCorrect: number
+  recentTotal: number
 }
 
 export function usePredictions() {
@@ -72,7 +74,7 @@ export function usePredictions() {
         .from('predictions')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(100)
+        .limit(200)
 
       if (predError) throw predError
 
@@ -86,14 +88,33 @@ export function usePredictions() {
         const verified = correct + incorrect
         const accuracy = verified > 0 ? Math.round((correct / verified) * 100) : 0
 
+        // Par type de prédiction
         const homePred = predData.filter(p => p.prediction === '1')
+        const homeCorrect = homePred.filter(p => p.status === 'correct').length
+        const homeVerified = homePred.filter(p => p.status !== 'pending').length
+        
         const drawPred = predData.filter(p => p.prediction === 'X')
+        const drawCorrect = drawPred.filter(p => p.status === 'correct').length
+        const drawVerified = drawPred.filter(p => p.status !== 'pending').length
+        
         const awayPred = predData.filter(p => p.prediction === '2')
+        const awayCorrect = awayPred.filter(p => p.status === 'correct').length
+        const awayVerified = awayPred.filter(p => p.status !== 'pending').length
 
+        // Par niveau de confiance
         const highConf = predData.filter(p => p.confidence >= 70)
+        const highCorrect = highConf.filter(p => p.status === 'correct').length
+        const highVerified = highConf.filter(p => p.status !== 'pending').length
+        
         const medConf = predData.filter(p => p.confidence >= 50 && p.confidence < 70)
+        const medCorrect = medConf.filter(p => p.status === 'correct').length
+        const medVerified = medConf.filter(p => p.status !== 'pending').length
+        
         const lowConf = predData.filter(p => p.confidence < 50)
+        const lowCorrect = lowConf.filter(p => p.status === 'correct').length
+        const lowVerified = lowConf.filter(p => p.status !== 'pending').length
 
+        // Précision récente (7 derniers jours)
         const weekAgo = new Date()
         weekAgo.setDate(weekAgo.getDate() - 7)
         const recentPreds = predData.filter(p => new Date(p.created_at) >= weekAgo)
@@ -112,33 +133,43 @@ export function usePredictions() {
           byOutcome: {
             home: { 
               predicted: homePred.length, 
-              correct: homePred.filter(p => p.status === 'correct').length 
+              correct: homeCorrect,
+              accuracy: homeVerified > 0 ? Math.round((homeCorrect / homeVerified) * 100) : 0
             },
             draw: { 
               predicted: drawPred.length, 
-              correct: drawPred.filter(p => p.status === 'correct').length 
+              correct: drawCorrect,
+              accuracy: drawVerified > 0 ? Math.round((drawCorrect / drawVerified) * 100) : 0
             },
             away: { 
               predicted: awayPred.length, 
-              correct: awayPred.filter(p => p.status === 'correct').length 
+              correct: awayCorrect,
+              accuracy: awayVerified > 0 ? Math.round((awayCorrect / awayVerified) * 100) : 0
             },
           },
           byConfidence: {
             high: { 
               total: highConf.length, 
-              correct: highConf.filter(p => p.status === 'correct').length 
+              correct: highCorrect,
+              accuracy: highVerified > 0 ? Math.round((highCorrect / highVerified) * 100) : 0
             },
             medium: { 
               total: medConf.length, 
-              correct: medConf.filter(p => p.status === 'correct').length 
+              correct: medCorrect,
+              accuracy: medVerified > 0 ? Math.round((medCorrect / medVerified) * 100) : 0
             },
             low: { 
               total: lowConf.length, 
-              correct: lowConf.filter(p => p.status === 'correct').length 
+              correct: lowCorrect,
+              accuracy: lowVerified > 0 ? Math.round((lowCorrect / lowVerified) * 100) : 0
             },
           },
-          recentAccuracy
+          recentAccuracy,
+          recentCorrect,
+          recentTotal: recentVerified.length
         })
+      } else {
+        setStats(null)
       }
 
       setError(null)
@@ -167,7 +198,6 @@ export function usePredictions() {
     predicted_home_score?: number
     predicted_away_score?: number
     predicted_score?: string
-    // Champs supplémentaires pour éviter N/A
     gg_result?: string
     total_goals?: number
     parity?: string
@@ -191,13 +221,11 @@ export function usePredictions() {
           league: pred.league || 'Instant League',
           status: 'pending',
           device_id: deviceId,
-          // Ajouter les alias pour compatibilité avec storage.ts
           home: pred.home_team,
           away: pred.away_team,
           score_home: pred.predicted_home_score,
           score_away: pred.predicted_away_score,
           exact_score: pred.predicted_score,
-          // Calculer le winner_1x2 si non fourni
           winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
         })
         .select()
@@ -220,7 +248,7 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier les prédictions - appel direct via fetch avec timeout
+  // Vérifier les prédictions via Edge Function
   const verifyPredictions = useCallback(async () => {
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -228,9 +256,8 @@ export function usePredictions() {
       
       console.log('🔍 Calling verify-predictions...')
       
-      // Appel direct avec fetch et timeout de 30 secondes
       const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 30000)
+      const timeoutId = setTimeout(() => controller.abort(), 60000)
       
       const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
         method: 'POST',
@@ -246,19 +273,25 @@ export function usePredictions() {
       
       console.log('📡 Response status:', response.status)
       
+      const data = await response.json()
+      
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('❌ Error response:', errorText)
-        throw new Error(`Erreur ${response.status}: ${errorText}`)
+        throw new Error(data.error || `Erreur ${response.status}`)
       }
       
-      const data = await response.json()
       console.log('✅ Verification result:', data)
       
       // Recharger les données
       await loadPredictions()
 
-      return data
+      return {
+        success: true,
+        verified: data.verified || 0,
+        correct: data.correct || 0,
+        incorrect: data.incorrect || 0,
+        stillPending: data.stillPending || 0,
+        totalResults: data.totalResults || 0
+      }
     } catch (err) {
       console.error('❌ Error verifying predictions:', err)
       throw err
