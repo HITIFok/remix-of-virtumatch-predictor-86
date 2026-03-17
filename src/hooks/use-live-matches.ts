@@ -1,16 +1,26 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { runScrape, AVAILABLE_LEAGUES, type LeagueId, type LeagueInfo } from "@/lib/auto-scraper";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
-import { toast } from "sonner";
 
-const AUTO_SCRAPE_INTERVAL = 30000; // 30 secondes
+// Liste des ligues disponibles
+export const AVAILABLE_LEAGUES = [
+  { id: "8035", name: "English League", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+  { id: "8060", name: "Coupe d'Afrique", flag: "🌍" },
+  { id: "8056", name: "Champions League", flag: "🏆" },
+  { id: "8036", name: "Italian League", flag: "🇮🇹" },
+  { id: "8037", name: "Spanish League", flag: "🇪🇸" },
+  { id: "8042", name: "French League", flag: "🇫🇷" },
+  { id: "8043", name: "German League", flag: "🇩🇪" },
+  { id: "8044", name: "Portuguese League", flag: "🇵🇹" },
+] as const;
+
+export type LeagueId = typeof AVAILABLE_LEAGUES[number]["id"];
+export type LeagueInfo = typeof AVAILABLE_LEAGUES[number];
 
 interface ScrapedDataRaw {
   id: string;
   data_type: string;
   league: string | null;
-  league_id?: string;
   payload: any;
   scraped_at: string;
   created_at: string;
@@ -20,7 +30,7 @@ export function useLiveMatches() {
   const [matches, setMatches] = useState<ScrapedMatch[]>([]);
   const [results, setResults] = useState<MatchResult[]>([]);
   const [ranking, setRanking] = useState<RankingEntry[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [scraping, setScraping] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,48 +38,46 @@ export function useLiveMatches() {
   const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Obtenir la ligue sélectionnée
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
-  // Load data from Supabase table for the selected league
+  // Charger les données depuis Supabase
   const loadFromDatabase = useCallback(async (leagueName?: string) => {
-    try {
-      const targetLeague = leagueName || selectedLeague.name;
-      console.log(`🔍 Loading data for league: ${targetLeague}`);
+    const targetLeague = leagueName || selectedLeague.name;
+    console.log(`🔍 Loading data for: ${targetLeague}`);
 
-      // Charger uniquement les données pour cette ligue
+    try {
       const { data, error: dbError } = await supabase
         .from("scraped_data")
         .select("*")
         .eq("league", targetLeague)
         .order("scraped_at", { ascending: false });
 
-      if (dbError) throw new Error(dbError.message);
+      if (dbError) {
+        console.error("DB Error:", dbError);
+        throw new Error(dbError.message);
+      }
 
       if (!data || data.length === 0) {
-        console.log(`❌ No data found for league: ${targetLeague}`);
-        // Vider les données si aucune donnée pour cette ligue
+        console.log(`❌ No data for: ${targetLeague}`);
         setMatches([]);
         setResults([]);
         setRanking([]);
         return false;
       }
 
+      console.log(`✅ Found ${data.length} entries for ${targetLeague}`);
+
       const rawData = data as ScrapedDataRaw[];
-      console.log(`✅ Found ${rawData.length} entries for ${targetLeague}`);
 
-      // Get latest by type
-      const latestMatches = rawData.find((d: any) => d.data_type === "matches");
-      const latestResults = rawData.find((d: any) => d.data_type === "results");
-      const latestRanking = rawData.find((d: any) => d.data_type === "ranking");
+      // Trouver les données par type
+      const matchesEntry = rawData.find(d => d.data_type === "matches");
+      const resultsEntry = rawData.find(d => d.data_type === "results");
+      const rankingEntry = rawData.find(d => d.data_type === "ranking");
 
-      // Parse matches
-      if (latestMatches?.payload) {
-        const parsedMatches = Array.isArray(latestMatches.payload)
-          ? latestMatches.payload
-          : [];
-        console.log(`📋 Parsing ${parsedMatches.length} matches for ${targetLeague}`);
-        setMatches(parsedMatches.map((m: any) => ({
+      // Parser les matchs
+      if (matchesEntry?.payload && Array.isArray(matchesEntry.payload)) {
+        console.log(`📋 ${matchesEntry.payload.length} matches found`);
+        setMatches(matchesEntry.payload.map((m: any) => ({
           league: m.league || targetLeague,
           home: m.home || "",
           away: m.away || "",
@@ -86,21 +94,18 @@ export function useLiveMatches() {
           round: m.round,
         })));
       } else {
-        console.log(`❌ No matches payload for ${targetLeague}`);
+        console.log("❌ No matches in payload");
         setMatches([]);
       }
 
-      // Parse results
-      if (latestResults?.payload) {
-        const parsedResults = Array.isArray(latestResults.payload)
-          ? latestResults.payload
-          : [];
-        console.log(`📊 Parsing ${parsedResults.length} results for ${targetLeague}`);
-        setResults(parsedResults.map((r: any) => ({
-          home: r.home || r.homeTeam || "",
-          away: r.away || r.awayTeam || "",
-          scoreHome: r.scoreHome ?? r.score_home ?? r.homeScore ?? 0,
-          scoreAway: r.scoreAway ?? r.score_away ?? r.awayScore ?? 0,
+      // Parser les résultats
+      if (resultsEntry?.payload && Array.isArray(resultsEntry.payload)) {
+        console.log(`📊 ${resultsEntry.payload.length} results found`);
+        setResults(resultsEntry.payload.map((r: any) => ({
+          home: r.home || "",
+          away: r.away || "",
+          scoreHome: r.scoreHome ?? 0,
+          scoreAway: r.scoreAway ?? 0,
           league: r.league || targetLeague,
           matchday: r.matchday || r.round || "",
         })));
@@ -108,163 +113,80 @@ export function useLiveMatches() {
         setResults([]);
       }
 
-      // Parse ranking
-      if (latestRanking?.payload) {
-        const parsedRanking = Array.isArray(latestRanking.payload)
-          ? latestRanking.payload
-          : [];
-        console.log(`🏆 Parsing ${parsedRanking.length} teams for ${targetLeague}`);
-        setRanking(parsedRanking.map((t: any) => ({
-          position: t.position || t.rank || 0,
+      // Parser le classement
+      if (rankingEntry?.payload && Array.isArray(rankingEntry.payload)) {
+        console.log(`🏆 ${rankingEntry.payload.length} teams found`);
+        setRanking(rankingEntry.payload.map((t: any) => ({
+          position: t.position || 0,
           team: t.team || t.name || "",
-          played: t.played || t.games || 0,
+          played: t.played || 0,
           won: t.won || 0,
           drawn: t.drawn || t.draw || 0,
           lost: t.lost || 0,
-          goalsFor: t.goalsFor || t.goals_for || t.gf || 0,
-          goalsAgainst: t.goalsAgainst || t.goals_against || t.ga || 0,
-          goalDifference: t.goalDifference || t.goal_diff || t.gd || 0,
-          points: t.points || t.pts || 0,
+          goalsFor: t.goalsFor || 0,
+          goalsAgainst: t.goalsAgainst || 0,
+          goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
+          points: t.points || 0,
         })));
       } else {
         setRanking([]);
       }
 
-      // Set last update time
+      // Date de mise à jour
       const latestScrapedAt = rawData[0]?.scraped_at;
       setLastUpdate(latestScrapedAt || new Date().toISOString());
 
       return true;
     } catch (err) {
-      console.error("Error loading from database:", err);
+      console.error("Error loading:", err);
       return false;
     }
   }, [selectedLeague]);
 
-  // Scrape data via Edge Function
-  const scrapeData = useCallback(async (silent = false) => {
-    setScraping(true);
+  // Charger les données au démarrage
+  const fetchMatches = useCallback(async () => {
+    setLoading(true);
     setError(null);
 
-    try {
-      const result = await runScrape(selectedLeagueId);
-
-      if (!result.success) {
-        // Try to load existing data from DB anyway
-        const hasData = await loadFromDatabase();
-
-        if (hasData) {
-          setError(null);
-          if (!silent) {
-            console.log("✅ Données chargées depuis le cache");
-          }
-        } else {
-          setError(result.error || "Échec du scraping");
-          if (!silent) {
-            toast.error(result.error || "Échec du scraping");
-          }
-        }
-      } else {
-        // Load the newly scraped data
-        await loadFromDatabase();
-
-        if (!silent) {
-          toast.success(`✅ ${selectedLeague.flag} ${result.matches} matchs, ${result.ranking} équipes, ${result.results} résultats`);
-        }
-      }
-
-      return result;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Erreur inconnue";
-
-      const hasData = await loadFromDatabase();
-
-      if (hasData) {
-        setError(null);
-        if (!silent) {
-          console.log("✅ Données chargées depuis le cache");
-        }
-      } else {
-        setError(msg);
-        if (!silent) {
-          toast.error(`Erreur: ${msg}`);
-        }
-      }
-
-      return { success: false, matches: 0, results: 0, ranking: 0, error: msg };
-    } finally {
-      setScraping(false);
-    }
-  }, [selectedLeagueId, selectedLeague, loadFromDatabase]);
-
-  // Fetch matches - load from DB first
-  const fetchMatches = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
-    setError(null);
-
-    // Load existing data from DB
     const hasData = await loadFromDatabase();
 
-    if (!silent) {
-      if (hasData) {
-        console.log(`📊 ${selectedLeague.flag} ${selectedLeague.name} chargé depuis le cache`);
-      } else {
-        // No data in cache - show message
-        setError("Aucune donnée en cache. Cliquez sur le bouton refresh pour actualiser.");
-      }
+    if (!hasData) {
+      setError("Aucune donnée. Exécutez le scraper Python.");
     }
 
     setLoading(false);
-  }, [loadFromDatabase, selectedLeague]);
+  }, [loadFromDatabase]);
 
-  // Force refresh - scrape new data
+  // Refresh manuel
   const refreshData = useCallback(async () => {
-    return scrapeData(false);
-  }, [scrapeData]);
+    setScraping(true);
+    await loadFromDatabase();
+    setScraping(false);
+  }, [loadFromDatabase]);
 
-  // Start auto-scraping (every 30 seconds)
+  // Auto-refresh
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
-
     setAutoScrapeActive(true);
+    loadFromDatabase();
+    intervalRef.current = setInterval(() => loadFromDatabase(), 30000);
+  }, [loadFromDatabase]);
 
-    // Scrape immediately
-    scrapeData(true);
-
-    // Then every 30 seconds
-    intervalRef.current = setInterval(() => {
-      scrapeData(true);
-    }, AUTO_SCRAPE_INTERVAL);
-
-    toast.success(`🔄 Auto-scraping activé (30s)`);
-  }, [scrapeData]);
-
-  // Stop auto-scraping
   const stopAutoRefresh = useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
     setAutoScrapeActive(false);
-    toast.info("⏹️ Auto-scraping désactivé");
   }, []);
 
-  // Change league
+  // Changer de ligue
   const changeLeague = useCallback(async (leagueId: LeagueId) => {
-    console.log(`🔄 Changing league to: ${leagueId}`);
+    if (autoScrapeActive) stopAutoRefresh();
 
-    // Stop auto-refresh if active
-    if (autoScrapeActive) {
-      stopAutoRefresh();
-    }
-
-    // Get new league info
     const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
-
-    // Update state immediately
     setSelectedLeagueId(leagueId);
 
-    // Clear current data
     setMatches([]);
     setResults([]);
     setRanking([]);
@@ -273,28 +195,22 @@ export function useLiveMatches() {
 
     if (newLeague) {
       setLoading(true);
-
-      // Load data for new league
       const hasData = await loadFromDatabase(newLeague.name);
-
       if (!hasData) {
-        setError(`Aucune donnée pour ${newLeague.name}. Cliquez sur refresh pour actualiser.`);
+        setError(`Aucune donnée pour ${newLeague.name}`);
       }
-
       setLoading(false);
     }
   }, [autoScrapeActive, stopAutoRefresh, loadFromDatabase]);
 
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
+      if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, []);
 
-  // Load data on mount
+  // Charger au montage
   useEffect(() => {
     fetchMatches();
   }, []);
