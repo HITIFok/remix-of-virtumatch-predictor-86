@@ -1,17 +1,17 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 
-// Liste des ligues disponibles
+// Liste des ligues disponibles avec codes pays pour drapeaux réels
 export const AVAILABLE_LEAGUES = [
-  { id: "8035", name: "English League", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "8060", name: "Coupe d'Afrique", flag: "🌍" },
-  { id: "8056", name: "Champions League", flag: "🏆" },
-  { id: "8036", name: "Italian League", flag: "🇮🇹" },
-  { id: "8037", name: "Spanish League", flag: "🇪🇸" },
-  { id: "8042", name: "French League", flag: "🇫🇷" },
-  { id: "8043", name: "German League", flag: "🇩🇪" },
-  { id: "8044", name: "Portuguese League", flag: "🇵🇹" },
+  { id: "8035", name: "English League", countryCode: "gb-eng" },
+  { id: "8060", name: "Coupe d'Afrique", countryCode: "africa" },
+  { id: "8056", name: "Champions League", countryCode: "uefa" },
+  { id: "8036", name: "Italian League", countryCode: "it" },
+  { id: "8037", name: "Spanish League", countryCode: "es" },
+  { id: "8042", name: "French League", countryCode: "fr" },
+  { id: "8043", name: "German League", countryCode: "de" },
+  { id: "8044", name: "Portuguese League", countryCode: "pt" },
 ] as const;
 
 export type LeagueId = typeof AVAILABLE_LEAGUES[number]["id"];
@@ -110,10 +110,8 @@ export function useLiveMatches() {
   const [scraping, setScraping] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoScrapeActive, setAutoScrapeActive] = useState(false);
   const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
   const [dataSource, setDataSource] = useState<"api" | "cache">("cache");
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
@@ -237,26 +235,8 @@ export function useLiveMatches() {
     setScraping(false);
   }, [fetchData, selectedLeagueId, selectedLeague.name]);
 
-  // Auto-refresh
-  const startAutoRefresh = useCallback(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    setAutoScrapeActive(true);
-    fetchData(selectedLeagueId, selectedLeague.name);
-    intervalRef.current = setInterval(() => fetchData(selectedLeagueId, selectedLeague.name), 30000);
-  }, [fetchData, selectedLeagueId, selectedLeague.name]);
-
-  const stopAutoRefresh = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
-    setAutoScrapeActive(false);
-  }, []);
-
   // Changer de ligue
   const changeLeague = useCallback(async (leagueId: LeagueId) => {
-    if (autoScrapeActive) stopAutoRefresh();
-
     const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
     if (!newLeague) return;
 
@@ -268,14 +248,7 @@ export function useLiveMatches() {
     setLastUpdate(null);
 
     await fetchData(leagueId, newLeague.name);
-  }, [autoScrapeActive, stopAutoRefresh, fetchData]);
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
+  }, [fetchData]);
 
   // Charger au montage
   useEffect(() => {
@@ -298,15 +271,12 @@ export function useLiveMatches() {
     scraping,
     lastUpdate,
     error,
-    autoScrapeActive,
     geoBlocked: false,
     selectedLeagueId,
     selectedLeague,
     availableLeagues: AVAILABLE_LEAGUES,
     fetchMatches,
     refreshData,
-    startAutoRefresh,
-    stopAutoRefresh,
     changeLeague,
     dataSource,
   };
