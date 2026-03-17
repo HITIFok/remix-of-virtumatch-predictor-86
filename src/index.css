@@ -93,6 +93,10 @@
     background: linear-gradient(135deg, #1a0a2e 0%, #0f1628 25%, #1a0a2e 50%, #0a1628 75%, #1a0a2e 100%);
     background-size: 400% 400%;
     animation: gradient-shift-bg 15s ease infinite;
+    -webkit-animation: gradient-shift-bg 15s ease infinite;
+    will-change: background-position;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
   @keyframes gradient-shift-bg {
@@ -100,88 +104,158 @@
     50% { background-position: 100% 50%; }
   }
 
-  /* Orbes colorés */
+  /* Orbes colorés - Optimisés pour mobile */
   .orb {
     position: absolute;
     border-radius: 50%;
     opacity: 0.8;
+    will-change: transform, opacity;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+    contain: strict;
   }
 
   .orb-fire {
-    width: 500px;
-    height: 500px;
+    width: 300px;
+    height: 300px;
     background: radial-gradient(circle, #ff6b35 0%, #ff4500 40%, transparent 70%);
-    filter: blur(50px);
+    filter: blur(40px);
+    -webkit-filter: blur(40px);
   }
 
   .orb-ice {
-    width: 450px;
-    height: 450px;
+    width: 280px;
+    height: 280px;
     background: radial-gradient(circle, #38bdf8 0%, #0ea5e9 40%, transparent 70%);
-    filter: blur(45px);
+    filter: blur(35px);
+    -webkit-filter: blur(35px);
   }
 
   .orb-gold {
-    width: 400px;
-    height: 400px;
+    width: 250px;
+    height: 250px;
     background: radial-gradient(circle, #fbbf24 0%, #f59e0b 40%, transparent 70%);
-    filter: blur(40px);
+    filter: blur(30px);
+    -webkit-filter: blur(30px);
   }
 
   .orb-purple {
-    width: 380px;
-    height: 380px;
+    width: 240px;
+    height: 240px;
     background: radial-gradient(circle, #a855f7 0%, #7c3aed 40%, transparent 70%);
-    filter: blur(38px);
+    filter: blur(28px);
+    -webkit-filter: blur(28px);
   }
 
   .orb-green {
-    width: 350px;
-    height: 350px;
+    width: 220px;
+    height: 220px;
     background: radial-gradient(circle, #22c55e 0%, #10b981 40%, transparent 70%);
-    filter: blur(35px);
+    filter: blur(25px);
+    -webkit-filter: blur(25px);
   }
 
   .orb-pink {
-    width: 320px;
-    height: 320px;
+    width: 200px;
+    height: 200px;
     background: radial-gradient(circle, #ec4899 0%, #db2777 40%, transparent 70%);
-    filter: blur(32px);
+    filter: blur(22px);
+    -webkit-filter: blur(22px);
   }
 
   .orb-cyan {
-    width: 380px;
-    height: 380px;
+    width: 240px;
+    height: 240px;
     background: radial-gradient(circle, #06b6d4 0%, #0891b2 40%, transparent 70%);
-    filter: blur(38px);
+    filter: blur(28px);
+    -webkit-filter: blur(28px);
   }
 
   .orb-orange {
-    width: 360px;
-    height: 360px;
+    width: 230px;
+    height: 230px;
     background: radial-gradient(circle, #f97316 0%, #ea580c 40%, transparent 70%);
-    filter: blur(36px);
+    filter: blur(26px);
+    -webkit-filter: blur(26px);
   }
 
-  /* Animated orbs - 3D floating effect */
+  /* Desktop: orbes plus grands */
+  @media (min-width: 768px) {
+    .orb-fire {
+      width: 500px;
+      height: 500px;
+      filter: blur(50px);
+      -webkit-filter: blur(50px);
+    }
+    .orb-ice {
+      width: 450px;
+      height: 450px;
+      filter: blur(45px);
+      -webkit-filter: blur(45px);
+    }
+    .orb-gold {
+      width: 400px;
+      height: 400px;
+      filter: blur(40px);
+      -webkit-filter: blur(40px);
+    }
+    .orb-purple {
+      width: 380px;
+      height: 380px;
+      filter: blur(38px);
+      -webkit-filter: blur(38px);
+    }
+    .orb-green {
+      width: 350px;
+      height: 350px;
+      filter: blur(35px);
+      -webkit-filter: blur(35px);
+    }
+    .orb-pink {
+      width: 320px;
+      height: 320px;
+      filter: blur(32px);
+      -webkit-filter: blur(32px);
+    }
+    .orb-cyan {
+      width: 380px;
+      height: 380px;
+      filter: blur(38px);
+      -webkit-filter: blur(38px);
+    }
+    .orb-orange {
+      width: 360px;
+      height: 360px;
+      filter: blur(36px);
+      -webkit-filter: blur(36px);
+    }
+  }
+
+  /* Animated orbs - 3D floating effect - Optimisé pour GPU */
   @keyframes orb-1 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1) rotate(0deg);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       top: 0%;
       left: 0%;
     }
     25% { 
-      transform: translate(150px, 100px) scale(1.3) rotate(90deg);
+      -webkit-transform: translate3d(80px, 60px, 0) scale(1.2);
+      transform: translate3d(80px, 60px, 0) scale(1.2);
       top: 15%;
       left: 20%;
     }
     50% { 
-      transform: translate(80px, 150px) scale(0.85) rotate(180deg);
+      -webkit-transform: translate3d(40px, 80px, 0) scale(0.9);
+      transform: translate3d(40px, 80px, 0) scale(0.9);
       top: 30%;
       left: 10%;
     }
     75% { 
-      transform: translate(-50px, 80px) scale(1.15) rotate(270deg);
+      -webkit-transform: translate3d(-30px, 50px, 0) scale(1.1);
+      transform: translate3d(-30px, 50px, 0) scale(1.1);
       top: 20%;
       left: 5%;
     }
@@ -189,22 +263,26 @@
 
   @keyframes orb-2 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1) rotate(0deg);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       top: 40%;
       right: 0%;
     }
     25% { 
-      transform: translate(-120px, -80px) scale(1.2) rotate(-90deg);
+      -webkit-transform: translate3d(-60px, -40px, 0) scale(1.15);
+      transform: translate3d(-60px, -40px, 0) scale(1.15);
       top: 30%;
       right: 15%;
     }
     50% { 
-      transform: translate(-180px, 50px) scale(0.8) rotate(-180deg);
+      -webkit-transform: translate3d(-90px, 30px, 0) scale(0.85);
+      transform: translate3d(-90px, 30px, 0) scale(0.85);
       top: 55%;
       right: 20%;
     }
     75% { 
-      transform: translate(-80px, -60px) scale(1.1) rotate(-270deg);
+      -webkit-transform: translate3d(-40px, -30px, 0) scale(1.05);
+      transform: translate3d(-40px, -30px, 0) scale(1.05);
       top: 35%;
       right: 10%;
     }
@@ -212,17 +290,20 @@
 
   @keyframes orb-3 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       bottom: 0%;
       left: 15%;
     }
     33% { 
-      transform: translate(100px, -120px) scale(1.25);
+      -webkit-transform: translate3d(50px, -60px, 0) scale(1.2);
+      transform: translate3d(50px, -60px, 0) scale(1.2);
       bottom: 30%;
       left: 35%;
     }
     66% { 
-      transform: translate(-60px, -60px) scale(0.85);
+      -webkit-transform: translate3d(-30px, -30px, 0) scale(0.9);
+      transform: translate3d(-30px, -30px, 0) scale(0.9);
       bottom: 20%;
       left: 20%;
     }
@@ -230,22 +311,26 @@
 
   @keyframes orb-4 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1) rotate(0deg);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       top: 20%;
       left: 40%;
     }
     25% { 
-      transform: translate(-80px, 120px) scale(1.15) rotate(120deg);
+      -webkit-transform: translate3d(-40px, 60px, 0) scale(1.1);
+      transform: translate3d(-40px, 60px, 0) scale(1.1);
       top: 35%;
       left: 35%;
     }
     50% { 
-      transform: translate(50px, 60px) scale(0.9) rotate(240deg);
+      -webkit-transform: translate3d(25px, 30px, 0) scale(0.95);
+      transform: translate3d(25px, 30px, 0) scale(0.95);
       top: 25%;
       left: 50%;
     }
     75% { 
-      transform: translate(-30px, 90px) scale(1.1) rotate(360deg);
+      -webkit-transform: translate3d(-15px, 45px, 0) scale(1.05);
+      transform: translate3d(-15px, 45px, 0) scale(1.05);
       top: 30%;
       left: 42%;
     }
@@ -253,12 +338,14 @@
 
   @keyframes orb-5 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       bottom: 20%;
       right: 10%;
     }
     50% { 
-      transform: translate(-120px, -90px) scale(1.2);
+      -webkit-transform: translate3d(-60px, -45px, 0) scale(1.15);
+      transform: translate3d(-60px, -45px, 0) scale(1.15);
       bottom: 40%;
       right: 25%;
     }
@@ -266,28 +353,49 @@
 
   @keyframes orb-6 {
     0%, 100% { 
-      transform: translate(0, 0) scale(1) rotate(0deg);
+      -webkit-transform: translate3d(0, 0, 0) scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
       top: 50%;
       left: 5%;
     }
     33% { 
-      transform: translate(60px, -70px) scale(1.15) rotate(120deg);
+      -webkit-transform: translate3d(30px, -35px, 0) scale(1.1);
+      transform: translate3d(30px, -35px, 0) scale(1.1);
       top: 40%;
       left: 15%;
     }
     66% { 
-      transform: translate(-40px, -40px) scale(0.85) rotate(240deg);
+      -webkit-transform: translate3d(-20px, -20px, 0) scale(0.9);
+      transform: translate3d(-20px, -20px, 0) scale(0.9);
       top: 60%;
       left: 8%;
     }
   }
 
-  .animate-orb-1 { animation: orb-1 25s ease-in-out infinite; }
-  .animate-orb-2 { animation: orb-2 30s ease-in-out infinite; }
-  .animate-orb-3 { animation: orb-3 20s ease-in-out infinite; }
-  .animate-orb-4 { animation: orb-4 22s ease-in-out infinite; }
-  .animate-orb-5 { animation: orb-5 18s ease-in-out infinite; }
-  .animate-orb-6 { animation: orb-6 24s ease-in-out infinite; }
+  .animate-orb-1 { 
+    animation: orb-1 25s ease-in-out infinite;
+    -webkit-animation: orb-1 25s ease-in-out infinite;
+  }
+  .animate-orb-2 { 
+    animation: orb-2 30s ease-in-out infinite;
+    -webkit-animation: orb-2 30s ease-in-out infinite;
+  }
+  .animate-orb-3 { 
+    animation: orb-3 20s ease-in-out infinite;
+    -webkit-animation: orb-3 20s ease-in-out infinite;
+  }
+  .animate-orb-4 { 
+    animation: orb-4 22s ease-in-out infinite;
+    -webkit-animation: orb-4 22s ease-in-out infinite;
+  }
+  .animate-orb-5 { 
+    animation: orb-5 18s ease-in-out infinite;
+    -webkit-animation: orb-5 18s ease-in-out infinite;
+  }
+  .animate-orb-6 { 
+    animation: orb-6 24s ease-in-out infinite;
+    -webkit-animation: orb-6 24s ease-in-out infinite;
+  }
 
   /* 3D Grid animation */
   @keyframes grid-move {
@@ -299,7 +407,7 @@
     animation: grid-move 3s linear infinite;
   }
 
-  /* 3D Particles */
+  /* 3D Particles - Optimisé pour mobile */
   .particles-3d {
     position: fixed;
     top: 0;
@@ -308,30 +416,25 @@
     bottom: 0;
     z-index: -1;
     pointer-events: none;
-    perspective: 1000px;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
   }
 
   .particle-3d {
     position: absolute;
-    width: 6px;
-    height: 6px;
+    width: 4px;
+    height: 4px;
     border-radius: 50%;
     bottom: -10px;
     animation: particle-3d-float 20s linear infinite;
+    -webkit-animation: particle-3d-float 20s linear infinite;
     opacity: 0;
+    will-change: transform, opacity;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
-  .particle-3d::before {
-    content: '';
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    background: inherit;
-    filter: blur(1px);
-    transform: scale(1.5);
-    opacity: 0.5;
-  }
+  /* Pas de pseudo-élément pour améliorer les performances mobile */
 
   .particle-3d:nth-child(1) { background: linear-gradient(135deg, #ff6b35, #f7931e); }
   .particle-3d:nth-child(2) { background: linear-gradient(135deg, #38bdf8, #06b6d4); }
@@ -354,21 +457,26 @@
   .particle-3d:nth-child(19) { background: linear-gradient(135deg, #ff6b35, #c0392b); }
   .particle-3d:nth-child(20) { background: linear-gradient(135deg, #38bdf8, #0284c7); }
 
+  /* Animation simplifiée pour mobile - pas de 3D rotate */
   @keyframes particle-3d-float {
     0% {
-      transform: translateY(0) translateZ(0) scale(0) rotateX(0deg) rotateY(0deg);
+      -webkit-transform: translate3d(0, 0, 0) scale(0);
+      transform: translate3d(0, 0, 0) scale(0);
       opacity: 0;
     }
     10% {
-      opacity: 1;
-      transform: translateY(-10vh) translateZ(20px) scale(1) rotateX(36deg) rotateY(36deg);
+      opacity: 0.8;
+      -webkit-transform: translate3d(0, -10vh, 0) scale(1);
+      transform: translate3d(0, -10vh, 0) scale(1);
     }
     90% {
-      opacity: 1;
-      transform: translateY(-90vh) translateZ(50px) scale(1.2) rotateX(324deg) rotateY(324deg);
+      opacity: 0.8;
+      -webkit-transform: translate3d(0, -90vh, 0) scale(1.1);
+      transform: translate3d(0, -90vh, 0) scale(1.1);
     }
     100% {
-      transform: translateY(-100vh) translateZ(80px) scale(0) rotateX(360deg) rotateY(360deg);
+      -webkit-transform: translate3d(0, -100vh, 0) scale(0);
+      transform: translate3d(0, -100vh, 0) scale(0);
       opacity: 0;
     }
   }
@@ -706,7 +814,7 @@
     background-clip: text;
   }
 
-  /* Animated gradient text */
+  /* Animated gradient text - Optimisé pour mobile */
   .text-gradient-animated {
     background: linear-gradient(
       90deg,
@@ -717,9 +825,11 @@
     );
     background-size: 300% 100%;
     -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
     background-clip: text;
+    -webkit-text-fill-color: transparent;
     animation: gradient-shift 4s ease infinite;
+    -webkit-animation: gradient-shift 4s ease infinite;
+    will-change: background-position;
   }
 
   @keyframes gradient-shift {
@@ -789,24 +899,60 @@
     animation: shimmer 2s infinite;
   }
 
-  /* Glow animation */
+  /* Glow animation - Optimisé */
   .animate-glow {
     animation: glow 2s ease-in-out infinite alternate;
+    -webkit-animation: glow 2s ease-in-out infinite alternate;
+    will-change: filter;
   }
 
   @keyframes glow {
-    0% { filter: drop-shadow(0 0 5px hsl(18 95% 55% / 0.3)); }
-    100% { filter: drop-shadow(0 0 15px hsl(18 95% 55% / 0.6)); }
+    0% { 
+      -webkit-filter: drop-shadow(0 0 5px hsl(18 95% 55% / 0.3));
+      filter: drop-shadow(0 0 5px hsl(18 95% 55% / 0.3));
+    }
+    100% { 
+      -webkit-filter: drop-shadow(0 0 15px hsl(18 95% 55% / 0.6));
+      filter: drop-shadow(0 0 15px hsl(18 95% 55% / 0.6));
+    }
   }
 
   /* Bounce subtle */
   .animate-bounce-subtle {
     animation: bounce-subtle 2s ease-in-out infinite;
+    -webkit-animation: bounce-subtle 2s ease-in-out infinite;
   }
 
   @keyframes bounce-subtle {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-3px); }
+    0%, 100% { 
+      -webkit-transform: translateY(0);
+      transform: translateY(0);
+    }
+    50% { 
+      -webkit-transform: translateY(-3px);
+      transform: translateY(-3px);
+    }
+  }
+}
+
+/* ===== REDUCED MOTION - Accessibilité ===== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  .animated-multicolor,
+  .orb,
+  .particle-3d,
+  .text-gradient-animated,
+  .animate-glow,
+  .animate-bounce-subtle,
+  .icon-float {
+    animation: none !important;
+    -webkit-animation: none !important;
   }
 }
 
@@ -865,21 +1011,41 @@
 @layer utilities {
   .icon-float {
     animation: icon-float 3s ease-in-out infinite;
+    -webkit-animation: icon-float 3s ease-in-out infinite;
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
   @keyframes icon-float {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    25% { transform: translateY(-3px) rotate(-3deg); }
-    75% { transform: translateY(3px) rotate(3deg); }
+    0%, 100% { 
+      -webkit-transform: translateY(0) rotate(0deg);
+      transform: translateY(0) rotate(0deg);
+    }
+    25% { 
+      -webkit-transform: translateY(-3px) rotate(-3deg);
+      transform: translateY(-3px) rotate(-3deg);
+    }
+    75% { 
+      -webkit-transform: translateY(3px) rotate(3deg);
+      transform: translateY(3px) rotate(3deg);
+    }
   }
 
   .icon-spin-slow {
     animation: spin 4s linear infinite;
+    -webkit-animation: spin 4s linear infinite;
   }
 
   @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from { 
+      -webkit-transform: rotate(0deg);
+      transform: rotate(0deg);
+    }
+    to { 
+      -webkit-transform: rotate(360deg);
+      transform: rotate(360deg);
+    }
   }
 }
 
