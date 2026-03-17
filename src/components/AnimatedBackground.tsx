@@ -1,7 +1,27 @@
+import { useEffect, useState } from 'react';
+
 export default function AnimatedBackground() {
+  const [particleCount, setParticleCount] = useState(12);
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    // Détecter si mobile et ajuster les performances
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      // Moins de particules sur mobile pour de meilleures performances
+      setParticleCount(mobile ? 8 : 15);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden animated-multicolor">
-      {/* Orbes animés multicolores */}
+      {/* Orbes animés multicolores - moins d'orbes sur mobile */}
       <div className="absolute inset-0">
         {/* Fire orb - Orange */}
         <div className="orb orb-fire animate-orb-1" />
@@ -15,29 +35,33 @@ export default function AnimatedBackground() {
         {/* Purple orb */}
         <div className="orb orb-purple animate-orb-4" />
         
-        {/* Green orb */}
-        <div className="orb orb-green animate-orb-5" />
+        {/* Green orb - caché sur mobile */}
+        {!isMobile && (
+          <div className="orb orb-green animate-orb-5" />
+        )}
         
         {/* Pink orb */}
         <div className="orb orb-pink animate-orb-6" />
         
-        {/* Cyan orb 2 */}
-        <div className="orb orb-cyan animate-orb-1" style={{ animationDelay: '-12s', animationDirection: 'reverse' }} />
-        
-        {/* Orange orb 2 */}
-        <div className="orb orb-orange animate-orb-3" style={{ animationDelay: '-8s' }} />
+        {/* Orbes secondaires - seulement sur desktop */}
+        {!isMobile && (
+          <>
+            <div className="orb orb-cyan animate-orb-1" style={{ animationDelay: '-12s', animationDirection: 'reverse' }} />
+            <div className="orb orb-orange animate-orb-3" style={{ animationDelay: '-8s' }} />
+          </>
+        )}
       </div>
 
-      {/* Particules 3D flottantes */}
+      {/* Particules flottantes - nombre adaptatif */}
       <div className="particles-3d">
-        {[...Array(25)].map((_, i) => (
+        {[...Array(particleCount)].map((_, i) => (
           <div
             key={i}
             className="particle-3d"
             style={{
-              left: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 20}s`,
-              animationDuration: `${15 + Math.random() * 15}s`,
+              left: `${(i / particleCount) * 100}%`,
+              animationDelay: `${(i * 1.5) % 20}s`,
+              animationDuration: `${15 + (i % 5) * 3}s`,
             }}
           />
         ))}
