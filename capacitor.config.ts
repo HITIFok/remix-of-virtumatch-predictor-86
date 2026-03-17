@@ -1,28 +1,41 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
-import { SplashScreen } from '@capacitor/splash-screen';
-import { StatusBar } from '@capacitor/status-bar';
-
 const config: CapacitorConfig = {
   appId: 'com.hitif.virtuxxs',
-  appName: 'VirtuXXS',
+  appName: 'Virtual Bet261',
   webDir: 'dist',
   server: {
-    android: {
-      backgroundColor: '#0a0a0d',
-      allowMixedContent: true,
-    }
+    androidScheme: 'https'
   },
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,
       backgroundColor: '#0a0a0d',
+      androidSplashResourceName: 'splash',
+      androidScaleType: 'CENTER_CROP',
       showSpinner: false,
+      splashFullScreen: true,
+      splashImmersive: true
     },
     StatusBar: {
       style: 'DARK',
-    backgroundColor: '#0a0a0d',
-  }
+      backgroundColor: '#0a0a0d',
+      overlaysWebView: true
+    },
+    Keyboard: {
+      resize: 'body',
+      resizeOnFullScreen: true
+    }
+  },
+  android: {
+    allowMixedContent: true,
+    captureInput: true,
+    webContentsDebuggingEnabled: false,
+    backgroundColor: '#0a0a0d'
+  },
+  ios: {
+    contentInset: 'automatic',
+    backgroundColor: '#0a0a0d'
   }
 };
 
