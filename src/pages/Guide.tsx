@@ -13,7 +13,7 @@ const steps = [
 
 export default function Guide() {
   return (
-    <div className="min-h-screen bg-background pb-24 relative">
+    <div className="min-h-screen pb-24 relative">
       <AnimatedBackground />
       <div className="max-w-lg mx-auto px-4 relative z-10">
         <AppHeader />
