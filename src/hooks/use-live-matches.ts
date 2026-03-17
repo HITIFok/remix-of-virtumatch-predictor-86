@@ -52,7 +52,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
       return null;
     }
 
-    console.log(`🟢 API: ${data.matches?.length || 0} matches for ${leagueName}`);
+    console.log(`🟢 API: ${data.matches?.length || 0} matches (${data.liveCount || 0} en live) for ${leagueName}`);
 
     return {
       matches: (data.matches || []).map((m: any) => ({
@@ -61,15 +61,15 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         away: m.away || "",
         round: m.round,
         league: leagueName,
-        status: m.status || "upcoming",
+        status: m.status || "upcoming", // live, betting, upcoming
         kickoff: m.kickoff || "",
         oddHome: m.oddHome || 0,
         oddDraw: m.oddDraw || 0,
         oddAway: m.oddAway || 0,
-        minute: null,
-        scoreHome: null,
-        scoreAway: null,
-        stats: null,
+        minute: m.minute ?? null,
+        scoreHome: m.scoreHome ?? null,
+        scoreAway: m.scoreAway ?? null,
+        stats: m.goals ? { goals: m.goals } : null,
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
