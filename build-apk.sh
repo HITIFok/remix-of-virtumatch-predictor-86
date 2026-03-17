@@ -1,58 +1,101 @@
 #!/bin/bash
-# Script de build pour créer l'APK Virtual Bet261
-# Exécutez ce script sur une machine avec Android Studio / SDK installé
+# ================================================
+# 📱 Build APK Virtual Bet261
+# ================================================
+# Exécutez ce script sur votre machine locale
+# Prérequis: JDK 17+, Android SDK
 
-echo "🔥 Build APK Virtual Bet261"
-echo "============================"
+set -e
 
 # Couleurs
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
-# Vérifier Java JDK
+echo ""
+echo -e "${BLUE}🔥 Virtual Bet261 - Build APK${NC}"
+echo -e "${BLUE}================================${NC}"
+echo ""
+
+# Vérifier JDK
+echo -e "${YELLOW}📋 Vérification des prérequis...${NC}"
 if ! command -v javac &> /dev/null; then
-    echo -e "${RED}❌ JDK non trouvé. Installez OpenJDK 17 ou 21${NC}"
+    echo -e "${RED}❌ JDK non trouvé!${NC}"
+    echo "   Installez OpenJDK 17 ou 21:"
+    echo "   Ubuntu/Debian: sudo apt install openjdk-17-jdk"
+    echo "   macOS: brew install openjdk@17"
     exit 1
 fi
-
-echo -e "${GREEN}✅ JDK trouvé: $(javac -version 2>&1)${NC}"
+echo -e "${GREEN}✅ JDK: $(javac -version 2>&1)${NC}"
 
 # Vérifier ANDROID_HOME
 if [ -z "$ANDROID_HOME" ]; then
+    # Essayer de détecter automatiquement
+    if [ -d "$HOME/Android/Sdk" ]; then
+        export ANDROID_HOME="$HOME/Android/Sdk"
+    elif [ -d "/opt/android-sdk" ]; then
+        export ANDROID_HOME="/opt/android-sdk"
+    elif [ -d "$HOME/Library/Android/sdk" ]; then
+        export ANDROID_HOME="$HOME/Library/Android/sdk"
+    fi
+fi
+
+if [ -z "$ANDROID_HOME" ]; then
     echo -e "${YELLOW}⚠️ ANDROID_HOME non défini${NC}"
-    echo "Définissez ANDROID_HOME vers votre SDK Android"
-    echo "Exemple: export ANDROID_HOME=/home/user/Android/Sdk"
+    echo "   Définissez la variable ANDROID_HOME"
+else
+    echo -e "${GREEN}✅ Android SDK: $ANDROID_HOME${NC}"
 fi
 
 # Aller au répertoire du projet
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Install dependencies
+echo ""
+echo -e "${YELLOW}📦 Installation des dépendances...${NC}"
+npm install
 
 # Build web
 echo ""
-echo "📦 Build web..."
+echo -e "${YELLOW}🏗️ Build du projet web...${NC}"
 npm run build
 
 # Sync Capacitor
 echo ""
-echo "🔄 Sync Capacitor..."
+echo -e "${YELLOW}🔄 Synchronisation Capacitor...${NC}"
 npx cap sync android
 
 # Build APK
 echo ""
-echo "🤖 Build APK..."
+echo -e "${YELLOW}🤖 Compilation de l'APK...${NC}"
 cd android
-./gradlew assembleDebug
+chmod +x gradlew
+./gradlew assembleDebug --warning-mode=none
 
-# Renommer l'APK
+# Créer l'APK final
 cd ..
-if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-    mv android/app/build/outputs/apk/debug/app-debug.apk "Virtual Bet261.apk"
+APK_SOURCE="android/app/build/outputs/apk/debug/app-debug.apk"
+APK_DEST="Virtual Bet261.apk"
+
+if [ -f "$APK_SOURCE" ]; then
+    cp "$APK_SOURCE" "$APK_DEST"
     echo ""
-    echo -e "${GREEN}✅ APK créé: Virtual Bet261.apk${NC}"
-    echo "📱 Vous pouvez maintenant installer l'APK sur votre appareil Android"
+    echo -e "${GREEN}================================${NC}"
+    echo -e "${GREEN}✅ APK créé avec succès!${NC}"
+    echo -e "${GREEN}================================${NC}"
+    echo ""
+    echo -e "📁 Fichier: ${BLUE}$APK_DEST${NC}"
+    echo -e "📏 Taille: $(du -h "$APK_DEST" | cut -f1)"
+    echo ""
+    echo -e "📱 Pour installer:"
+    echo -e "   1. Transférez l'APK sur votre téléphone"
+    echo -e "   2. Ouvrez le fichier depuis votre téléphone"
+    echo -e "   3. Autorisez l'installation depuis sources inconnues"
+    echo ""
 else
-    echo -e "${RED}❌ Build échoué${NC}"
+    echo -e "${RED}❌ Build échoué - APK non trouvé${NC}"
     exit 1
 fi
