@@ -28,6 +28,7 @@ interface ScrapedDataRaw {
 
 // Supabase Edge Function URL (contourne CORS)
 const FETCH_LIVE_URL = "REDACTED_SUPABASE_URL/functions/v1/fetch-live";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E";
 
 // Fetch depuis l'API via Supabase Edge Function
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
@@ -37,7 +38,11 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
 } | null> {
   try {
     const res = await fetch(`${FETCH_LIVE_URL}?leagueId=${leagueId}`, {
-      headers: { "Accept": "application/json" },
+      headers: {
+        "Accept": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      },
     });
 
     if (!res.ok) {
