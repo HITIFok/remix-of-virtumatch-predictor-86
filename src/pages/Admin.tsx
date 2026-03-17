@@ -45,7 +45,7 @@ export default function Admin() {
   if (!isAdmin()) return null;
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen pb-20">
       <div className="max-w-lg mx-auto px-4">
         <AppHeader />
 

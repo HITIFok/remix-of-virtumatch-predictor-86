@@ -88,6 +88,81 @@
 
 /* ===== ANIMATED 3D MULTICOLOR BACKGROUND ===== */
 @layer utilities {
+  /* Container principal */
+  .animated-multicolor {
+    background: linear-gradient(135deg, #1a0a2e 0%, #0f1628 25%, #1a0a2e 50%, #0a1628 75%, #1a0a2e 100%);
+    background-size: 400% 400%;
+    animation: gradient-shift-bg 15s ease infinite;
+  }
+
+  @keyframes gradient-shift-bg {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  /* Orbes colorés */
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    opacity: 0.8;
+  }
+
+  .orb-fire {
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, #ff6b35 0%, #ff4500 40%, transparent 70%);
+    filter: blur(50px);
+  }
+
+  .orb-ice {
+    width: 450px;
+    height: 450px;
+    background: radial-gradient(circle, #38bdf8 0%, #0ea5e9 40%, transparent 70%);
+    filter: blur(45px);
+  }
+
+  .orb-gold {
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, #fbbf24 0%, #f59e0b 40%, transparent 70%);
+    filter: blur(40px);
+  }
+
+  .orb-purple {
+    width: 380px;
+    height: 380px;
+    background: radial-gradient(circle, #a855f7 0%, #7c3aed 40%, transparent 70%);
+    filter: blur(38px);
+  }
+
+  .orb-green {
+    width: 350px;
+    height: 350px;
+    background: radial-gradient(circle, #22c55e 0%, #10b981 40%, transparent 70%);
+    filter: blur(35px);
+  }
+
+  .orb-pink {
+    width: 320px;
+    height: 320px;
+    background: radial-gradient(circle, #ec4899 0%, #db2777 40%, transparent 70%);
+    filter: blur(32px);
+  }
+
+  .orb-cyan {
+    width: 380px;
+    height: 380px;
+    background: radial-gradient(circle, #06b6d4 0%, #0891b2 40%, transparent 70%);
+    filter: blur(38px);
+  }
+
+  .orb-orange {
+    width: 360px;
+    height: 360px;
+    background: radial-gradient(circle, #f97316 0%, #ea580c 40%, transparent 70%);
+    filter: blur(36px);
+  }
+
   /* Animated orbs - 3D floating effect */
   @keyframes orb-1 {
     0%, 100% { 
