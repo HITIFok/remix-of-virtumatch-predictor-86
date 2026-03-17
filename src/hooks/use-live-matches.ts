@@ -27,8 +27,7 @@ interface ScrapedDataRaw {
 }
 
 // Supabase Edge Function URL (contourne CORS)
-const SUPABASE_URL = "REDACTED_SUPABASE_URL";
-const FETCH_LIVE_URL = `${SUPABASE_URL}/functions/v1/fetch-live`;
+const FETCH_LIVE_URL = "https://skgtmitftykgctvfburt.supabase.co/functions/v1/fetch-live";
 
 // Fetch depuis l'API via Supabase Edge Function
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
