@@ -26,122 +26,73 @@ interface ScrapedDataRaw {
   created_at: string;
 }
 
-// API URLs
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+// API Proxy (Vercel serverless function - contourne CORS)
+const API_PROXY = "/api/matches";
 
-// Fetch directement depuis l'API bet261.mg
-async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
+// Fetch depuis le proxy API
+async function fetchFromProxy(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
   results: MatchResult[];
   ranking: RankingEntry[];
 } | null> {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    // Fetch matches
-    const matchesRes = await fetch(`${API_BASE}/${leagueId}/matches`, {
-      signal: controller.signal,
+    const res = await fetch(`${API_PROXY}?leagueId=${leagueId}`, {
+      headers: { "Accept": "application/json" },
     });
 
-    clearTimeout(timeoutId);
-
-    if (!matchesRes.ok) return null;
-
-    const matchesData = await matchesRes.json();
-    const matches: ScrapedMatch[] = [];
-
-    if (matchesData?.rounds) {
-      for (const rd of matchesData.rounds) {
-        const roundNum = rd.roundNumber || 0;
-        for (const m of rd.matches || []) {
-          let oddHome = 0, oddDraw = 0, oddAway = 0;
-          let hasOdds = false;
-
-          for (const bt of m.eventBetTypes || []) {
-            if (bt.name === "1X2") {
-              for (const it of bt.eventBetTypeItems || []) {
-                const sn = (it.shortName || "").toUpperCase();
-                const val = parseFloat(it.odds) || 0;
-                if (sn === "1") oddHome = val;
-                else if (sn === "X") oddDraw = val;
-                else if (sn === "2") oddAway = val;
-                if (val > 0) hasOdds = true;
-              }
-              break;
-            }
-          }
-
-          if (hasOdds) {
-            matches.push({
-              id: m.id,
-              home: m.homeTeam?.name || "",
-              away: m.awayTeam?.name || "",
-              round: roundNum,
-              league: leagueName,
-              status: "upcoming",
-              kickoff: m.expectedStart || "",
-              oddHome, oddDraw, oddAway,
-              minute: null,
-              scoreHome: null,
-              scoreAway: null,
-              stats: null,
-            });
-          }
-        }
-      }
+    if (!res.ok) {
+      console.log(`Proxy returned ${res.status}`);
+      return null;
     }
 
-    // Fetch ranking et results en parallèle
-    const [rankingRes, resultsRes] = await Promise.all([
-      fetch(`${API_BASE}/${leagueId}/ranking`).catch(() => null),
-      fetch(`${API_BASE}/${leagueId}/results?skip=0&take=100`).catch(() => null),
-    ]);
-
-    const ranking: RankingEntry[] = [];
-    if (rankingRes?.ok) {
-      const rankingData = await rankingRes.json();
-      if (rankingData?.teams) {
-        for (const t of rankingData.teams) {
-          ranking.push({
-            position: t.position || 0,
-            team: t.name || "",
-            played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
-            won: t.won || 0,
-            drawn: t.draw || 0,
-            lost: t.lost || 0,
-            goalsFor: t.goalsFor || 0,
-            goalsAgainst: t.goalsAgainst || 0,
-            goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
-            points: t.points || 0,
-          });
-        }
-      }
+    const data = await res.json();
+    if (!data.success) {
+      console.log(`Proxy error: ${data.error}`);
+      return null;
     }
 
-    const results: MatchResult[] = [];
-    if (resultsRes?.ok) {
-      const resultsData = await resultsRes.json();
-      if (resultsData?.rounds) {
-        for (const rd of resultsData.rounds) {
-          for (const m of rd.matches || []) {
-            const score = String(m.score || "0:0").split(":");
-            results.push({
-              home: m.homeTeam?.name || "",
-              away: m.awayTeam?.name || "",
-              scoreHome: parseInt(score[0]) || 0,
-              scoreAway: parseInt(score[1]) || 0,
-              league: leagueName,
-              matchday: String(rd.roundNumber || ""),
-            });
-          }
-        }
-      }
-    }
+    console.log(`✅ Proxy: ${data.matches?.length || 0} matches for ${leagueName}`);
 
-    return { matches, results, ranking };
+    return {
+      matches: (data.matches || []).map((m: any) => ({
+        id: m.id,
+        home: m.home || "",
+        away: m.away || "",
+        round: m.round,
+        league: leagueName,
+        status: m.status || "upcoming",
+        kickoff: m.kickoff || "",
+        oddHome: m.oddHome || 0,
+        oddDraw: m.oddDraw || 0,
+        oddAway: m.oddAway || 0,
+        minute: null,
+        scoreHome: null,
+        scoreAway: null,
+        stats: null,
+      })),
+      results: (data.results || []).map((r: any) => ({
+        home: r.home || "",
+        away: r.away || "",
+        scoreHome: r.scoreHome ?? 0,
+        scoreAway: r.scoreAway ?? 0,
+        league: leagueName,
+        matchday: r.matchday || "",
+      })),
+      ranking: (data.ranking || []).map((t: any) => ({
+        position: t.position || 0,
+        team: t.team || "",
+        played: t.played || 0,
+        won: t.won || 0,
+        drawn: t.drawn || 0,
+        lost: t.lost || 0,
+        goalsFor: t.goalsFor || 0,
+        goalsAgainst: t.goalsAgainst || 0,
+        goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
+        points: t.points || 0,
+      })),
+    };
   } catch (err) {
-    console.log(`API fetch failed for ${leagueName}:`, err);
+    console.log(`Proxy fetch failed for ${leagueName}:`, err);
     return null;
   }
 }
@@ -241,27 +192,27 @@ export function useLiveMatches() {
     }
   }, [selectedLeague]);
 
-  // Charger les données : API en parallèle avec cache
+  // Charger les données : API proxy en parallèle avec cache
   const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string) => {
     setLoading(true);
     setError(null);
 
     // Lancer les deux en parallèle
     const [apiData, cacheSuccess] = await Promise.all([
-      fetchFromAPI(leagueId, leagueName),
+      fetchFromProxy(leagueId, leagueName),
       loadFromDatabase(leagueName),
     ]);
 
-    // Si l'API a répondu, utiliser ses données (plus fraîches)
+    // Si le proxy a répondu, utiliser ses données (temps réel)
     if (apiData && apiData.matches.length > 0) {
-      console.log(`✅ API: ${apiData.matches.length} matches for ${leagueName}`);
+      console.log(`🟢 Using LIVE data for ${leagueName}`);
       setMatches(apiData.matches);
       setResults(apiData.results);
       setRanking(apiData.ranking);
       setLastUpdate(new Date().toISOString());
       setDataSource("api");
     } else if (cacheSuccess) {
-      console.log(`📦 Using cache for ${leagueName}`);
+      console.log(`📦 Using CACHE for ${leagueName}`);
     } else {
       setError(`Aucune donnée pour ${leagueName}`);
     }
