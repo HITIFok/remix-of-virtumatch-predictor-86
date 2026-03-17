@@ -158,6 +158,7 @@ export default function LiveMatches() {
     startAutoRefresh,
     stopAutoRefresh,
     changeLeague,
+    dataSource,
   } = useLiveMatches();
 
   const {
@@ -378,8 +379,18 @@ export default function LiveMatches() {
                 🏆 {ranking.length} Équipes
               </Badge>
             )}
-            {autoScrapeActive && (
+            {dataSource === "api" && (
               <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30">
+                🟢 Temps réel
+              </Badge>
+            )}
+            {dataSource === "cache" && (
+              <Badge className="text-[10px] font-display bg-gold/20 text-gold border-gold/30">
+                📦 Cache
+              </Badge>
+            )}
+            {autoScrapeActive && (
+              <Badge className="text-[10px] font-display bg-fire/20 text-fire border-fire/30">
                 🔄 Auto 30s
               </Badge>
             )}
