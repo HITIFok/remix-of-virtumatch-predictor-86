@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">VirtuXXS</string>
+    <string name="title_activity_main">VirtuXXS</string>
+    <string name="package_name">com.hitif.virtuxxs</string>
+    <string name="custom_url_scheme">com.hitif.virtuxxs</string>
+</resources>
