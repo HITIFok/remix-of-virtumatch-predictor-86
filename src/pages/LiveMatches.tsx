@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
+import AnimatedBackground from "@/components/AnimatedBackground";
 import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
@@ -138,7 +139,7 @@ function MatchCard({
     `⏰ ${formatKickoff(match.kickoff)}`;
 
   return (
-    <div className="bg-gradient-card rounded-xl border border-border overflow-hidden shadow-card">
+    <div className="card-premium overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
         <span className={`text-[10px] font-display tracking-wider ${statusColor}`}>
           {statusLabel}
@@ -193,7 +194,8 @@ function MatchCard({
         {hasPremium ? (
           <Button
             size="sm"
-            className="w-full bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider"
+            variant="fire"
+            className="w-full"
             disabled={predicting || match.oddHome <= 0}
             onClick={() => onPredict(match)}
           >
@@ -204,9 +206,9 @@ function MatchCard({
             )}
           </Button>
         ) : (
-          <div className="flex items-center justify-center gap-1.5 py-2 bg-gold/10 rounded-lg border border-gold/20">
+          <div className="flex items-center justify-center gap-1.5 py-2.5 bg-gold/10 rounded-xl border border-gold/30 card-glow-gold">
             <Lock size={12} className="text-gold" />
-            <span className="text-[10px] font-display text-gold tracking-wider">PREMIUM REQUIS</span>
+            <span className="text-[10px] font-display text-gold tracking-wider font-bold">PREMIUM REQUIS</span>
           </div>
         )}
       </div>
@@ -311,8 +313,9 @@ export default function LiveMatches() {
   const totalMatches = Object.values(matchesByLeague).reduce((s, m) => s + m.length, 0);
 
   return (
-    <div className="min-h-screen bg-background pb-20">
-      <div className="max-w-lg mx-auto px-4">
+    <div className="min-h-screen bg-background pb-24 relative">
+      <AnimatedBackground />
+      <div className="max-w-lg mx-auto px-4 relative z-10">
         <AppHeader />
 
         {/* League Selector */}
@@ -346,7 +349,7 @@ export default function LiveMatches() {
         {/* Controls */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="font-display text-sm text-foreground tracking-wider flex items-center gap-2">
+            <h2 className="font-display text-sm text-gradient-fire tracking-wider flex items-center gap-2 font-bold">
               <FlagIcon countryCode={selectedLeague.countryCode} size={18} />
               {selectedLeague.name}
             </h2>
@@ -362,7 +365,6 @@ export default function LiveMatches() {
             variant="outline"
             onClick={() => refreshData()}
             disabled={loading || scraping}
-            className="text-xs"
           >
             {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
           </Button>
@@ -372,22 +374,22 @@ export default function LiveMatches() {
         {(totalMatches > 0 || results.length > 0 || ranking.length > 0) && (
           <div className="flex items-center gap-2 mb-4 flex-wrap">
             {totalMatches > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-display">
+              <Badge variant="secondary" className="text-[10px] font-display bg-muted/50 border-border/50">
                 ⚽ {totalMatches} Matchs
               </Badge>
             )}
             {results.length > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-display">
+              <Badge variant="secondary" className="text-[10px] font-display bg-muted/50 border-border/50">
                 📊 {results.length} Résultats
               </Badge>
             )}
             {ranking.length > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-display">
+              <Badge variant="secondary" className="text-[10px] font-display bg-muted/50 border-border/50">
                 🏆 {ranking.length} Équipes
               </Badge>
             )}
             {dataSource === "api" && (
-              <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30">
+              <Badge className="text-[10px] font-display bg-success/20 text-success border-success/30 animate-pulse">
                 🟢 Temps réel
               </Badge>
             )}
@@ -401,7 +403,7 @@ export default function LiveMatches() {
 
         {/* Error state */}
         {error && (
-          <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 mb-4">
+          <div className="card-premium card-glow-fire border-destructive/30 p-3 mb-4">
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} className="text-destructive" />
               <span className="text-xs text-destructive">{error}</span>
@@ -412,7 +414,10 @@ export default function LiveMatches() {
         {/* Loading state */}
         {loading && totalMatches === 0 && results.length === 0 && ranking.length === 0 && (
           <div className="flex flex-col items-center gap-3 py-12">
-            <Loader2 size={32} className="text-fire animate-spin" />
+            <div className="relative">
+              <Loader2 size={32} className="text-fire animate-spin" />
+              <div className="absolute inset-0 blur-lg bg-fire/30 rounded-full" />
+            </div>
             <p className="text-sm text-muted-foreground font-display tracking-wider">
               Chargement des données...
             </p>
@@ -490,7 +495,7 @@ export default function LiveMatches() {
 
             <TabsContent value="ranking">
               {ranking.length > 0 ? (
-                <div className="bg-gradient-card rounded-xl border border-border overflow-hidden p-3">
+                <div className="card-premium overflow-hidden p-3">
                   <RankingTable ranking={ranking} />
                 </div>
               ) : (
