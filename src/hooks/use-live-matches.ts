@@ -26,32 +26,33 @@ interface ScrapedDataRaw {
   created_at: string;
 }
 
-// API Proxy (Vercel serverless function - contourne CORS)
-const API_PROXY = "/api/matches";
+// Supabase Edge Function URL (contourne CORS)
+const SUPABASE_URL = "REDACTED_SUPABASE_URL";
+const FETCH_LIVE_URL = `${SUPABASE_URL}/functions/v1/fetch-live`;
 
-// Fetch depuis le proxy API
-async function fetchFromProxy(leagueId: string, leagueName: string): Promise<{
+// Fetch depuis l'API via Supabase Edge Function
+async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
   results: MatchResult[];
   ranking: RankingEntry[];
 } | null> {
   try {
-    const res = await fetch(`${API_PROXY}?leagueId=${leagueId}`, {
+    const res = await fetch(`${FETCH_LIVE_URL}?leagueId=${leagueId}`, {
       headers: { "Accept": "application/json" },
     });
 
     if (!res.ok) {
-      console.log(`Proxy returned ${res.status}`);
+      console.log(`API returned ${res.status}`);
       return null;
     }
 
     const data = await res.json();
     if (!data.success) {
-      console.log(`Proxy error: ${data.error}`);
+      console.log(`API error: ${data.error}`);
       return null;
     }
 
-    console.log(`✅ Proxy: ${data.matches?.length || 0} matches for ${leagueName}`);
+    console.log(`🟢 API: ${data.matches?.length || 0} matches for ${leagueName}`);
 
     return {
       matches: (data.matches || []).map((m: any) => ({
@@ -92,7 +93,7 @@ async function fetchFromProxy(leagueId: string, leagueName: string): Promise<{
       })),
     };
   } catch (err) {
-    console.log(`Proxy fetch failed for ${leagueName}:`, err);
+    console.log(`API fetch failed for ${leagueName}:`, err);
     return null;
   }
 }
@@ -199,11 +200,11 @@ export function useLiveMatches() {
 
     // Lancer les deux en parallèle
     const [apiData, cacheSuccess] = await Promise.all([
-      fetchFromProxy(leagueId, leagueName),
+      fetchFromAPI(leagueId, leagueName),
       loadFromDatabase(leagueName),
     ]);
 
-    // Si le proxy a répondu, utiliser ses données (temps réel)
+    // Si l'API a répondu, utiliser ses données (temps réel)
     if (apiData && apiData.matches.length > 0) {
       console.log(`🟢 Using LIVE data for ${leagueName}`);
       setMatches(apiData.matches);
