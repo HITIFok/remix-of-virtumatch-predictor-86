@@ -7,15 +7,15 @@ const corsHeaders = {
 
 const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
-const LEAGUES: Record<string, string> = {
-  "8035": "English League",
-  "8060": "Coupe d'Afrique",
-  "8056": "Champions League",
-  "8036": "Italian League",
-  "8037": "Spanish League",
-  "8042": "French League",
-  "8043": "German League",
-  "8044": "Portuguese League",
+const LEAGUES: Record<string, { name: string; eventCategoryId?: string }> = {
+  "8035": { name: "English League" },
+  "8060": { name: "Coupe d'Afrique", eventCategoryId: "137840" },
+  "8056": { name: "Champions League" },
+  "8036": { name: "Italian League" },
+  "8037": { name: "Spanish League" },
+  "8042": { name: "French League" },
+  "8043": { name: "German League" },
+  "8044": { name: "Portuguese League" },
 };
 
 const HEADERS = {
@@ -35,6 +35,38 @@ async function fetchAPI(path: string): Promise<any> {
   }
 }
 
+// Fetch live matches from playout endpoint
+async function fetchLiveMatches(leagueId: string, eventCategoryId?: string): Promise<Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>> {
+  const liveData = new Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>();
+  
+  if (!eventCategoryId) return liveData;
+  
+  // Try to fetch live matches from recent rounds
+  for (let roundNum = 35; roundNum <= 50; roundNum++) {
+    try {
+      const data = await fetchAPI(`/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`);
+      if (data?.matches) {
+        for (const m of data.matches) {
+          const goals = m.goals || [];
+          if (goals.length > 0) {
+            const lastGoal = goals[goals.length - 1];
+            liveData.set(m.id, {
+              scoreHome: lastGoal.homeScore || 0,
+              scoreAway: lastGoal.awayScore || 0,
+              minute: lastGoal.minute || 0,
+              goals: goals,
+            });
+          }
+        }
+      }
+    } catch {
+      // Continue to next round
+    }
+  }
+  
+  return liveData;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -43,13 +75,15 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     const leagueId = url.searchParams.get("leagueId") || "8035";
-    const leagueName = LEAGUES[leagueId] || "Unknown League";
+    const leagueInfo = LEAGUES[leagueId] || { name: "Unknown League" };
+    const leagueName = leagueInfo.name;
 
-    // Fetch all data in parallel
-    const [matchesData, rankingData, resultsData] = await Promise.all([
+    // Fetch matches and ranking/results in parallel
+    const [matchesData, rankingData, resultsData, liveData] = await Promise.all([
       fetchAPI(`/${leagueId}/matches`),
       fetchAPI(`/${leagueId}/ranking`),
       fetchAPI(`/${leagueId}/results?skip=0&take=200`),
+      fetchLiveMatches(leagueId, leagueInfo.eventCategoryId),
     ]);
 
     if (!matchesData) {
@@ -61,6 +95,8 @@ serve(async (req) => {
 
     // Parse matches
     const matches: any[] = [];
+    let liveCount = 0;
+    
     if (matchesData?.rounds) {
       for (const rd of matchesData.rounds) {
         const roundNum = rd.roundNumber || 0;
@@ -80,20 +116,39 @@ serve(async (req) => {
             }
           }
 
-          if (oddHome > 0 || oddAway > 0) {
-            matches.push({
-              id: m.id,
-              home: m.homeTeam?.name || "",
-              away: m.awayTeam?.name || "",
-              round: roundNum,
-              league: leagueName,
-              status: "upcoming",
-              kickoff: m.expectedStart || "",
-              oddHome,
-              oddDraw,
-              oddAway,
-            });
+          // Check if match is live
+          const liveInfo = liveData.get(m.id);
+          const isLive = liveInfo !== undefined;
+          if (isLive) liveCount++;
+
+          // Status: live, betting, or upcoming
+          let status = "upcoming";
+          if (isLive) {
+            status = "live";
+          } else if (oddHome > 0 || oddAway > 0) {
+            // Check if betting is active
+            const hasActiveBetting = m.eventBetTypes?.some((bt: any) => 
+              bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
+            );
+            if (hasActiveBetting) status = "betting";
           }
+
+          matches.push({
+            id: m.id,
+            home: m.homeTeam?.name || "",
+            away: m.awayTeam?.name || "",
+            round: roundNum,
+            league: leagueName,
+            status: status,
+            kickoff: m.expectedStart || "",
+            oddHome,
+            oddDraw,
+            oddAway,
+            scoreHome: liveInfo?.scoreHome ?? null,
+            scoreAway: liveInfo?.scoreAway ?? null,
+            minute: liveInfo?.minute ?? null,
+            goals: liveInfo?.goals ?? null,
+          });
         }
       }
     }
@@ -142,6 +197,7 @@ serve(async (req) => {
         matches,
         ranking,
         results,
+        liveCount,
         scrapedAt: new Date().toISOString(),
         counts: { matches: matches.length, ranking: ranking.length, results: results.length },
       }),
