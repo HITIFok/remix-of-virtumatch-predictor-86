@@ -29,14 +29,6 @@ interface ScrapedDataRaw {
 // API base URL
 const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
-// Cache global pour toutes les ligues
-const leagueCache: Record<string, {
-  matches: ScrapedMatch[];
-  results: MatchResult[];
-  ranking: RankingEntry[];
-  scrapedAt: string;
-}> = {};
-
 // Fetch directly from API (browser-side) with short timeout
 async function fetchFromAPI(leagueId: string, leagueName: string, timeout = 5000): Promise<{
   matches: ScrapedMatch[];
@@ -47,7 +39,6 @@ async function fetchFromAPI(leagueId: string, leagueName: string, timeout = 5000
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    // Fetch matches only (faster)
     const matchesRes = await fetch(`${API_BASE}/${leagueId}/matches`, {
       method: "GET",
       headers: { "Accept": "application/json" },
@@ -106,7 +97,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string, timeout = 5000
       }
     }
 
-    // Fetch ranking and results in parallel (non-blocking)
+    // Fetch ranking and results in parallel
     const [rankingRes, resultsRes] = await Promise.all([
       fetch(`${API_BASE}/${leagueId}/ranking`, { headers: { "Accept": "application/json" }, mode: "cors" }).catch(() => null),
       fetch(`${API_BASE}/${leagueId}/results?skip=0&take=100`, { headers: { "Accept": "application/json" }, mode: "cors" }).catch(() => null),
@@ -176,8 +167,13 @@ export function useLiveMatches() {
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
   // Charger les données depuis le cache Supabase (RAPIDE)
-  const loadFromCache = useCallback(async (leagueName: string): Promise<boolean> => {
-    console.log(`📦 Loading cache for: ${leagueName}`);
+  const loadFromCache = useCallback(async (leagueName: string): Promise<{
+    matches: ScrapedMatch[];
+    results: MatchResult[];
+    ranking: RankingEntry[];
+    scrapedAt: string;
+  } | null> => {
+    console.log(`📦 Loading cache for: "${leagueName}"`);
 
     try {
       const { data, error: dbError } = await supabase
@@ -185,8 +181,17 @@ export function useLiveMatches() {
         .select("*")
         .eq("league", leagueName);
 
-      if (dbError) throw new Error(dbError.message);
-      if (!data || data.length === 0) return false;
+      if (dbError) {
+        console.error("DB Error:", dbError);
+        throw new Error(dbError.message);
+      }
+
+      if (!data || data.length === 0) {
+        console.log(`❌ No cache for: "${leagueName}"`);
+        return null;
+      }
+
+      console.log(`✅ Found ${data.length} entries for "${leagueName}"`);
 
       const rawData = data as ScrapedDataRaw[];
       const matchesEntry = rawData.find(d => d.data_type === "matches");
@@ -238,41 +243,42 @@ export function useLiveMatches() {
           }))
         : [];
 
-      // Update cache
-      leagueCache[leagueName] = {
+      console.log(`📊 Cache loaded: ${parsedMatches.length} matches, ${parsedResults.length} results, ${parsedRanking.length} teams`);
+
+      return {
         matches: parsedMatches,
         results: parsedResults,
         ranking: parsedRanking,
         scrapedAt: matchesEntry?.scraped_at || new Date().toISOString(),
       };
-
-      setMatches(parsedMatches);
-      setResults(parsedResults);
-      setRanking(parsedRanking);
-      setLastUpdate(matchesEntry?.scraped_at || new Date().toISOString());
-      setDataSource("cache");
-
-      console.log(`✅ Cache: ${parsedMatches.length} matches, ${parsedResults.length} results, ${parsedRanking.length} teams`);
-      return true;
     } catch (err) {
       console.error("Cache error:", err);
-      return false;
+      return null;
     }
   }, []);
 
   // Charger les données : Cache d'abord, puis API en arrière-plan
-  const fetchMatches = useCallback(async (forceAPI = false) => {
+  const fetchMatches = useCallback(async (leagueId: LeagueId, leagueName: string, forceAPI = false) => {
     setLoading(true);
     setError(null);
 
     // 1. Charger depuis le cache immédiatement
-    const hasCache = await loadFromCache(selectedLeague.name);
+    const cacheData = await loadFromCache(leagueName);
+
+    if (cacheData) {
+      setMatches(cacheData.matches);
+      setResults(cacheData.results);
+      setRanking(cacheData.ranking);
+      setLastUpdate(cacheData.scrapedAt);
+      setDataSource("cache");
+    }
+
     setLoading(false);
 
     // 2. Essayer l'API en arrière-plan (si forceAPI ou auto-refresh)
     if (forceAPI || autoScrapeActive) {
-      console.log(`🔄 Trying API for ${selectedLeague.name}...`);
-      const apiData = await fetchFromAPI(selectedLeagueId, selectedLeague.name);
+      console.log(`🔄 Trying API for ${leagueName}...`);
+      const apiData = await fetchFromAPI(leagueId, leagueName);
 
       if (apiData && apiData.matches.length > 0) {
         console.log(`✅ API: ${apiData.matches.length} matches`);
@@ -284,25 +290,27 @@ export function useLiveMatches() {
       }
     }
 
-    if (!hasCache) {
+    if (!cacheData) {
       setError("Aucune donnée disponible.");
     }
-  }, [selectedLeagueId, selectedLeague.name, loadFromCache, autoScrapeActive]);
+  }, [loadFromCache, autoScrapeActive]);
 
   // Refresh manuel
   const refreshData = useCallback(async () => {
     setScraping(true);
-    await fetchMatches(true); // Force API
+    await fetchMatches(selectedLeagueId, selectedLeague.name, true);
     setScraping(false);
-  }, [fetchMatches]);
+  }, [fetchMatches, selectedLeagueId, selectedLeague.name]);
 
   // Auto-refresh
   const startAutoRefresh = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     setAutoScrapeActive(true);
-    fetchMatches(true);
-    intervalRef.current = setInterval(() => fetchMatches(true), 30000);
-  }, [fetchMatches]);
+    fetchMatches(selectedLeagueId, selectedLeague.name, true);
+    intervalRef.current = setInterval(() => {
+      fetchMatches(selectedLeagueId, selectedLeague.name, true);
+    }, 30000);
+  }, [fetchMatches, selectedLeagueId, selectedLeague.name]);
 
   const stopAutoRefresh = useCallback(() => {
     if (intervalRef.current) {
@@ -317,8 +325,11 @@ export function useLiveMatches() {
     if (autoScrapeActive) stopAutoRefresh();
 
     const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
-    setSelectedLeagueId(leagueId);
+    if (!newLeague) return;
 
+    console.log(`🔀 Changing to: ${newLeague.name}`);
+
+    setSelectedLeagueId(leagueId);
     setMatches([]);
     setResults([]);
     setRanking([]);
@@ -327,27 +338,9 @@ export function useLiveMatches() {
     setDataSource(null);
     setLoading(true);
 
-    if (newLeague) {
-      // 1. Cache d'abord
-      const hasCache = await loadFromCache(newLeague.name);
-
-      // 2. API en arrière-plan
-      const apiData = await fetchFromAPI(leagueId, newLeague.name);
-      if (apiData && apiData.matches.length > 0) {
-        setMatches(apiData.matches);
-        setResults(apiData.results);
-        setRanking(apiData.ranking);
-        setLastUpdate(new Date().toISOString());
-        setDataSource("api");
-      }
-
-      if (!hasCache && (!apiData || apiData.matches.length === 0)) {
-        setError(`Aucune donnée pour ${newLeague.name}`);
-      }
-
-      setLoading(false);
-    }
-  }, [autoScrapeActive, stopAutoRefresh, loadFromCache]);
+    // Charger avec les paramètres directs (pas via state)
+    await fetchMatches(leagueId, newLeague.name, false);
+  }, [autoScrapeActive, stopAutoRefresh, fetchMatches]);
 
   // Cleanup
   useEffect(() => {
@@ -358,7 +351,7 @@ export function useLiveMatches() {
 
   // Charger au montage
   useEffect(() => {
-    fetchMatches();
+    fetchMatches(selectedLeagueId, selectedLeague.name, false);
   }, []);
 
   const matchesByLeague = matches.reduce<Record<string, ScrapedMatch[]>>((acc, m) => {
@@ -382,7 +375,7 @@ export function useLiveMatches() {
     selectedLeagueId,
     selectedLeague,
     availableLeagues: AVAILABLE_LEAGUES,
-    fetchMatches,
+    fetchMatches: () => fetchMatches(selectedLeagueId, selectedLeague.name, false),
     refreshData,
     startAutoRefresh,
     stopAutoRefresh,
