@@ -18,8 +18,8 @@ export default defineConfig(({ mode }) => ({
       registerType: "autoUpdate",
       includeAssets: ["favicon.ico", "icon.png", "apple-touch-icon.png"],
       manifest: {
-        name: "VirtuXXS - Prédictions Sportives",
-        short_name: "VirtuXXS",
+        name: "VirtuL - Prédictions Sportives",
+        short_name: "VirtuL",
         description: "Application de prédictions sportives virtuelles garantie par algorithme",
         theme_color: "#0a0a0d",
         background_color: "#0a0a0d",
