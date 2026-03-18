@@ -270,12 +270,17 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
 }
 
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("access_codes")
     .delete()
     .eq("id", codeId);
 
-  return !error;
+  if (error) {
+    console.error("Erreur suppression code:", error);
+    return false;
+  }
+  
+  return true;
 }
 
 // --- Settings (localStorage) ---
