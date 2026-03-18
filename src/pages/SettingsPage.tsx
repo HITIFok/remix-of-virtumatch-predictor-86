@@ -35,7 +35,7 @@ export default function SettingsPage() {
   return (
     <div className="min-h-screen pb-24 relative">
       <AnimatedBackground />
-      <div className="max-w-lg mx-auto px-4 relative z-10">
+      <div className="container-responsive relative z-10">
         <AppHeader />
 
         <div className="flex items-center gap-2 mb-6">
@@ -110,7 +110,7 @@ export default function SettingsPage() {
             <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">À propos</h3>
           </div>
           <div className="space-y-2 text-xs text-muted-foreground">
-            <p className="text-gradient-premium font-display font-bold">VirtuXXS by HITIF</p>
+            <p className="text-gradient-premium font-display font-bold">VirtuL by HITIF</p>
             <p>Version 1.0.0</p>
             <p>Prédiction de matchs virtuels garantie par algorithme</p>
           </div>

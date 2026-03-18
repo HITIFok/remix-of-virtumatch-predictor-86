@@ -66,7 +66,7 @@ export default function Index() {
   return (
     <div className="min-h-screen pb-24 relative">
       <AnimatedBackground />
-      <div className="max-w-lg mx-auto px-4 relative z-10">
+      <div className="container-responsive relative z-10">
         <AppHeader />
         <PremiumGate onUnlocked={() => forceUpdate((n) => n + 1)} />
         <div className="mt-6">
