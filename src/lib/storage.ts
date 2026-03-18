@@ -171,6 +171,10 @@ export function isPremium(): boolean {
   return getAccess() !== null;
 }
 
+export function clearAccess() {
+  localStorage.removeItem(ACCESS_KEY);
+}
+
 // --- Admin ---
 
 export function isAdmin(): boolean {
