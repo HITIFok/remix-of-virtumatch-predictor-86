@@ -43,12 +43,17 @@ export default function Admin() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleDelete = async (codeId: string, code: string) => {
+  const handleDelete = async (codeId: string | undefined, code: string) => {
+    if (!codeId) {
+      toast.error("ID du code introuvable");
+      return;
+    }
+    
     if (confirm(`Supprimer le code ${code} ?`)) {
       const success = await deleteGeneratedCode(codeId);
       if (success) {
-        const updated = await getGeneratedCodes();
-        setCodes(updated);
+        // Mettre à jour la liste en filtrant le code supprimé localement
+        setCodes(prev => prev.filter(c => c.id !== codeId));
         toast.success("Code supprimé");
       } else {
         toast.error("Erreur lors de la suppression");
@@ -108,7 +113,7 @@ export default function Admin() {
                       </button>
                     )}
                     <button 
-                      onClick={() => handleDelete(gc.id!, gc.code)} 
+                      onClick={() => handleDelete(gc.id, gc.code)} 
                       className="text-destructive hover:text-red-400 transition-colors"
                     >
                       <Trash2 size={18} />
