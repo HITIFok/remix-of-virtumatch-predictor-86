@@ -12,7 +12,7 @@ export default function AppHeader() {
         <Flame className="text-fire animate-glow icon-float" size={28} />
         <div className="relative">
           <h1 className="text-3xl font-display font-black tracking-widest text-gradient-animated">
-            VirtuXXS
+            VirtuL
           </h1>
           <Sparkles className="absolute -right-6 -top-1 text-gold animate-bounce-subtle" size={14} />
         </div>

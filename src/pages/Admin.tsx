@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
+import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
 import { isAdmin, generateRandomCode, saveGeneratedCode, getGeneratedCodes, type GeneratedCode } from "@/lib/storage";
 import { Shield, Plus, Copy, Check } from "lucide-react";
@@ -45,8 +46,9 @@ export default function Admin() {
   if (!isAdmin()) return null;
 
   return (
-    <div className="min-h-screen pb-20">
-      <div className="max-w-lg mx-auto px-4">
+    <div className="min-h-screen pb-24 relative">
+      <AnimatedBackground />
+      <div className="container-responsive relative z-10">
         <AppHeader />
 
         <div className="flex items-center gap-2 mb-4">
