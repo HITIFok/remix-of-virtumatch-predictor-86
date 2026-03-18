@@ -29,8 +29,31 @@ function StatRow({ label, value, premium = false }: { label: string; value: stri
   );
 }
 
-function DangerBadge({ level }: { level: string }) {
-  if (level === "trap") {
+function SituationBadge({ result }: { result: MatchResult }) {
+  const { situation, dangerLevel, isTrueTrap, isDomination } = result;
+  
+  // Vrai Piège
+  if (isTrueTrap) {
+    return (
+      <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
+        <ShieldAlert size={14} className="text-destructive" />
+        <span className="text-xs font-display text-destructive tracking-wider">⚠️ VRAI PIÈGE — SCORE FORCÉ</span>
+      </div>
+    );
+  }
+  
+  // Domination
+  if (isDomination) {
+    return (
+      <div className="flex items-center gap-2 bg-success/10 border border-success/30 rounded-lg px-3 py-2">
+        <CheckCircle size={14} className="text-success" />
+        <span className="text-xs font-display text-success tracking-wider">🔥 DOMINATION — FAVORI FORT</span>
+      </div>
+    );
+  }
+  
+  // Piège modéré
+  if (dangerLevel === "trap") {
     return (
       <div className="flex items-center gap-2 bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2">
         <ShieldAlert size={14} className="text-destructive" />
@@ -38,7 +61,7 @@ function DangerBadge({ level }: { level: string }) {
       </div>
     );
   }
-  if (level === "moderate") {
+  if (dangerLevel === "moderate") {
     return (
       <div className="flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-lg px-3 py-2">
         <AlertTriangle size={14} className="text-gold" />
@@ -46,10 +69,11 @@ function DangerBadge({ level }: { level: string }) {
       </div>
     );
   }
+  
   return (
     <div className="flex items-center gap-2 bg-success/10 border border-success/30 rounded-lg px-3 py-2">
       <CheckCircle size={14} className="text-success" />
-      <span className="text-xs font-display text-success tracking-wider">✅ MATCH SÛR — FAVORI CONFIRMÉ</span>
+      <span className="text-xs font-display text-success tracking-wider">✅ {situation || "MATCH SÛR"}</span>
     </div>
   );
 }
@@ -74,15 +98,29 @@ export default function ResultCard({ result }: ResultCardProps) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Danger level badge */}
-        <DangerBadge level={result.dangerLevel} />
+        {/* Situation badge */}
+        <SituationBadge result={result} />
 
-        {/* AI confidence */}
-        {result.aiConfidence > 0 && (
+        {/* Favori & Confiance */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-muted/50 rounded-lg px-3 py-2 border border-border/50">
+            <span className="text-[10px] text-muted-foreground block">Favori 1X2</span>
+            <span className="font-display font-bold text-foreground">
+              {result.favorite === '1' ? `1 - ${result.home}` : result.favorite === '2' ? `2 - ${result.away}` : 'X - Nul'}
+            </span>
+          </div>
+          <div className="bg-muted/50 rounded-lg px-3 py-2 border border-border/50">
+            <span className="text-[10px] text-muted-foreground block">Confiance</span>
+            <span className="font-display font-bold text-foreground">{result.aiConfidence}%</span>
+          </div>
+        </div>
+        
+        {/* Lambda values */}
+        {result.lambdaHome && result.lambdaAway && (
           <div className="flex items-center gap-2 bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
-            <Brain size={14} className="text-accent" />
+            <BarChart3 size={14} className="text-accent" />
             <span className="text-xs text-muted-foreground">
-              IA Confiance : <span className="font-display font-bold text-foreground">{(result.aiConfidence * 100).toFixed(0)}%</span>
+              λ (buts attendus) : <span className="font-display font-bold text-foreground">{result.lambdaHome.toFixed(2)}</span> vs <span className="font-display font-bold text-foreground">{result.lambdaAway.toFixed(2)}</span>
             </span>
           </div>
         )}
@@ -168,14 +206,25 @@ export default function ResultCard({ result }: ResultCardProps) {
               <span className="text-xs font-display text-ice uppercase tracking-wider">Top 3 Scores Probables</span>
             </div>
             {hasPremium ? (
-              <div className="grid grid-cols-3 gap-2">
-                {result.topScores.map((ts, i) => (
-                  <div key={i} className="bg-muted/50 rounded-lg p-2 text-center border border-border/50">
-                    <span className="font-display text-sm font-bold text-foreground">{ts.score}</span>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">{(ts.probability * 100).toFixed(0)}%</p>
+              <>
+                <div className="grid grid-cols-3 gap-2">
+                  {result.topScores.slice(0, 3).map((ts, i) => (
+                    <div key={i} className="bg-muted/50 rounded-lg p-2 text-center border border-border/50">
+                      <span className="font-display text-sm font-bold text-foreground">{ts.score}</span>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{(ts.probability * 100).toFixed(1)}%</p>
+                    </div>
+                  ))}
+                </div>
+                {/* Score alternatif */}
+                {result.alternativeScore && (
+                  <div className="flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-lg px-3 py-2">
+                    <Target size={14} className="text-gold" />
+                    <span className="text-xs text-muted-foreground">
+                      Plan B : <span className="font-display font-bold text-gold">{result.alternativeScore}</span>
+                    </span>
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             ) : (
               <PremiumLock label="Débloquer les scores probables" />
             )}
