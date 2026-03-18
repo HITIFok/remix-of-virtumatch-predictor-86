@@ -172,18 +172,31 @@ export function isPremium(): boolean {
 }
 
 // --- Admin ---
-const ADMIN_PASSWORD = "REDACTED";
 
 export function isAdmin(): boolean {
   return localStorage.getItem(ADMIN_KEY) === "true";
 }
 
-export function loginAdmin(password: string): boolean {
-  if (password === ADMIN_PASSWORD) {
+export async function loginAdminSupabase(password: string): Promise<boolean> {
+  // Check admin code from Supabase
+  const { data, error } = await supabase
+    .from("admin_settings")
+    .select("setting_value")
+    .eq("setting_key", "admin_code")
+    .maybeSingle();
+
+  if (error || !data) return false;
+
+  if (password === data.setting_value) {
     localStorage.setItem(ADMIN_KEY, "true");
     return true;
   }
   return false;
+}
+
+// Legacy function for backwards compatibility (now uses Supabase)
+export async function loginAdmin(password: string): Promise<boolean> {
+  return loginAdminSupabase(password);
 }
 
 export function logoutAdmin() {
@@ -228,7 +241,7 @@ export async function saveGeneratedCode(gc: GeneratedCode) {
 
 export function generateRandomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "VXS-";
+  let code = "VRL-";
   for (let i = 0; i < 8; i++) {
     code += chars[Math.floor(Math.random() * chars.length)];
     if (i === 3) code += "-";
@@ -237,10 +250,6 @@ export function generateRandomCode(): string {
 }
 
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number }> {
-  // Hardcoded premium code
-  if (inputCode === "06072K26V") {
-    return { valid: true, days: 30 };
-  }
   // Check generated codes in DB
   const { data, error } = await supabase
     .from("access_codes")
@@ -258,6 +267,15 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
     .eq("id", data.id);
 
   return { valid: true, days: data.duration_days };
+}
+
+export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from("access_codes")
+    .delete()
+    .eq("id", codeId);
+
+  return !error;
 }
 
 // --- Settings (localStorage) ---
