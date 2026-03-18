@@ -4,8 +4,8 @@ import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
-import { isAdmin, generateRandomCode, saveGeneratedCode, getGeneratedCodes, type GeneratedCode } from "@/lib/storage";
-import { Shield, Plus, Copy, Check } from "lucide-react";
+import { isAdmin, generateRandomCode, saveGeneratedCode, getGeneratedCodes, deleteGeneratedCode, type GeneratedCode } from "@/lib/storage";
+import { Shield, Plus, Copy, Check, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Admin() {
@@ -41,6 +41,19 @@ export default function Admin() {
     setCopiedId(code);
     toast.success("Code copié !");
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleDelete = async (codeId: string, code: string) => {
+    if (confirm(`Supprimer le code ${code} ?`)) {
+      const success = await deleteGeneratedCode(codeId);
+      if (success) {
+        const updated = await getGeneratedCodes();
+        setCodes(updated);
+        toast.success("Code supprimé");
+      } else {
+        toast.error("Erreur lors de la suppression");
+      }
+    }
   };
 
   if (!isAdmin()) return null;
@@ -88,11 +101,19 @@ export default function Admin() {
                       Créé le {new Date(gc.createdAt).toLocaleDateString("fr-FR")}
                     </p>
                   </div>
-                  {!gc.used && (
-                    <button onClick={() => copyCode(gc.code)} className="text-gold hover:text-fire transition-colors">
-                      {copiedId === gc.code ? <Check size={18} /> : <Copy size={18} />}
+                  <div className="flex items-center gap-2">
+                    {!gc.used && (
+                      <button onClick={() => copyCode(gc.code)} className="text-gold hover:text-fire transition-colors">
+                        {copiedId === gc.code ? <Check size={18} /> : <Copy size={18} />}
+                      </button>
+                    )}
+                    <button 
+                      onClick={() => handleDelete(gc.id!, gc.code)} 
+                      className="text-destructive hover:text-red-400 transition-colors"
+                    >
+                      <Trash2 size={18} />
                     </button>
-                  )}
+                  </div>
                 </div>
               ))
             )}
