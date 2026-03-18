@@ -5,7 +5,7 @@ import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Settings, Shield, LogOut, Sparkles, Crown, Info } from "lucide-react";
-import { getAccess, isPremium, isAdmin, loginAdmin, logoutAdmin } from "@/lib/storage";
+import { getAccess, isPremium, isAdmin, loginAdmin, logoutAdmin, clearAccess } from "@/lib/storage";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
@@ -39,6 +39,21 @@ export default function SettingsPage() {
     logoutAdmin();
     toast.info("Déconnexion admin");
     forceUpdate(n => n + 1);
+  };
+
+  const handlePremiumLogout = () => {
+    clearAccess();
+    toast.info("Accès premium supprimé");
+    forceUpdate(n => n + 1);
+  };
+
+  const handleResetAll = () => {
+    if (confirm("Déconnecter tous les accès (Admin + Premium) ?")) {
+      logoutAdmin();
+      clearAccess();
+      toast.success("Tous les accès ont été réinitialisés");
+      forceUpdate(n => n + 1);
+    }
   };
 
   return (
@@ -76,6 +91,9 @@ export default function SettingsPage() {
                   Jours restants : <span className="text-gold font-bold">{Math.ceil((access.expiresAt - Date.now()) / (1000 * 60 * 60 * 24))}</span>
                 </p>
               </div>
+              <Button variant="ghost" size="sm" onClick={handlePremiumLogout} className="text-destructive hover:bg-destructive/10 w-full mt-2">
+                <LogOut size={14} className="mr-1" /> Déconnexion Premium
+              </Button>
             </div>
           ) : (
             <p className="text-sm text-gold">🔒 Non premium — Achetez un code dans la boutique</p>
@@ -114,7 +132,7 @@ export default function SettingsPage() {
         </div>
 
         {/* App info */}
-        <div className="card-premium p-5">
+        <div className="card-premium p-5 mb-4">
           <div className="flex items-center gap-2 mb-3">
             <Info size={16} className="text-ice" />
             <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">À propos</h3>
@@ -125,6 +143,17 @@ export default function SettingsPage() {
             <p>Prédiction de matchs virtuels garantie par algorithme</p>
           </div>
         </div>
+
+        {/* Reset All */}
+        {(premium || admin) && (
+          <Button 
+            variant="outline" 
+            onClick={handleResetAll} 
+            className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 font-display text-xs tracking-wider"
+          >
+            <LogOut size={14} className="mr-2" /> Réinitialiser tous les accès
+          </Button>
+        )}
       </div>
       <BottomNav />
     </div>
