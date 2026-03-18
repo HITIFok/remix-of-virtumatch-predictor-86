@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Zap, Loader2 } from "lucide-react";
 import type { MatchInput } from "@/lib/prediction-engine";
+import { AVAILABLE_LEAGUES, type LeagueInfo } from "@/hooks/use-live-matches";
 
 interface MatchFormProps {
   onAnalyze: (matches: MatchInput[]) => void;
@@ -44,28 +45,6 @@ function FlagIcon({ countryCode, size = 20 }: { countryCode: string; size?: numb
       </svg>
     );
   }
-  // Europa League
-  if (countryCode === "europa") {
-    return (
-      <svg width={size} height={size * 0.9} viewBox="0 0 50 45" className="inline-block">
-        <rect width="50" height="45" fill="#1a1a2e" rx="2"/>
-        <circle cx="25" cy="22" r="16" fill="none" stroke="#f39c12" strokeWidth="2"/>
-        <circle cx="25" cy="22" r="12" fill="none" stroke="#f39c12" strokeWidth="1.5"/>
-        <text x="25" y="26" textAnchor="middle" fill="#f39c12" fontSize="8" fontWeight="bold" fontFamily="sans-serif">UEL</text>
-      </svg>
-    );
-  }
-  // World Cup
-  if (countryCode === "world") {
-    return (
-      <svg width={size} height={size * 0.9} viewBox="0 0 50 45" className="inline-block">
-        <rect width="50" height="45" fill="#5d4e8c" rx="2"/>
-        <circle cx="25" cy="22" r="15" fill="none" stroke="#ffd700" strokeWidth="2"/>
-        <polygon points="25,5 27,10 32,10 28,14 30,19 25,16 20,19 22,14 18,10 23,10" fill="#ffd700"/>
-        <text x="25" y="28" textAnchor="middle" fill="#ffd700" fontSize="7" fontWeight="bold" fontFamily="sans-serif">WORLD</text>
-      </svg>
-    );
-  }
   // Angleterre
   if (countryCode === "gb-eng") {
     return (
@@ -101,23 +80,10 @@ function FlagIcon({ countryCode, size = 20 }: { countryCode: string; size?: numb
   );
 }
 
-const LEAGUES = [
-  { name: "English League", countryCode: "gb-eng" },
-  { name: "Champions League", countryCode: "uefa" },
-  { name: "Coupe d'Afrique", countryCode: "africa" },
-  { name: "Liga Española", countryCode: "es" },
-  { name: "Bundesliga", countryCode: "de" },
-  { name: "Serie A", countryCode: "it" },
-  { name: "Ligue 1", countryCode: "fr" },
-  { name: "World Cup", countryCode: "world" },
-  { name: "Europa League", countryCode: "europa" },
-  { name: "Autre", countryCode: "other" },
-];
-
 const emptyMatch = (): MatchInput => ({
   home: "",
   away: "",
-  league: "English League",
+  league: AVAILABLE_LEAGUES[0].name,
   oddHome: 0,
   oddDraw: 0,
   oddAway: 0,
@@ -160,22 +126,22 @@ export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
             )}
           </div>
 
-          {/* League selector */}
+          {/* League selector - Identique à LiveMatches */}
           <Select value={m.league} onValueChange={v => updateMatch(idx, "league", v)}>
             <SelectTrigger className="w-full bg-gradient-card border-border">
               <SelectValue>
                 <span className="flex items-center gap-2">
-                  <FlagIcon countryCode={LEAGUES.find(l => l.name === m.league)?.countryCode || "other"} />
+                  <FlagIcon countryCode={AVAILABLE_LEAGUES.find(l => l.name === m.league)?.countryCode || "gb-eng"} />
                   <span className="font-display font-bold">{m.league}</span>
                 </span>
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {LEAGUES.map(l => (
-                <SelectItem key={l.name} value={l.name}>
+              {AVAILABLE_LEAGUES.map((league) => (
+                <SelectItem key={league.id} value={league.name}>
                   <span className="flex items-center gap-2">
-                    <FlagIcon countryCode={l.countryCode} />
-                    <span className="font-display">{l.name}</span>
+                    <FlagIcon countryCode={league.countryCode} />
+                    <span className="font-display">{league.name}</span>
                   </span>
                 </SelectItem>
               ))}
