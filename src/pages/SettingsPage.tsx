@@ -10,19 +10,28 @@ import { toast } from "sonner";
 
 export default function SettingsPage() {
   const [adminPwd, setAdminPwd] = useState("");
+  const [adminLoading, setAdminLoading] = useState(false);
   const [, forceUpdate] = useState(0);
 
   const premium = isPremium();
   const access = getAccess();
   const admin = isAdmin();
 
-  const handleAdminLogin = () => {
-    if (loginAdmin(adminPwd)) {
-      toast.success("Accès admin activé");
-      setAdminPwd("");
-      forceUpdate(n => n + 1);
-    } else {
-      toast.error("Mot de passe incorrect");
+  const handleAdminLogin = async () => {
+    setAdminLoading(true);
+    try {
+      const success = await loginAdmin(adminPwd);
+      if (success) {
+        toast.success("Accès admin activé");
+        setAdminPwd("");
+        forceUpdate(n => n + 1);
+      } else {
+        toast.error("Mot de passe incorrect");
+      }
+    } catch (error) {
+      toast.error("Erreur de connexion");
+    } finally {
+      setAdminLoading(false);
     }
   };
 
@@ -95,9 +104,10 @@ export default function SettingsPage() {
                 onChange={e => setAdminPwd(e.target.value)}
                 className="input-premium flex-1"
                 onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
+                disabled={adminLoading}
               />
-              <Button variant="fire" onClick={handleAdminLogin}>
-                Entrer
+              <Button variant="fire" onClick={handleAdminLogin} disabled={adminLoading}>
+                {adminLoading ? "..." : "Entrer"}
               </Button>
             </div>
           )}
