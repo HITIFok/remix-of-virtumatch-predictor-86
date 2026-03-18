@@ -675,16 +675,39 @@
   }
 }
 
-/* ===== PREMIUM CARDS ===== */
+/* ===== PREMIUM CARDS 3D COLORÉS ===== */
 @layer utilities {
+  /* Card Premium 3D de base */
   .card-premium {
-    background: linear-gradient(145deg, hsl(220 18% 14%), hsl(220 18% 8%));
-    border: 1px solid hsl(220 15% 20%);
+    background: linear-gradient(
+      145deg,
+      hsl(280 30% 18% / 0.9) 0%,
+      hsl(260 25% 12% / 0.95) 50%,
+      hsl(240 20% 10% / 0.9) 100%
+    );
+    border: 1px solid transparent;
+    border-image: linear-gradient(
+      135deg,
+      hsl(280 50% 50% / 0.5),
+      hsl(200 60% 50% / 0.5),
+      hsl(45 70% 50% / 0.5)
+    ) 1;
     border-radius: 16px;
-    box-shadow: var(--shadow-3d);
-    transition: all 0.3s ease;
+    box-shadow: 
+      0 4px 16px hsl(0 0% 0% / 0.4),
+      0 8px 32px hsl(280 50% 30% / 0.15),
+      inset 0 1px 0 hsl(280 50% 80% / 0.1),
+      inset 0 -1px 0 hsl(0 0% 0% / 0.3);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     overflow: hidden;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* Alternative sans border-image pour compatibilité */
+  .card-premium {
+    border: 1px solid hsl(270 40% 40% / 0.3);
   }
 
   .card-premium::before {
@@ -694,36 +717,205 @@
     left: 0;
     right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.1), transparent);
+    background: linear-gradient(
+      90deg, 
+      transparent, 
+      hsl(280 50% 70% / 0.4),
+      hsl(200 60% 70% / 0.4),
+      transparent
+    );
+  }
+
+  /* Effet de brillance animé */
+  .card-premium::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(
+      45deg,
+      transparent 40%,
+      hsl(280 50% 80% / 0.05) 50%,
+      transparent 60%
+    );
+    animation: card-shine 6s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes card-shine {
+    0%, 100% { transform: translateX(-100%) rotate(45deg); }
+    50% { transform: translateX(100%) rotate(45deg); }
   }
 
   .card-premium:hover {
-    transform: translateY(-2px);
-    border-color: hsl(220 15% 30%);
+    transform: translateY(-3px) scale(1.01);
+    border-color: hsl(280 50% 50% / 0.5);
+    box-shadow: 
+      0 8px 24px hsl(0 0% 0% / 0.5),
+      0 16px 48px hsl(280 50% 40% / 0.2),
+      0 0 30px hsl(280 50% 50% / 0.1),
+      inset 0 1px 0 hsl(280 50% 80% / 0.15),
+      inset 0 -1px 0 hsl(0 0% 0% / 0.2);
+  }
+
+  /* Card Fire Theme */
+  .card-glow-fire {
+    background: linear-gradient(
+      145deg,
+      hsl(18 40% 18% / 0.9) 0%,
+      hsl(20 30% 12% / 0.95) 50%,
+      hsl(15 25% 8% / 0.9) 100%
+    );
+    border-color: hsl(18 80% 50% / 0.4);
     box-shadow: 
       var(--shadow-3d),
-      0 8px 32px hsl(0 0% 0% / 0.3);
+      0 0 25px hsl(18 95% 55% / 0.15),
+      inset 0 1px 0 hsl(18 80% 70% / 0.2);
   }
 
-  /* Card with glow */
-  .card-glow-fire {
-    border-color: hsl(18 95% 55% / 0.3);
-    box-shadow: var(--shadow-3d), 0 0 20px hsl(18 95% 55% / 0.1);
+  .card-glow-fire:hover {
+    border-color: hsl(18 90% 55% / 0.6);
+    box-shadow: 
+      0 8px 24px hsl(0 0% 0% / 0.5),
+      0 0 40px hsl(18 95% 55% / 0.2),
+      inset 0 1px 0 hsl(18 80% 80% / 0.2);
   }
 
+  /* Card Ice Theme */
   .card-glow-ice {
-    border-color: hsl(200 80% 50% / 0.3);
-    box-shadow: var(--shadow-3d), 0 0 20px hsl(200 80% 50% / 0.1);
+    background: linear-gradient(
+      145deg,
+      hsl(200 35% 18% / 0.9) 0%,
+      hsl(195 30% 12% / 0.95) 50%,
+      hsl(190 25% 8% / 0.9) 100%
+    );
+    border-color: hsl(200 70% 50% / 0.4);
+    box-shadow: 
+      var(--shadow-3d),
+      0 0 25px hsl(200 80% 50% / 0.15),
+      inset 0 1px 0 hsl(200 70% 70% / 0.2);
   }
 
+  .card-glow-ice:hover {
+    border-color: hsl(200 80% 55% / 0.6);
+    box-shadow: 
+      0 8px 24px hsl(0 0% 0% / 0.5),
+      0 0 40px hsl(200 80% 50% / 0.2),
+      inset 0 1px 0 hsl(200 70% 80% / 0.2);
+  }
+
+  /* Card Gold Theme */
   .card-glow-gold {
-    border-color: hsl(45 100% 55% / 0.3);
-    box-shadow: var(--shadow-3d), 0 0 20px hsl(45 100% 55% / 0.1);
+    background: linear-gradient(
+      145deg,
+      hsl(45 35% 18% / 0.9) 0%,
+      hsl(40 30% 12% / 0.95) 50%,
+      hsl(35 25% 8% / 0.9) 100%
+    );
+    border-color: hsl(45 80% 50% / 0.4);
+    box-shadow: 
+      var(--shadow-3d),
+      0 0 25px hsl(45 100% 55% / 0.15),
+      inset 0 1px 0 hsl(45 80% 70% / 0.2);
   }
 
+  .card-glow-gold:hover {
+    border-color: hsl(45 90% 55% / 0.6);
+    box-shadow: 
+      0 8px 24px hsl(0 0% 0% / 0.5),
+      0 0 40px hsl(45 100% 55% / 0.2),
+      inset 0 1px 0 hsl(45 80% 80% / 0.3);
+  }
+
+  /* Card Success Theme */
   .card-glow-success {
-    border-color: hsl(145 70% 45% / 0.3);
-    box-shadow: var(--shadow-3d), 0 0 20px hsl(145 70% 45% / 0.1);
+    background: linear-gradient(
+      145deg,
+      hsl(145 30% 16% / 0.9) 0%,
+      hsl(140 25% 10% / 0.95) 50%,
+      hsl(135 20% 6% / 0.9) 100%
+    );
+    border-color: hsl(145 60% 45% / 0.4);
+    box-shadow: 
+      var(--shadow-3d),
+      0 0 25px hsl(145 70% 45% / 0.15),
+      inset 0 1px 0 hsl(145 60% 65% / 0.2);
+  }
+
+  .card-glow-success:hover {
+    border-color: hsl(145 70% 50% / 0.6);
+    box-shadow: 
+      0 8px 24px hsl(0 0% 0% / 0.5),
+      0 0 40px hsl(145 70% 45% / 0.2),
+      inset 0 1px 0 hsl(145 60% 75% / 0.2);
+  }
+
+  /* Card Premium Ultra - pour les éléments spéciaux */
+  .card-premium-ultra {
+    background: linear-gradient(
+      145deg,
+      hsl(280 40% 20% / 0.95) 0%,
+      hsl(260 35% 14% / 0.98) 50%,
+      hsl(240 30% 10% / 0.95) 100%
+    );
+    border: 2px solid transparent;
+    border-radius: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-premium-ultra::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 18px;
+    padding: 2px;
+    background: linear-gradient(
+      135deg,
+      hsl(280 60% 60%),
+      hsl(320 60% 60%),
+      hsl(200 60% 60%),
+      hsl(280 60% 60%)
+    );
+    -webkit-mask: 
+      linear-gradient(#fff 0 0) content-box, 
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: border-rotate 4s linear infinite;
+  }
+
+  @keyframes border-rotate {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  /* Card Glass 3D */
+  .card-glass-3d {
+    background: linear-gradient(
+      145deg,
+      hsl(220 20% 20% / 0.6) 0%,
+      hsl(220 18% 15% / 0.7) 50%,
+      hsl(220 15% 10% / 0.6) 100%
+    );
+    border: 1px solid hsl(220 30% 40% / 0.3);
+    border-radius: 16px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 
+      0 4px 20px hsl(0 0% 0% / 0.3),
+      0 0 40px hsl(220 40% 40% / 0.1),
+      inset 0 1px 0 hsl(220 30% 60% / 0.15);
+  }
+
+  .card-glass-3d:hover {
+    border-color: hsl(220 40% 50% / 0.4);
+    box-shadow: 
+      0 8px 30px hsl(0 0% 0% / 0.4),
+      0 0 50px hsl(220 40% 50% / 0.15),
+      inset 0 1px 0 hsl(220 30% 70% / 0.2);
   }
 }
 
