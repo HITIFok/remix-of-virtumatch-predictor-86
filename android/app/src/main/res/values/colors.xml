@@ -8,4 +8,5 @@
     <color name="colorBackground">#1a0a2e</color>
     <color name="colorSurface">#1a0a2e</color>
     <color name="colorText">#FFFFFF</color>
+    <color name="ic_launcher_background">#1a0a2e</color>
 </resources>
