@@ -69,7 +69,7 @@ export function usePredictions() {
   const autoVerifyPredictions = useCallback(async () => {
     try {
       const supabaseUrl = import.meta.env.VITE_DATABASE_URL
-      const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+      const anonKey = import.meta.env.VITE_DATABASE_ANON_KEY
       
       // Vérifier silencieusement en arrière-plan
       const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
