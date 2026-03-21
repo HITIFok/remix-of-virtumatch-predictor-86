@@ -96,12 +96,12 @@ export function usePredictions() {
   const loadPredictions = useCallback(async (skipAutoVerify = false) => {
     try {
       setLoading(true)
-      
+
       // D'abord vérifier automatiquement les prédictions en attente
       if (!skipAutoVerify) {
         await autoVerifyPredictions()
       }
-      
+
       // Ensuite charger les prédictions (maintenant à jour)
       const { data: predData, error: predError } = await supabase
         .from('predictions')
@@ -109,7 +109,11 @@ export function usePredictions() {
         .order('created_at', { ascending: false })
         .limit(200)
 
-      if (predError) throw predError
+      console.log('📊 Prédictions chargées:', predData?.length || 0, predData)
+      if (predError) {
+        console.error('❌ Erreur chargement prédictions:', predError)
+        throw predError
+      }
 
       setPredictions((predData as Prediction[]) || [])
 
@@ -246,37 +250,45 @@ export function usePredictions() {
     winner_1x2?: string
   }) => {
     try {
+      console.log('💾 Sauvegarde prédiction:', pred)
       const deviceId = getDeviceId()
+      console.log('📱 Device ID:', deviceId)
+
+      const insertData = {
+        ...pred,
+        league: pred.league || 'Instant League',
+        status: 'pending',
+        device_id: deviceId,
+        home: pred.home_team,
+        away: pred.away_team,
+        score_home: pred.predicted_home_score,
+        score_away: pred.predicted_away_score,
+        exact_score: pred.predicted_score,
+        winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
+      }
+      console.log('📦 Données à insérer:', insertData)
+
       const { data, error } = await supabase
         .from('predictions')
-        .insert({
-          ...pred,
-          league: pred.league || 'Instant League',
-          status: 'pending',
-          device_id: deviceId,
-          home: pred.home_team,
-          away: pred.away_team,
-          score_home: pred.predicted_home_score,
-          score_away: pred.predicted_away_score,
-          exact_score: pred.predicted_score,
-          winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
-        })
+        .insert(insertData)
         .select()
         .single()
 
       if (error) {
+        console.error('❌ Erreur insertion:', error)
         if (error.code === '23505') {
-          console.log('Prediction already exists for this match today')
+          console.log('⚠️ Prediction already exists for this match today')
           return null
         }
         throw error
       }
 
+      console.log('✅ Prédiction sauvegardée:', data)
       await loadPredictions(true) // Skip auto-verify after save (just saved)
-      
+
       return data as Prediction
     } catch (err) {
-      console.error('Error saving prediction:', err)
+      console.error('❌ Error saving prediction:', err)
       throw err
     }
   }, [loadPredictions])

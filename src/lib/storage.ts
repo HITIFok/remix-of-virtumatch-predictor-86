@@ -87,7 +87,7 @@ export async function saveToHistory(result: MatchResult) {
   const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
   const confidence = Math.round(result.aiConfidence * 100);
 
-  await supabase.from("predictions").insert({
+  const insertData = {
     // Colonnes principales
     home_team: result.home,
     away_team: result.away,
@@ -129,7 +129,17 @@ export async function saveToHistory(result: MatchResult) {
     // Métadonnées
     device_id: deviceId,
     status: 'pending',
-  });
+  };
+
+  console.log('💾 saveToHistory - Insertion:', insertData);
+
+  const { data, error } = await supabase.from("predictions").insert(insertData).select();
+
+  if (error) {
+    console.error('❌ saveToHistory - Erreur:', error);
+  } else {
+    console.log('✅ saveToHistory - Succès:', data);
+  }
 }
 
 export async function clearHistory() {
