@@ -182,20 +182,61 @@ export function isAdmin(): boolean {
 }
 
 export async function loginAdminSupabase(password: string): Promise<boolean> {
-  // Check admin code from Supabase
-  const { data, error } = await supabase
-    .from("admin_settings")
-    .select("setting_value")
-    .eq("setting_key", "admin_code")
-    .maybeSingle();
+  // Fallback hardcoded admin password for APK builds (in case Supabase connection fails)
+  const HARDCODED_ADMIN_PASSWORD = '3000692';
+  
+  try {
+    // Check admin code from Supabase
+    const { data, error } = await supabase
+      .from("admin_settings")
+      .select("setting_value")
+      .eq("setting_key", "admin_code")
+      .maybeSingle();
 
-  if (error || !data) return false;
+    // Log for debugging (remove in production)
+    console.log('Admin login attempt:', { data, error });
 
-  if (password === data.setting_value) {
-    localStorage.setItem(ADMIN_KEY, "true");
-    return true;
+    if (error) {
+      console.error('Supabase error, using fallback:', error);
+      // Fallback to hardcoded password if Supabase fails
+      if (password === HARDCODED_ADMIN_PASSWORD) {
+        localStorage.setItem(ADMIN_KEY, "true");
+        return true;
+      }
+      return false;
+    }
+
+    if (!data) {
+      console.log('No data from Supabase, using fallback');
+      // Fallback to hardcoded password if no data
+      if (password === HARDCODED_ADMIN_PASSWORD) {
+        localStorage.setItem(ADMIN_KEY, "true");
+        return true;
+      }
+      return false;
+    }
+
+    if (password === data.setting_value) {
+      localStorage.setItem(ADMIN_KEY, "true");
+      return true;
+    }
+    
+    // Also check against hardcoded password as fallback
+    if (password === HARDCODED_ADMIN_PASSWORD) {
+      localStorage.setItem(ADMIN_KEY, "true");
+      return true;
+    }
+    
+    return false;
+  } catch (err) {
+    console.error('Exception in loginAdminSupabase:', err);
+    // Fallback to hardcoded password
+    if (password === HARDCODED_ADMIN_PASSWORD) {
+      localStorage.setItem(ADMIN_KEY, "true");
+      return true;
+    }
+    return false;
   }
-  return false;
 }
 
 // Legacy function for backwards compatibility (now uses Supabase)
