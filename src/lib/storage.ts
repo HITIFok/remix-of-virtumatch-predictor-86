@@ -181,40 +181,67 @@ export function isAdmin(): boolean {
   return localStorage.getItem(ADMIN_KEY) === "true";
 }
 
-export async function loginAdminSupabase(password: string): Promise<boolean> {
+// Test Supabase connection
+export async function testSupabaseConnection(): Promise<{ success: boolean; message: string }> {
   try {
-    // Check admin code from Supabase only
     const { data, error } = await supabase
       .from("admin_settings")
-      .select("setting_value")
+      .select("setting_key, setting_value")
+      .limit(1);
+
+    if (error) {
+      return { success: false, message: `Erreur Supabase: ${error.message}` };
+    }
+    
+    return { success: true, message: `Connexion OK - ${data?.length || 0} entrée(s) trouvée(s)` };
+  } catch (err: any) {
+    return { success: false, message: `Exception: ${err.message}` };
+  }
+}
+
+export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
+  try {
+    // First, test connection
+    const connectionTest = await testSupabaseConnection();
+    if (!connectionTest.success) {
+      return { success: false, message: connectionTest.message };
+    }
+
+    // Check admin code from Supabase
+    const { data, error } = await supabase
+      .from("admin_settings")
+      .select("setting_key, setting_value")
       .eq("setting_key", "admin_code")
       .maybeSingle();
 
     if (error) {
       console.error('Supabase error:', error);
-      return false;
+      return { success: false, message: `Erreur requête: ${error.message}` };
     }
 
     if (!data) {
       console.log('No admin settings found in Supabase');
-      return false;
+      return { success: false, message: "Aucun paramètre admin trouvé dans la base de données" };
     }
+
+    console.log('Admin settings found:', { key: data.setting_key, value: data.setting_value });
 
     if (password === data.setting_value) {
       localStorage.setItem(ADMIN_KEY, "true");
-      return true;
+      return { success: true, message: "Connexion admin réussie" };
     }
     
-    return false;
-  } catch (err) {
+    return { success: false, message: "Mot de passe incorrect" };
+  } catch (err: any) {
     console.error('Exception in loginAdminSupabase:', err);
-    return false;
+    return { success: false, message: `Exception: ${err.message}` };
   }
 }
 
 // Legacy function for backwards compatibility (now uses Supabase)
 export async function loginAdmin(password: string): Promise<boolean> {
-  return loginAdminSupabase(password);
+  const result = await loginAdminSupabase(password);
+  return result.success;
 }
 
 export function logoutAdmin() {
@@ -267,24 +294,44 @@ export function generateRandomCode(): string {
   return code;
 }
 
-export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number }> {
-  // Check generated codes in DB
-  const { data, error } = await supabase
-    .from("access_codes")
-    .select("*")
-    .eq("code", inputCode)
-    .eq("used", false)
-    .maybeSingle();
+export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
+  try {
+    // Check generated codes in DB
+    const { data, error } = await supabase
+      .from("access_codes")
+      .select("*")
+      .eq("code", inputCode)
+      .maybeSingle();
 
-  if (error || !data) return { valid: false, days: 0 };
+    if (error) {
+      console.error("Erreur Supabase validateCode:", error);
+      return { valid: false, days: 0, message: `Erreur de connexion: ${error.message}` };
+    }
 
-  const deviceId = getDeviceId();
-  await supabase
-    .from("access_codes")
-    .update({ used: true, used_at: new Date().toISOString(), used_by_device: deviceId })
-    .eq("id", data.id);
+    if (!data) {
+      return { valid: false, days: 0, message: "Code invalide ou introuvable" };
+    }
 
-  return { valid: true, days: data.duration_days };
+    if (data.used) {
+      return { valid: false, days: 0, message: "Ce code a déjà été utilisé" };
+    }
+
+    const deviceId = getDeviceId();
+    const { error: updateError } = await supabase
+      .from("access_codes")
+      .update({ used: true, used_at: new Date().toISOString(), used_by_device: deviceId })
+      .eq("id", data.id);
+
+    if (updateError) {
+      console.error("Erreur mise à jour code:", updateError);
+      return { valid: false, days: 0, message: `Erreur d'activation: ${updateError.message}` };
+    }
+
+    return { valid: true, days: data.duration_days, message: `Code valide! ${data.duration_days} jours d'accès` };
+  } catch (err: any) {
+    console.error("Exception validateCode:", err);
+    return { valid: false, days: 0, message: `Exception: ${err.message}` };
+  }
 }
 
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {

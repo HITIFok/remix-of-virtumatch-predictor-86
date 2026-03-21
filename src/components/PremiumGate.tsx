@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Lock, Key, ShieldCheck } from "lucide-react";
-import { validateCode, setAccess, isPremium, getAccess } from "@/lib/storage";
+import { Lock, Key, ShieldCheck, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import { validateCode, setAccess, isPremium, getAccess, testSupabaseConnection } from "@/lib/storage";
 import { toast } from "sonner";
 
 interface PremiumGateProps {
@@ -13,6 +13,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [connectionOk, setConnectionOk] = useState<boolean | null>(null);
 
   if (isPremium()) {
     const access = getAccess();
@@ -28,42 +29,93 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
     );
   }
 
+  const handleTestConnection = async () => {
+    const result = await testSupabaseConnection();
+    setConnectionOk(result.success);
+    return result;
+  };
+
   const handleSubmit = async () => {
+    if (!code.trim()) {
+      setError("Veuillez entrer un code");
+      return;
+    }
+    
     setLoading(true);
+    setError("");
+    
+    // Test connection first
+    const connectionTest = await handleTestConnection();
+    if (!connectionTest.success) {
+      setError(`Connexion échouée: ${connectionTest.message}`);
+      setLoading(false);
+      return;
+    }
+    
     const result = await validateCode(code.trim());
     if (result.valid) {
       setAccess(code.trim(), result.days);
-      toast.success("Premium débloqué ! 🔥");
+      toast.success(result.message);
       setError("");
       onUnlocked();
     } else {
-      setError("Code invalide. Achetez un code premium.");
+      setError(result.message);
     }
     setLoading(false);
   };
 
   return (
-    <div className="bg-gradient-card rounded-xl border border-gold/30 p-6 shadow-card space-y-4">
-      <div className="flex items-center gap-2">
-        <Lock className="text-gold" size={20} />
-        <h3 className="font-display text-sm text-gold tracking-wider">ACCÈS PREMIUM REQUIS</h3>
+    <div className="bg-gradient-card rounded-xl border border-gold/30 p-4 sm:p-6 shadow-card space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Lock className="text-gold" size={20} />
+          <h3 className="font-display text-sm text-gold tracking-wider">ACCÈS PREMIUM REQUIS</h3>
+        </div>
+        {connectionOk !== null && (
+          connectionOk ? 
+            <Wifi size={14} className="text-success" /> : 
+            <WifiOff size={14} className="text-destructive" />
+        )}
       </div>
+      
       <p className="text-xs text-muted-foreground">
         Entrez votre code d'accès pour débloquer le score exact, GG/GN, total de buts et plus.
       </p>
-      <div className="flex gap-2">
+      
+      <div className="flex flex-col sm:flex-row gap-2">
         <Input
           placeholder="Entrez le code premium"
           value={code}
           onChange={e => { setCode(e.target.value); setError(""); }}
-          className="bg-muted border-border font-display text-sm tracking-wider"
+          className="bg-muted border-border font-display text-sm tracking-wider flex-1"
           onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          disabled={loading}
         />
-        <Button onClick={handleSubmit} disabled={loading} className="bg-gradient-premium text-background font-display tracking-wider">
-          <Key size={14} className="mr-1" /> ACTIVER
+        <Button 
+          onClick={handleSubmit} 
+          disabled={loading} 
+          className="bg-gradient-premium text-background font-display tracking-wider flex-shrink-0"
+        >
+          {loading ? (
+            <RefreshCw size={14} className="animate-spin" />
+          ) : (
+            <><Key size={14} className="mr-1" /> ACTIVER</>
+          )}
         </Button>
       </div>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      
+      {error && (
+        <p className="text-xs text-destructive flex items-start gap-1">
+          <span className="text-destructive">⚠️</span>
+          <span className="break-words">{error}</span>
+        </p>
+      )}
+      
+      {connectionOk === false && (
+        <p className="text-xs text-muted-foreground">
+          Vérifiez votre connexion internet ou réessayez plus tard.
+        </p>
+      )}
     </div>
   );
 }
