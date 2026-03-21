@@ -2,16 +2,16 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     
     <!-- PWA Meta Tags -->
-    <meta name="theme-color" content="#0a0a0d" />
+    <meta name="theme-color" content="#1a0a2e" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="VirtuL" />
+    <meta name="apple-mobile-web-app-title" content="Virutel Bet261" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="application-name" content="VirtuL" />
-    <meta name="msapplication-TileColor" content="#0a0a0d" />
+    <meta name="application-name" content="Virutel Bet261" />
+    <meta name="msapplication-TileColor" content="#1a0a2e" />
     <meta name="msapplication-tap-highlight" content="no" />
     
     <!-- Icons -->
@@ -19,19 +19,19 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/icon-48.png" />
     <link rel="apple-touch-icon" href="/icon.png" />
     
-    <title>VirtuL - Prédictions Sportives</title>
+    <title>Virutel Bet261 - Prédictions Sportives</title>
     <meta name="description" content="Application de prédiction sportive garantie par algorithme - Pronostics intelligents basés sur les statistiques" />
     <meta name="author" content="HITIF" />
 
     <!-- Open Graph -->
-    <meta property="og:title" content="VirtuL - Prédictions Sportives" />
+    <meta property="og:title" content="Virutel Bet261 - Prédictions Sportives" />
     <meta property="og:description" content="Prédictions sportives avec analyses statistiques avancées et algorithme garanti" />
     <meta property="og:type" content="website" />
     <meta property="og:image" content="/icon.png" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="VirtuL - Prédictions Sportives" />
+    <meta name="twitter:title" content="Virutel Bet261 - Prédictions Sportives" />
     <meta name="twitter:description" content="Prédictions sportives avec algorithme garanti" />
     
     <style>
@@ -46,10 +46,13 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: linear-gradient(135deg, #0a0a0d 0%, #1a0a1a 50%, #0a0f1a 100%);
+        background: linear-gradient(135deg, #1a0a2e 0%, #2d1b4e 50%, #1a2a4a 100%);
         color: white;
         font-family: system-ui, -apple-system, sans-serif;
         z-index: 9999;
+        /* Safe area support */
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
       }
       #loading .logo {
         width: 80px;
@@ -88,11 +91,12 @@
         left: 0;
         right: 0;
         bottom: 0;
-        background: #0a0a0d;
+        background: #1a0a2e;
         color: white;
         font-family: system-ui, -apple-system, sans-serif;
         padding: 20px;
         z-index: 10000;
+        padding-top: env(safe-area-inset-top);
       }
       #error.show { display: flex; flex-direction: column; align-items: center; justify-content: center; }
       #error h2 { color: #ff6b35; margin-bottom: 10px; }
