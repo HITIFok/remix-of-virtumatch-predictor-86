@@ -139,7 +139,7 @@ function MatchCard({
     `⏰ ${formatKickoff(match.kickoff)}`;
 
   return (
-    <div className="card-premium overflow-hidden">
+    <div className="card-premium overflow-hidden scroll-item">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
         <span className={`text-[10px] font-display tracking-wider ${statusColor}`}>
           {statusLabel}
