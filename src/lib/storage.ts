@@ -85,7 +85,8 @@ export async function saveToHistory(result: MatchResult) {
 
   // Déterminer la prédiction (1, X, ou 2)
   const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
-  const confidence = Math.round(result.aiConfidence * 100);
+  // aiConfidence is already a percentage (0-100), don't multiply again
+  const confidence = Math.round(result.aiConfidence);
 
   const insertData = {
     // Colonnes principales

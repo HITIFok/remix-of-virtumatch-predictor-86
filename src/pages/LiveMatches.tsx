@@ -261,11 +261,10 @@ export default function LiveMatches() {
       const teamStatsMap = buildTeamStatsMap(ranking);
       const historicalResults = prepareHistoricalResults(results);
       const result = analyzeMatch(matchInput, undefined, teamStatsMap, historicalResults);
-      
-      await saveToHistory(result);
+
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
-      
-      // Save prediction to database
+
+      // Save prediction to database (single save)
       try {
         await savePrediction({
           match_id: match.id,
@@ -279,7 +278,7 @@ export default function LiveMatches() {
           prob_draw: result.probDraw,
           prob_away: result.probAway,
           prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
-          confidence: result.aiConfidence * 100,
+          confidence: result.aiConfidence, // Already a percentage (0-100)
           predicted_home_score: result.scoreHome,
           predicted_away_score: result.scoreAway,
           predicted_score: result.exactScore,
@@ -300,7 +299,7 @@ export default function LiveMatches() {
       } catch (e) {
         console.log('Prediction already saved or error:', e);
       }
-      
+
       toast.success("Prédiction générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
