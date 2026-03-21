@@ -82,7 +82,7 @@ export default function ResultCard({ result }: ResultCardProps) {
   const hasPremium = isPremium();
 
   return (
-    <div className="bg-gradient-card rounded-xl shadow-card border border-border overflow-hidden">
+    <div className="bg-gradient-card rounded-xl border border-border overflow-hidden scroll-item">
       {/* Header */}
       <div className="bg-gradient-fire p-4">
         <div className="flex justify-between items-center">
