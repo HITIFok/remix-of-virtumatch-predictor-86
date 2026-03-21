@@ -1,4 +1,4 @@
-package com.hitif.virtuxxs;
+package com.hitif.virutelbet261;
 
 import com.getcapacitor.BridgeActivity;
 
