@@ -102,9 +102,9 @@
   }
 }
 
-/* ===== ANIMATED BACKGROUND - OPTIMISÉ MOBILE ===== */
+/* ===== ANIMATED BACKGROUND - Activé sur tous les appareils ===== */
 @layer utilities {
-  /* Container principal - Statique sur mobile pour performance */
+  /* Container principal avec animation */
   .animated-multicolor {
     background-color: #1a0a2e;
     background-image: linear-gradient(135deg, 
@@ -112,16 +112,9 @@
       #1a2a4a 50%,
       #2d1b4e 100%
     );
-    /* Pas d'animation sur mobile */
-  }
-
-  /* Animation uniquement sur desktop */
-  @media (min-width: 768px) {
-    .animated-multicolor {
-      background-size: 400% 400%;
-      animation: gradient-shift-bg 15s ease infinite;
-      -webkit-animation: gradient-shift-bg 15s ease infinite;
-    }
+    background-size: 400% 400%;
+    animation: gradient-shift-bg 15s ease infinite;
+    -webkit-animation: gradient-shift-bg 15s ease infinite;
   }
 
   @keyframes gradient-shift-bg {
@@ -129,7 +122,7 @@
     50% { background-position: 100% 50%; }
   }
 
-  /* Orbes colorés - Simplifiés */
+  /* Orbes colorés */
   .orb {
     position: absolute;
     border-radius: 50%;
@@ -139,12 +132,11 @@
     transform: translateZ(0);
     -webkit-backface-visibility: hidden;
     backface-visibility: hidden;
-    /* Pas de blur sur mobile pour performance */
-    filter: none;
-    -webkit-filter: none;
+    filter: blur(30px);
+    -webkit-filter: blur(30px);
   }
 
-  /* Blur uniquement sur desktop */
+  /* Meilleur blur sur desktop */
   @media (min-width: 768px) {
     .orb {
       opacity: 0.7;
@@ -203,15 +195,13 @@
     .orb-pink { width: 320px; height: 320px; }
   }
 
-  /* Animations orbes - Désactivées sur mobile */
-  @media (min-width: 768px) {
-    .animate-orb-1 { animation: orb-1 25s ease-in-out infinite; -webkit-animation: orb-1 25s ease-in-out infinite; }
-    .animate-orb-2 { animation: orb-2 30s ease-in-out infinite; -webkit-animation: orb-2 30s ease-in-out infinite; }
-    .animate-orb-3 { animation: orb-3 20s ease-in-out infinite; -webkit-animation: orb-3 20s ease-in-out infinite; }
-    .animate-orb-4 { animation: orb-4 22s ease-in-out infinite; -webkit-animation: orb-4 22s ease-in-out infinite; }
-    .animate-orb-5 { animation: orb-5 18s ease-in-out infinite; -webkit-animation: orb-5 18s ease-in-out infinite; }
-    .animate-orb-6 { animation: orb-6 24s ease-in-out infinite; -webkit-animation: orb-6 24s ease-in-out infinite; }
-  }
+  /* Animations orbes - Activées sur tous les appareils */
+  .animate-orb-1 { animation: orb-1 25s ease-in-out infinite; -webkit-animation: orb-1 25s ease-in-out infinite; }
+  .animate-orb-2 { animation: orb-2 30s ease-in-out infinite; -webkit-animation: orb-2 30s ease-in-out infinite; }
+  .animate-orb-3 { animation: orb-3 20s ease-in-out infinite; -webkit-animation: orb-3 20s ease-in-out infinite; }
+  .animate-orb-4 { animation: orb-4 22s ease-in-out infinite; -webkit-animation: orb-4 22s ease-in-out infinite; }
+  .animate-orb-5 { animation: orb-5 18s ease-in-out infinite; -webkit-animation: orb-5 18s ease-in-out infinite; }
+  .animate-orb-6 { animation: orb-6 24s ease-in-out infinite; -webkit-animation: orb-6 24s ease-in-out infinite; }
 
   @keyframes orb-1 {
     0%, 100% { -webkit-transform: translate3d(0, 0, 0) scale(1); transform: translate3d(0, 0, 0) scale(1); }
@@ -671,14 +661,10 @@
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
-  }
-
-  @media (min-width: 768px) {
-    .text-gradient-animated {
-      background-size: 300% 100%;
-      animation: gradient-shift 4s ease infinite;
-      -webkit-animation: gradient-shift 4s ease infinite;
-    }
+    /* Animation activée sur tous les appareils */
+    background-size: 300% 100%;
+    animation: gradient-shift 4s ease infinite;
+    -webkit-animation: gradient-shift 4s ease infinite;
   }
 
   @keyframes gradient-shift {
@@ -728,25 +714,30 @@
   }
 }
 
-/* ===== REDUCED MOTION ===== */
+/* ===== REDUCED MOTION - Animations conservées mais simplifiées ===== */
 @media (prefers-reduced-motion: reduce) {
+  /* Réduire la durée des animations au lieu de les désactiver complètement */
   *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    animation-duration: 0.3s !important;
+    transition-duration: 0.15s !important;
     scroll-behavior: auto !important;
   }
   
-  .animated-multicolor,
-  .orb,
-  .particle-3d,
-  .text-gradient-animated,
-  .animate-glow,
-  .animate-bounce-subtle,
-  .icon-float,
-  .card-premium::after {
-    animation: none !important;
-    -webkit-animation: none !important;
+  /* Garder les animations subtiles mais réduire leur intensité */
+  .orb {
+    animation-duration: 60s !important;
+  }
+  
+  .animate-glow {
+    animation-duration: 4s !important;
+  }
+  
+  .icon-float {
+    animation-duration: 6s !important;
+  }
+  
+  .text-gradient-animated {
+    animation-duration: 8s !important;
   }
 }
 
@@ -795,19 +786,15 @@
   }
 }
 
-/* ===== ICON ANIMATIONS - Desktop uniquement ===== */
+/* ===== ICON ANIMATIONS - Activées sur tous les appareils ===== */
 @layer utilities {
   .icon-float {
-    /* Désactivé sur mobile */
-  }
-
-  @media (min-width: 768px) {
-    .icon-float {
-      animation: icon-float 3s ease-in-out infinite;
-      -webkit-animation: icon-float 3s ease-in-out infinite;
-      -webkit-backface-visibility: hidden;
-      backface-visibility: hidden;
-    }
+    animation: icon-float 3s ease-in-out infinite;
+    -webkit-animation: icon-float 3s ease-in-out infinite;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
   }
 
   @keyframes icon-float {
@@ -838,6 +825,43 @@
     to { 
       -webkit-transform: rotate(360deg);
       transform: rotate(360deg);
+    }
+  }
+}
+
+/* ===== GLOW & BOUNCE ANIMATIONS ===== */
+@layer utilities {
+  /* Glow animation for icons */
+  .animate-glow {
+    animation: glow 2s ease-in-out infinite;
+    -webkit-animation: glow 2s ease-in-out infinite;
+  }
+
+  @keyframes glow {
+    0%, 100% {
+      filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 4px currentColor);
+      -webkit-filter: drop-shadow(0 0 2px currentColor) drop-shadow(0 0 4px currentColor);
+    }
+    50% {
+      filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor);
+      -webkit-filter: drop-shadow(0 0 4px currentColor) drop-shadow(0 0 8px currentColor);
+    }
+  }
+
+  /* Subtle bounce animation for sparkles */
+  .animate-bounce-subtle {
+    animation: bounce-subtle 2s ease-in-out infinite;
+    -webkit-animation: bounce-subtle 2s ease-in-out infinite;
+  }
+
+  @keyframes bounce-subtle {
+    0%, 100% {
+      -webkit-transform: translateY(0);
+      transform: translateY(0);
+    }
+    50% {
+      -webkit-transform: translateY(-4px);
+      transform: translateY(-4px);
     }
   }
 }
