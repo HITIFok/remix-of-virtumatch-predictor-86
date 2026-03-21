@@ -182,37 +182,21 @@ export function isAdmin(): boolean {
 }
 
 export async function loginAdminSupabase(password: string): Promise<boolean> {
-  // Fallback hardcoded admin password for APK builds (in case Supabase connection fails)
-  const HARDCODED_ADMIN_PASSWORD = 'REDACTED';
-  
   try {
-    // Check admin code from Supabase
+    // Check admin code from Supabase only
     const { data, error } = await supabase
       .from("admin_settings")
       .select("setting_value")
       .eq("setting_key", "admin_code")
       .maybeSingle();
 
-    // Log for debugging (remove in production)
-    console.log('Admin login attempt:', { data, error });
-
     if (error) {
-      console.error('Supabase error, using fallback:', error);
-      // Fallback to hardcoded password if Supabase fails
-      if (password === HARDCODED_ADMIN_PASSWORD) {
-        localStorage.setItem(ADMIN_KEY, "true");
-        return true;
-      }
+      console.error('Supabase error:', error);
       return false;
     }
 
     if (!data) {
-      console.log('No data from Supabase, using fallback');
-      // Fallback to hardcoded password if no data
-      if (password === HARDCODED_ADMIN_PASSWORD) {
-        localStorage.setItem(ADMIN_KEY, "true");
-        return true;
-      }
+      console.log('No admin settings found in Supabase');
       return false;
     }
 
@@ -221,20 +205,9 @@ export async function loginAdminSupabase(password: string): Promise<boolean> {
       return true;
     }
     
-    // Also check against hardcoded password as fallback
-    if (password === HARDCODED_ADMIN_PASSWORD) {
-      localStorage.setItem(ADMIN_KEY, "true");
-      return true;
-    }
-    
     return false;
   } catch (err) {
     console.error('Exception in loginAdminSupabase:', err);
-    // Fallback to hardcoded password
-    if (password === HARDCODED_ADMIN_PASSWORD) {
-      localStorage.setItem(ADMIN_KEY, "true");
-      return true;
-    }
     return false;
   }
 }
