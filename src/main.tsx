@@ -26,9 +26,10 @@ async function initCapacitor() {
     // Hide splash screen after app loads
     await SplashScreen.hide();
     
-    // Set dark status bar
+    // Set dark status bar - IMPORTANT: overlaysWebView false prevents status bar from covering content
+    await StatusBar.setOverlaysWebView({ overlay: false });
     await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#0a0a0d' });
+    await StatusBar.setBackgroundColor({ color: '#1a0a2e' });
     
     console.log('Capacitor plugins initialized');
   } catch (e) {
