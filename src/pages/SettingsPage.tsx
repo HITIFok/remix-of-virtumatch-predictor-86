@@ -1,32 +1,21 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Settings, Shield, LogOut, Sparkles, Crown, Info, Wifi, WifiOff, RefreshCw } from "lucide-react";
-import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin, clearAccess, testSupabaseConnection } from "@/lib/storage";
+import { Settings, Shield, LogOut, Sparkles, Crown, Info } from "lucide-react";
+import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin, clearAccess } from "@/lib/storage";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
   const [adminPwd, setAdminPwd] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<{ tested: boolean; success: boolean; message: string }>({ tested: false, success: false, message: "" });
   const [, forceUpdate] = useState(0);
 
   const premium = isPremium();
   const access = getAccess();
   const admin = isAdmin();
-
-  // Test connection on mount
-  useEffect(() => {
-    handleTestConnection();
-  }, []);
-
-  const handleTestConnection = async () => {
-    const result = await testSupabaseConnection();
-    setConnectionStatus({ tested: true, ...result });
-  };
 
   const handleAdminLogin = async () => {
     if (!adminPwd.trim()) {
@@ -42,8 +31,6 @@ export default function SettingsPage() {
         forceUpdate(n => n + 1);
       } else {
         toast.error(result.message);
-        // Re-test connection on failure
-        handleTestConnection();
       }
     } catch (error: any) {
       toast.error(`Erreur: ${error.message}`);
@@ -85,33 +72,6 @@ export default function SettingsPage() {
             Réglages
           </h2>
           <Sparkles size={14} className="text-ice animate-bounce-subtle flex-shrink-0" />
-        </div>
-
-        {/* Connection Status */}
-        <div className={`card-premium p-4 mb-4 ${connectionStatus.success ? 'border-success/30' : connectionStatus.tested ? 'border-destructive/30' : ''}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {connectionStatus.success ? (
-                <Wifi size={16} className="text-success" />
-              ) : (
-                <WifiOff size={16} className={connectionStatus.tested ? "text-destructive" : "text-muted-foreground"} />
-              )}
-              <div>
-                <p className="text-xs font-display text-muted-foreground">Connexion Supabase</p>
-                <p className={`text-sm font-medium ${connectionStatus.success ? 'text-success' : connectionStatus.tested ? 'text-destructive' : 'text-muted-foreground'}`}>
-                  {connectionStatus.tested ? connectionStatus.message : "Test en cours..."}
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleTestConnection}
-              className="text-muted-foreground"
-            >
-              <RefreshCw size={14} />
-            </Button>
-          </div>
         </div>
 
         {/* Premium status */}
@@ -174,31 +134,24 @@ export default function SettingsPage() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-3">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <Input
-                  type="password"
-                  placeholder="Mot de passe admin"
-                  value={adminPwd}
-                  onChange={e => setAdminPwd(e.target.value)}
-                  className="input-premium flex-1"
-                  onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
-                  disabled={adminLoading}
-                />
-                <Button 
-                  variant="fire" 
-                  onClick={handleAdminLogin} 
-                  disabled={adminLoading}
-                  className="flex-shrink-0"
-                >
-                  {adminLoading ? "..." : "Entrer"}
-                </Button>
-              </div>
-              {!connectionStatus.success && connectionStatus.tested && (
-                <p className="text-xs text-destructive">
-                  ⚠️ Impossible de se connecter à la base de données. Vérifiez votre connexion internet.
-                </p>
-              )}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Input
+                type="password"
+                placeholder="Mot de passe admin"
+                value={adminPwd}
+                onChange={e => setAdminPwd(e.target.value)}
+                className="input-premium flex-1"
+                onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
+                disabled={adminLoading}
+              />
+              <Button 
+                variant="fire" 
+                onClick={handleAdminLogin} 
+                disabled={adminLoading}
+                className="flex-shrink-0"
+              >
+                {adminLoading ? "..." : "Entrer"}
+              </Button>
             </div>
           )}
         </div>
