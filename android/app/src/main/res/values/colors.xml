@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- VirtuXXS Colors -->
+    <!-- Virutel Bet261 Colors -->
     <color name="colorPrimary">#FF6B35</color>
     <color name="colorPrimaryDark">#E54C1C</color>
     <color name="colorAccent">#38BDF8</color>
     <color name="colorAccentDark">#0EA5E9</color>
-    <color name="colorBackground">#0a0a0d</color>
-    <color name="colorSurface">#0a0a0d</color>
+    <color name="colorBackground">#1a0a2e</color>
+    <color name="colorSurface">#1a0a2e</color>
     <color name="colorText">#FFFFFF</color>
 </resources>
