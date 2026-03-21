@@ -44,20 +44,52 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
-      - name: Build APK
+      # Generate release keystore for consistent signing
+      - name: Generate release keystore
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: |
+          # Generate keystore with fixed credentials for consistent signing
+          keytool -genkeypair \
+            -v \
+            -keystore release-keystore.jks \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -alias virutelbet261 \
+            -storepass virutel2024secure \
+            -keypass virutel2024secure \
+            -dname "CN=Virutel Bet261, OU=HITIF, O=HITIF, L=Antananarivo, ST=Antananarivo, C=MG"
+          
+          # Create keystore.properties for Gradle (in android/ folder, relative path)
+          echo "storeFile=release-keystore.jks" > keystore.properties
+          echo "storePassword=virutel2024secure" >> keystore.properties
+          echo "keyAlias=virutelbet261" >> keystore.properties
+          echo "keyPassword=virutel2024secure" >> keystore.properties
+          
+          echo "Keystore generated successfully"
+          cat keystore.properties
+
+      - name: Build Signed Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease
+
+      - name: Verify APK signature
+        working-directory: android
+        run: |
+          # Verify the APK is signed
+          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk || true
+          echo "APK built and signed successfully"
 
       - name: Rename APK
         run: |
-          mv android/app/build/outputs/apk/debug/app-debug.apk \
-             android/app/build/outputs/apk/debug/virutel-bet261.apk
+          mv android/app/build/outputs/apk/release/app-release.apk \
+             android/app/build/outputs/apk/release/virutel-bet261.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: virutel-bet261-apk
-          path: android/app/build/outputs/apk/debug/virutel-bet261.apk
+          path: android/app/build/outputs/apk/release/virutel-bet261.apk
           retention-days: 30
 
       - name: Create Release
@@ -66,7 +98,7 @@ jobs:
         with:
           tag_name: v${{ github.run_number }}
           name: Virutel Bet261 Build ${{ github.run_number }}
-          files: android/app/build/outputs/apk/debug/virutel-bet261.apk
+          files: android/app/build/outputs/apk/release/virutel-bet261.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
