@@ -41,8 +41,10 @@ android {
             minifyEnabled false
         }
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Activer l'obfuscation et l'optimisation du code
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // Sign with release key if keystore.properties exists
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
