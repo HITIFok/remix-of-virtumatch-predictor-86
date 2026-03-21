@@ -4,7 +4,7 @@ import type { Database } from './types';
 
 // Hardcoded credentials for APK build (no environment variables needed)
 const DATABASE_URL = 'REDACTED_DATABASE_URL';
-const SUPABASE_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA4NDc2MTMsImV4cCI6MjA1NjQyMzYxM30.yDCnFK7lAQ5XyjqPfDVNzLEyp1zAJHm3nKFNCH5-WHQ';
+const SUPABASE_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E';
 
 // Create the Supabase client
 export const supabase = createClient<Database>(DATABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
