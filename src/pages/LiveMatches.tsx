@@ -313,7 +313,7 @@ export default function LiveMatches() {
   const totalMatches = Object.values(matchesByLeague).reduce((s, m) => s + m.length, 0);
 
   return (
-    <div className="min-h-screen pb-24 relative">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />
