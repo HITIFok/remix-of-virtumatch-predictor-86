@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 
 -- Insert the admin code
 INSERT INTO admin_settings (setting_key, setting_value)
-VALUES ('admin_code', 'REDACTED')
+VALUES ('admin_code', 'REDACTED_SECRET')
 ON CONFLICT (setting_key) DO NOTHING;
 
 -- Enable RLS
