@@ -45,14 +45,14 @@ jobs:
 
       - name: Decode keystore
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/android/app/release-keystore.jks
 
       - name: Build APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=release-keystore.jks \
+            -Pandroid.injected.signing.store.file=${{ github.workspace }}/android/app/release-keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
             -Pandroid.injected.signing.key.alias=virutelbet261 \
             -Pandroid.injected.signing.key.password=${{ secrets.KEYSTORE_PASSWORD }}
@@ -66,4 +66,4 @@ jobs:
 
       - name: Clean up keystore
         if: always()
-        run: rm -f android/app/release-keystore.jks
+        run: rm -f ${{ github.workspace }}/android/app/release-keystore.jks
