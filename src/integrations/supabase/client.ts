@@ -1,64 +1,16 @@
-// Supabase client initialization with error handling
+// Supabase client initialization - Hardcoded for APK build
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const DATABASE_URL = import.meta.env.VITE_DATABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// Hardcoded credentials for APK build (no environment variables needed)
+const DATABASE_URL = 'REDACTED_DATABASE_URL';
+const SUPABASE_PUBLISHABLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDA4NDc2MTMsImV4cCI6MjA1NjQyMzYxM30.yDCnFK7lAQ5XyjqPfDVNzLEyp1zAJHm3nKFNCH5-WHQ';
 
-// Debug: Log environment status
-if (typeof window !== 'undefined') {
-  console.log('Supabase Config:', {
-    hasUrl: !!DATABASE_URL,
-    hasKey: !!SUPABASE_PUBLISHABLE_KEY,
-    urlPrefix: DATABASE_URL?.substring(0, 30) + '...',
-  });
-}
-
-// Validate environment variables
-let supabaseInstance: ReturnType<typeof createClient<Database>>;
-
-if (!DATABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-  console.error('❌ Missing Supabase environment variables!');
-  console.error('VITE_DATABASE_URL:', DATABASE_URL || 'NOT SET');
-  console.error('VITE_SUPABASE_PUBLISHABLE_KEY:', SUPABASE_PUBLISHABLE_KEY ? 'SET (hidden)' : 'NOT SET');
-  
-  // Show error to user
-  if (typeof window !== 'undefined') {
-    setTimeout(() => {
-      const errorDiv = document.createElement('div');
-      errorDiv.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        padding: 20px;
-        background: #fee2e2;
-        color: #dc2626;
-        font-family: sans-serif;
-        text-align: center;
-        z-index: 9999;
-        border-bottom: 2px solid #dc2626;
-      `;
-      errorDiv.innerHTML = `
-        <strong>⚠️ Erreur de configuration</strong><br>
-        <small>Variables d'environnement Supabase manquantes.<br>
-        Vérifiez la configuration dans Vercel.</small>
-      `;
-      document.body.appendChild(errorDiv);
-    }, 100);
+// Create the Supabase client
+export const supabase = createClient<Database>(DATABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    storage: localStorage,
+    persistSession: true,
+    autoRefreshToken: true,
   }
-  
-  // Create a dummy client that won't crash the app
-  supabaseInstance = createClient('https://placeholder.redacted.example.com', 'placeholder-key') as any;
-} else {
-  // Create the real client
-  supabaseInstance = createClient<Database>(DATABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: {
-      storage: localStorage,
-      persistSession: true,
-      autoRefreshToken: true,
-    }
-  });
-}
-
-export const supabase = supabaseInstance;
+});

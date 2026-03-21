@@ -1,25 +1,23 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.hitif.virtuxxs',
-  appName: 'Virtual Bet261',
+  appId: 'com.hitif.virutelbet261',
+  appName: 'Virutel Bet261',
   webDir: 'dist',
   server: {
     androidScheme: 'https'
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 2000,
-      backgroundColor: '#0a0a0d',
-      androidSplashResourceName: 'splash',
-      androidScaleType: 'CENTER_CROP',
+      launchShowDuration: 500,
+      backgroundColor: '#1a0a2e',
       showSpinner: false,
       splashFullScreen: true,
       splashImmersive: true
     },
     StatusBar: {
       style: 'DARK',
-      backgroundColor: '#0a0a0d',
+      backgroundColor: '#1a0a2e',
       overlaysWebView: true
     },
     Keyboard: {
@@ -31,11 +29,11 @@ const config: CapacitorConfig = {
     allowMixedContent: true,
     captureInput: true,
     webContentsDebuggingEnabled: false,
-    backgroundColor: '#0a0a0d'
+    backgroundColor: '#1a0a2e'
   },
   ios: {
     contentInset: 'automatic',
-    backgroundColor: '#0a0a0d'
+    backgroundColor: '#1a0a2e'
   }
 };
 
