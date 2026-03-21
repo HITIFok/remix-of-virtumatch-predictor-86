@@ -183,7 +183,7 @@ export function isAdmin(): boolean {
 
 export async function loginAdminSupabase(password: string): Promise<boolean> {
   // Fallback hardcoded admin password for APK builds (in case Supabase connection fails)
-  const HARDCODED_ADMIN_PASSWORD = 'REDACTED';
+  const HARDCODED_ADMIN_PASSWORD = 'REDACTED_SECRET';
   
   try {
     // Check admin code from Supabase

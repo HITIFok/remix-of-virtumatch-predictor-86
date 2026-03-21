@@ -18,6 +18,10 @@ export default function SettingsPage() {
   const admin = isAdmin();
 
   const handleAdminLogin = async () => {
+    if (!adminPwd.trim()) {
+      toast.error("Veuillez entrer un mot de passe");
+      return;
+    }
     setAdminLoading(true);
     try {
       const success = await loginAdmin(adminPwd);
@@ -57,31 +61,35 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen pb-24 relative">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />
 
-        <div className="flex items-center gap-2 mb-6">
-          <Settings className="text-ice animate-glow" size={20} />
-          <h2 className="font-display text-sm tracking-widest uppercase text-gradient-ice font-bold">Réglages</h2>
-          <Sparkles size={14} className="text-ice animate-bounce-subtle" />
+        <div className="flex items-center gap-2 mb-6 flex-wrap">
+          <Settings className="text-ice animate-glow flex-shrink-0" size={20} />
+          <h2 className="font-display text-sm tracking-widest uppercase text-gradient-ice font-bold">
+            Réglages
+          </h2>
+          <Sparkles size={14} className="text-ice animate-bounce-subtle flex-shrink-0" />
         </div>
 
         {/* Premium status */}
-        <div className="card-premium card-glow-gold p-5 mb-4">
+        <div className="card-premium card-glow-gold p-4 sm:p-5 mb-4">
           <div className="flex items-center gap-2 mb-3">
-            <Crown size={16} className="text-gold" />
-            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">Statut Premium</h3>
+            <Crown size={16} className="text-gold flex-shrink-0" />
+            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">
+              Statut Premium
+            </h3>
           </div>
           {premium && access ? (
             <div className="space-y-2">
-              <p className="text-sm text-success font-semibold font-display flex items-center gap-2">
-                <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
+              <p className="text-sm text-success font-semibold font-display flex items-center gap-2 flex-wrap">
+                <span className="w-2 h-2 bg-success rounded-full animate-pulse flex-shrink-0" />
                 Premium Actif
               </p>
               <div className="bg-muted/30 rounded-xl p-3 border border-border/30 space-y-1">
-                <p className="text-xs text-muted-foreground">
+                <p className="text-xs text-muted-foreground break-all">
                   Code : <span className="text-foreground font-bold">{access.code}</span>
                 </p>
                 <p className="text-xs text-muted-foreground">
@@ -91,7 +99,12 @@ export default function SettingsPage() {
                   Jours restants : <span className="text-gold font-bold">{Math.ceil((access.expiresAt - Date.now()) / (1000 * 60 * 60 * 24))}</span>
                 </p>
               </div>
-              <Button variant="ghost" size="sm" onClick={handlePremiumLogout} className="text-destructive hover:bg-destructive/10 w-full mt-2">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handlePremiumLogout} 
+                className="text-destructive hover:bg-destructive/10 w-full mt-2"
+              >
                 <LogOut size={14} className="mr-1" /> Déconnexion Premium
               </Button>
             </div>
@@ -101,20 +114,27 @@ export default function SettingsPage() {
         </div>
 
         {/* Admin access */}
-        <div className="card-premium p-5 mb-4">
+        <div className="card-premium p-4 sm:p-5 mb-4">
           <div className="flex items-center gap-2 mb-3">
-            <Shield size={16} className="text-fire animate-glow" />
-            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">Accès Administrateur</h3>
+            <Shield size={16} className="text-fire animate-glow flex-shrink-0" />
+            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">
+              Accès Administrateur
+            </h3>
           </div>
           {admin ? (
-            <div className="flex items-center justify-between bg-success/10 rounded-xl p-3 border border-success/30">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-success/10 rounded-xl p-3 border border-success/30">
               <p className="text-sm text-success font-semibold font-display">Admin connecté</p>
-              <Button variant="ghost" size="sm" onClick={handleAdminLogout} className="text-destructive hover:bg-destructive/10">
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleAdminLogout} 
+                className="text-destructive hover:bg-destructive/10"
+              >
                 <LogOut size={14} className="mr-1" /> Déconnexion
               </Button>
             </div>
           ) : (
-            <div className="flex gap-2">
+            <div className="flex flex-col sm:flex-row gap-2">
               <Input
                 type="password"
                 placeholder="Mot de passe admin"
@@ -124,7 +144,12 @@ export default function SettingsPage() {
                 onKeyDown={e => e.key === "Enter" && handleAdminLogin()}
                 disabled={adminLoading}
               />
-              <Button variant="fire" onClick={handleAdminLogin} disabled={adminLoading}>
+              <Button 
+                variant="fire" 
+                onClick={handleAdminLogin} 
+                disabled={adminLoading}
+                className="flex-shrink-0"
+              >
                 {adminLoading ? "..." : "Entrer"}
               </Button>
             </div>
@@ -132,10 +157,12 @@ export default function SettingsPage() {
         </div>
 
         {/* App info */}
-        <div className="card-premium p-5 mb-4">
+        <div className="card-premium p-4 sm:p-5 mb-4">
           <div className="flex items-center gap-2 mb-3">
-            <Info size={16} className="text-ice" />
-            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">À propos</h3>
+            <Info size={16} className="text-ice flex-shrink-0" />
+            <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">
+              À propos
+            </h3>
           </div>
           <div className="space-y-2 text-xs text-muted-foreground">
             <p className="text-gradient-premium font-display font-bold">VirtuL by HITIF</p>

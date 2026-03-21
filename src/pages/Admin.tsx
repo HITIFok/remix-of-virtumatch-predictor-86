@@ -52,7 +52,6 @@ export default function Admin() {
     if (confirm(`Supprimer le code ${code} ?`)) {
       const success = await deleteGeneratedCode(codeId);
       if (success) {
-        // Mettre à jour la liste en filtrant le code supprimé localement
         setCodes(prev => prev.filter(c => c.id !== codeId));
         toast.success("Code supprimé");
       } else {
@@ -64,21 +63,29 @@ export default function Admin() {
   if (!isAdmin()) return null;
 
   return (
-    <div className="min-h-screen pb-24 relative">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />
 
-        <div className="flex items-center gap-2 mb-4">
-          <Shield className="text-fire" size={20} />
-          <h2 className="font-display text-sm tracking-widest uppercase text-foreground">Admin — Gestion des codes</h2>
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <Shield className="text-fire flex-shrink-0" size={20} />
+          <h2 className="font-display text-sm tracking-widest uppercase text-foreground">
+            Admin — Gestion des codes
+          </h2>
         </div>
 
-        <div className="flex gap-3 mb-6">
-          <Button onClick={() => handleGenerate(30)} className="flex-1 bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider">
+        <div className="flex flex-col sm:flex-row gap-3 mb-6">
+          <Button 
+            onClick={() => handleGenerate(30)} 
+            className="flex-1 bg-gradient-fire text-primary-foreground font-display text-xs tracking-wider"
+          >
             <Plus size={14} className="mr-1" /> Code 1 mois
           </Button>
-          <Button onClick={() => handleGenerate(60)} className="flex-1 bg-gradient-ice text-secondary-foreground font-display text-xs tracking-wider">
+          <Button 
+            onClick={() => handleGenerate(60)} 
+            className="flex-1 bg-gradient-ice text-secondary-foreground font-display text-xs tracking-wider"
+          >
             <Plus size={14} className="mr-1" /> Code 2 mois
           </Button>
         </div>
@@ -93,12 +100,14 @@ export default function Admin() {
               codes.map((gc, i) => (
                 <div
                   key={gc.id || i}
-                  className={`bg-gradient-card rounded-lg border p-4 flex items-center justify-between ${
+                  className={`bg-gradient-card rounded-lg border p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                     gc.used ? "border-muted opacity-60" : "border-gold/30"
                   }`}
                 >
-                  <div>
-                    <p className="font-display text-sm tracking-wider text-foreground">{gc.code}</p>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-display text-sm tracking-wider text-foreground break-all">
+                      {gc.code}
+                    </p>
                     <p className="text-[10px] text-muted-foreground">
                       {gc.durationDays} jours • {gc.used ? `Utilisé` : "Disponible"}
                     </p>
@@ -106,15 +115,18 @@ export default function Admin() {
                       Créé le {new Date(gc.createdAt).toLocaleDateString("fr-FR")}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-center">
                     {!gc.used && (
-                      <button onClick={() => copyCode(gc.code)} className="text-gold hover:text-fire transition-colors">
+                      <button 
+                        onClick={() => copyCode(gc.code)} 
+                        className="text-gold hover:text-fire transition-colors p-1"
+                      >
                         {copiedId === gc.code ? <Check size={18} /> : <Copy size={18} />}
                       </button>
                     )}
                     <button 
                       onClick={() => handleDelete(gc.id, gc.code)} 
-                      className="text-destructive hover:text-red-400 transition-colors"
+                      className="text-destructive hover:text-red-400 transition-colors p-1"
                     >
                       <Trash2 size={18} />
                     </button>
