@@ -26,9 +26,9 @@ interface ScrapedDataRaw {
   created_at: string;
 }
 
-// Supabase Edge Function URL (contourne CORS)
-const FETCH_LIVE_URL = "REDACTED_DATABASE_URL/functions/v1/fetch-live";
-const DATABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E";
+// Supabase Edge Function URL (contourne CORS) - Configuré via variables d'environnement
+const FETCH_LIVE_URL = `${import.meta.env.VITE_DATABASE_URL || ''}/functions/v1/fetch-live`;
+const DATABASE_ANON_KEY = import.meta.env.VITE_DATABASE_ANON_KEY || '';
 
 // Fetch depuis l'API via Supabase Edge Function
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
