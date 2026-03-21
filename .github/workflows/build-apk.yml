@@ -20,6 +20,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Créer le fichier .env.local avec les secrets
+      - name: Setup environment variables
+        run: |
+          echo "VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env.local
+          echo "VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env.local
+          echo "Environment configured"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -67,7 +74,6 @@ jobs:
           echo "keyPassword=virutel2024secure" >> keystore.properties
           
           echo "Keystore generated successfully"
-          cat keystore.properties
 
       - name: Build Signed Release APK
         working-directory: android
@@ -76,7 +82,6 @@ jobs:
       - name: Verify APK signature
         working-directory: android
         run: |
-          # Verify the APK is signed
           $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk || true
           echo "APK built and signed successfully"
 
