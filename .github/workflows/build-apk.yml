@@ -1,109 +1,69 @@
-name: Build Android APK
+name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
-
-env:
-  NODE_VERSION: '22'
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Créer le fichier .env.local avec les secrets
-      - name: Setup environment variables
-        run: |
-          echo "VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env.local
-          echo "VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env.local
-          echo "Environment configured"
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build web app
-        run: npm run build
+          node-version: '20'
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '17'
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create environment file
+        run: |
+          echo "VITE_SUPABASE_URL=${{ secrets.SUPABASE_URL }}" > .env.production
+          echo "VITE_SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> .env.production
+
+      - name: Build web app
+        run: npm run build
 
       - name: Sync Capacitor
         run: npx cap sync android
 
-      # Generate release keystore for consistent signing
-      - name: Generate release keystore
-        working-directory: android
+      - name: Decode keystore
         run: |
-          # Generate keystore with fixed credentials for consistent signing
-          keytool -genkeypair \
-            -v \
-            -keystore release-keystore.jks \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -alias virutelbet261 \
-            -storepass virutel2024secure \
-            -keypass virutel2024secure \
-            -dname "CN=Virutel Bet261, OU=HITIF, O=HITIF, L=Antananarivo, ST=Antananarivo, C=MG"
-          
-          # Create keystore.properties for Gradle (in android/ folder, relative path)
-          echo "storeFile=release-keystore.jks" > keystore.properties
-          echo "storePassword=virutel2024secure" >> keystore.properties
-          echo "keyAlias=virutelbet261" >> keystore.properties
-          echo "keyPassword=virutel2024secure" >> keystore.properties
-          
-          echo "Keystore generated successfully"
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/release-keystore.jks
 
-      - name: Build Signed Release APK
-        working-directory: android
-        run: ./gradlew assembleRelease
-
-      - name: Verify APK signature
-        working-directory: android
+      - name: Build APK
         run: |
-          $ANDROID_HOME/build-tools/34.0.0/apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk || true
-          echo "APK built and signed successfully"
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -Pandroid.injected.signing.store.file=release-keystore.jks \
+            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
+            -Pandroid.injected.signing.key.alias=virutelbet261 \
+            -Pandroid.injected.signing.key.password=${{ secrets.KEYSTORE_PASSWORD }}
 
-      - name: Rename APK
-        run: |
-          mv android/app/build/outputs/apk/release/app-release.apk \
-             android/app/build/outputs/apk/release/virutel-bet261.apk
-
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: virutel-bet261-apk
-          path: android/app/build/outputs/apk/release/virutel-bet261.apk
+          path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
-      - name: Create Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ github.run_number }}
-          name: Virutel Bet261 Build ${{ github.run_number }}
-          files: android/app/build/outputs/apk/release/virutel-bet261.apk
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Clean up keystore
+        if: always()
+        run: rm -f android/release-keystore.jks
