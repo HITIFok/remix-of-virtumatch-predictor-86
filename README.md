@@ -2,6 +2,8 @@
 
 Application de prédiction de matchs virtuels Instant League (bet261.mg) avec analyses statistiques avancées.
 
+> Dernière mise à jour : Mars 2026
+
 ## Fonctionnalités
 
 - 🏆 **Matchs en direct** : Consultez les matchs de l'Instant League en temps réel
