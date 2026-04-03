@@ -1,4 +1,4 @@
-import { Home, Clock, ShoppingBag, Settings, HelpCircle, Shield, Trophy } from "lucide-react";
+import { Home, Clock, ShoppingBag, Settings, Shield, Trophy } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { isAdmin } from "@/lib/storage";
 
@@ -20,7 +20,7 @@ export default function BottomNav() {
     : navItems;
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 glass-premium border-t border-border/50 safe-area-bottom">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 glass-premium border-t border-border/50 safe-area-bottom lg:hidden">
       {/* Scrollable container for navigation items */}
       <div className="overflow-x-auto scrollbar-hide">
         <div 
@@ -38,7 +38,7 @@ export default function BottomNav() {
                 onClick={() => navigate(item.path)}
                 className={`
                   nav-item flex flex-col items-center gap-0.5 px-2.5 py-1.5 rounded-xl
-                  transition-all duration-300 relative group flex-shrink-0
+                  transition-all duration-300 relative group flex-shrink-0 min-w-[44px] min-h-[44px] justify-center
                   ${active
                     ? "text-fire bg-fire/10"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/30"

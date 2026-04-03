@@ -11,8 +11,9 @@ import { toast } from "sonner";
 export default function SettingsPage() {
   const [adminPwd, setAdminPwd] = useState("");
   const [adminLoading, setAdminLoading] = useState(false);
-  const [, forceUpdate] = useState(0);
+  const [refreshKey, setRefreshKey] = useState(0);
 
+  // Derive state from localStorage via refreshKey
   const premium = isPremium();
   const access = getAccess();
   const admin = isAdmin();
@@ -28,12 +29,13 @@ export default function SettingsPage() {
       if (result.success) {
         toast.success("Accès admin activé");
         setAdminPwd("");
-        forceUpdate(n => n + 1);
+        setRefreshKey(k => k + 1);
       } else {
         toast.error(result.message);
       }
-    } catch (error: any) {
-      toast.error(`Erreur: ${error.message}`);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Erreur inconnue";
+      toast.error(`Erreur: ${message}`);
     } finally {
       setAdminLoading(false);
     }
@@ -42,13 +44,13 @@ export default function SettingsPage() {
   const handleAdminLogout = () => {
     logoutAdmin();
     toast.info("Déconnexion admin");
-    forceUpdate(n => n + 1);
+    setRefreshKey(k => k + 1);
   };
 
   const handlePremiumLogout = () => {
     clearAccess();
     toast.info("Accès premium supprimé");
-    forceUpdate(n => n + 1);
+    setRefreshKey(k => k + 1);
   };
 
   const handleResetAll = () => {
@@ -56,12 +58,12 @@ export default function SettingsPage() {
       logoutAdmin();
       clearAccess();
       toast.success("Tous les accès ont été réinitialisés");
-      forceUpdate(n => n + 1);
+      setRefreshKey(k => k + 1);
     }
   };
 
   return (
-    <div className="min-h-screen pb-24 relative overflow-x-hidden">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden page-enter">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />
