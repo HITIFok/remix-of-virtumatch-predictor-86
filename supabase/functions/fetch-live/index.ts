@@ -7,8 +7,9 @@ const corsHeaders = {
 
 const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
+// Configuration des ligues avec eventCategoryId pour les matchs en direct
 const LEAGUES: Record<string, { name: string; eventCategoryId?: string }> = {
-  "8035": { name: "English League" },
+  "8035": { name: "English League", eventCategoryId: "137844" },
   "8060": { name: "Coupe d'Afrique", eventCategoryId: "137840" },
   "8056": { name: "Champions League" },
   "8036": { name: "Italian League" },
@@ -25,45 +26,68 @@ const HEADERS = {
   "Accept": "application/json",
 };
 
-async function fetchAPI(path: string): Promise<any> {
+/**
+ * Requête API avec timeout (AbortController).
+ * Retourne null en cas d'erreur ou de timeout — dégradation gracieuse.
+ */
+async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
   try {
-    const res = await fetch(`${API_BASE}${path}`, { headers: HEADERS });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: HEADERS,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
     if (!res.ok) return null;
     return await res.json();
   } catch {
+    // Timeout, erreur réseau, ou API injoignable → on ignore silencieusement
     return null;
   }
 }
 
-// Fetch live matches from playout endpoint
-async function fetchLiveMatches(leagueId: string, eventCategoryId?: string): Promise<Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>> {
+/**
+ * Récupère les matchs en direct depuis les rondes récentes (35-42).
+ * Utilise Promise.allSettled pour le traitement parallèle.
+ */
+async function fetchLiveMatches(
+  leagueId: string,
+  eventCategoryId?: string,
+): Promise<Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>> {
   const liveData = new Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>();
-  
+
   if (!eventCategoryId) return liveData;
-  
-  // Try to fetch live matches from recent rounds
-  for (let roundNum = 35; roundNum <= 50; roundNum++) {
-    try {
-      const data = await fetchAPI(`/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`);
-      if (data?.matches) {
-        for (const m of data.matches) {
-          const goals = m.goals || [];
-          if (goals.length > 0) {
-            const lastGoal = goals[goals.length - 1];
-            liveData.set(m.id, {
-              scoreHome: lastGoal.homeScore || 0,
-              scoreAway: lastGoal.awayScore || 0,
-              minute: lastGoal.minute || 0,
-              goals: goals,
-            });
-          }
-        }
+
+  // Rondes 35 à 42 (8 rondes max au lieu de 16) — traitées en parallèle
+  const roundPromises = [];
+  for (let roundNum = 35; roundNum <= 42; roundNum++) {
+    roundPromises.push(
+      fetchAPI(
+        `/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`,
+        6000, // Timeout plus court (6s) pour les requêtes live
+      ),
+    );
+  }
+
+  const results = await Promise.allSettled(roundPromises);
+
+  for (const result of results) {
+    if (result.status !== "fulfilled" || !result.value?.matches) continue;
+    for (const m of result.value.matches) {
+      const goals = m.goals || [];
+      if (goals.length > 0) {
+        const lastGoal = goals[goals.length - 1];
+        liveData.set(m.id, {
+          scoreHome: lastGoal.homeScore || 0,
+          scoreAway: lastGoal.awayScore || 0,
+          minute: lastGoal.minute || 0,
+          goals: goals,
+        });
       }
-    } catch {
-      // Continue to next round
     }
   }
-  
+
   return liveData;
 }
 
@@ -78,7 +102,7 @@ serve(async (req) => {
     const leagueInfo = LEAGUES[leagueId] || { name: "Unknown League" };
     const leagueName = leagueInfo.name;
 
-    // Fetch matches and ranking/results in parallel
+    // Récupération parallèle : matchs, classement, résultats et données live
     const [matchesData, rankingData, resultsData, liveData] = await Promise.all([
       fetchAPI(`/${leagueId}/matches`),
       fetchAPI(`/${leagueId}/ranking`),
@@ -86,23 +110,35 @@ serve(async (req) => {
       fetchLiveMatches(leagueId, leagueInfo.eventCategoryId),
     ]);
 
+    // Dégradation gracieuse : si l'API principale échoue, on retourne des données vides
+    // au lieu d'une erreur 5xx, pour que le frontend puisse afficher le cache
     if (!matchesData) {
       return new Response(
-        JSON.stringify({ success: false, error: "Failed to fetch matches" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          success: true,
+          league: leagueName,
+          leagueId,
+          matches: [],
+          ranking: rankingData ? parseRanking(rankingData) : [],
+          results: resultsData ? parseResults(resultsData, leagueName) : [],
+          liveCount: 0,
+          scrapedAt: new Date().toISOString(),
+          counts: { matches: 0, ranking: 0, results: 0 },
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Parse matches
+    // Parse les matchs
     const matches: any[] = [];
     let liveCount = 0;
-    
+
     if (matchesData?.rounds) {
       for (const rd of matchesData.rounds) {
         const roundNum = rd.roundNumber || 0;
         for (const m of rd.matches || []) {
           let oddHome = 0, oddDraw = 0, oddAway = 0;
-          
+
           for (const bt of m.eventBetTypes || []) {
             if (bt.name === "1X2") {
               for (const it of bt.eventBetTypeItems || []) {
@@ -116,18 +152,17 @@ serve(async (req) => {
             }
           }
 
-          // Check if match is live
+          // Vérifie si le match est en direct
           const liveInfo = liveData.get(m.id);
           const isLive = liveInfo !== undefined;
           if (isLive) liveCount++;
 
-          // Status: live, betting, or upcoming
+          // Statut : live, betting, ou upcoming
           let status = "upcoming";
           if (isLive) {
             status = "live";
           } else if (oddHome > 0 || oddAway > 0) {
-            // Check if betting is active
-            const hasActiveBetting = m.eventBetTypes?.some((bt: any) => 
+            const hasActiveBetting = m.eventBetTypes?.some((bt: any) =>
               bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
             );
             if (hasActiveBetting) status = "betting";
@@ -153,61 +188,75 @@ serve(async (req) => {
       }
     }
 
-    // Parse ranking
-    const ranking: any[] = [];
-    if (rankingData?.teams) {
-      for (const t of rankingData.teams) {
-        ranking.push({
-          position: t.position || 0,
-          team: t.name || "",
-          played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
-          won: t.won || 0,
-          drawn: t.draw || 0,
-          lost: t.lost || 0,
-          goalsFor: t.goalsFor || 0,
-          goalsAgainst: t.goalsAgainst || 0,
-          points: t.points || 0,
-        });
-      }
-    }
-
-    // Parse results
-    const results: any[] = [];
-    if (resultsData?.rounds) {
-      for (const rd of resultsData.rounds) {
-        for (const m of rd.matches || []) {
-          const score = String(m.score || "0:0").split(":");
-          results.push({
-            home: m.homeTeam?.name || "",
-            away: m.awayTeam?.name || "",
-            scoreHome: parseInt(score[0]) || 0,
-            scoreAway: parseInt(score[1]) || 0,
-            league: leagueName,
-            matchday: String(rd.roundNumber || ""),
-          });
-        }
-      }
-    }
-
     return new Response(
       JSON.stringify({
         success: true,
         league: leagueName,
         leagueId,
         matches,
-        ranking,
-        results,
+        ranking: parseRanking(rankingData),
+        results: parseResults(resultsData, leagueName),
         liveCount,
         scrapedAt: new Date().toISOString(),
-        counts: { matches: matches.length, ranking: ranking.length, results: results.length },
+        counts: { matches: matches.length, ranking: parseRanking(rankingData).length, results: parseResults(resultsData, leagueName).length },
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
 
   } catch (error) {
+    // Dernier recours : retourner un succès avec données vides plutôt qu'une erreur 5xx
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: true,
+        league: "Unknown",
+        leagueId: "",
+        matches: [],
+        ranking: [],
+        results: [],
+        liveCount: 0,
+        scrapedAt: new Date().toISOString(),
+        counts: { matches: 0, ranking: 0, results: 0 },
+        fallback: true,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
+
+// --- Fonctions utilitaires de parsing ---
+
+/** Parse le classement depuis la réponse API */
+function parseRanking(data: any): any[] {
+  if (!data?.teams) return [];
+  return data.teams.map((t: any) => ({
+    position: t.position || 0,
+    team: t.name || "",
+    played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
+    won: t.won || 0,
+    drawn: t.draw || 0,
+    lost: t.lost || 0,
+    goalsFor: t.goalsFor || 0,
+    goalsAgainst: t.goalsAgainst || 0,
+    points: t.points || 0,
+  }));
+}
+
+/** Parse les résultats depuis la réponse API */
+function parseResults(data: any, leagueName: string): any[] {
+  if (!data?.rounds) return [];
+  const results: any[] = [];
+  for (const rd of data.rounds) {
+    for (const m of rd.matches || []) {
+      const score = String(m.score || "0:0").split(":");
+      results.push({
+        home: m.homeTeam?.name || "",
+        away: m.awayTeam?.name || "",
+        scoreHome: parseInt(score[0]) || 0,
+        scoreAway: parseInt(score[1]) || 0,
+        league: leagueName,
+        matchday: String(rd.roundNumber || ""),
+      });
+    }
+  }
+  return results;
+}
