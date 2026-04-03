@@ -24,7 +24,7 @@ export default function Guide() {
           <Sparkles size={14} className="text-ice animate-bounce-subtle" />
         </div>
 
-        <div className="space-y-3 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
           {steps.map((s, i) => (
             <div key={i} className="card-premium p-4 flex gap-3 group hover:scale-[1.01] transition-transform duration-300">
               <div className="w-10 h-10 rounded-xl bg-gradient-fire flex items-center justify-center flex-shrink-0 shadow-lg shadow-fire/30 group-hover:scale-105 transition-transform">

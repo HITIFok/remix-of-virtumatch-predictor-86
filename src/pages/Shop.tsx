@@ -23,7 +23,7 @@ export default function Shop() {
           <Sparkles size={14} className="text-gold animate-bounce-subtle" />
         </div>
 
-        <div className="space-y-4 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
           {plans.map((plan) => (
             <div
               key={plan.duration}

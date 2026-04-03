@@ -45,7 +45,7 @@ export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-2xl mx-auto lg:max-w-3xl">
       {matches.map((m, idx) => (
         <div key={idx} className="bg-gradient-card rounded-lg p-4 shadow-card border border-border space-y-3">
           <div className="flex items-center justify-between">

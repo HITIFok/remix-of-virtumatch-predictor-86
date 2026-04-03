@@ -93,9 +93,9 @@ export default function Admin() {
         {loading ? (
           <p className="text-center text-sm text-muted-foreground py-8">Chargement...</p>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {codes.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-8">Aucun code généré</p>
+              <p className="text-center text-sm text-muted-foreground py-8 col-span-full">Aucun code généré</p>
             ) : (
               codes.map((gc, i) => (
                 <div

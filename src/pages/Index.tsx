@@ -73,17 +73,19 @@ export default function Index() {
           <MatchForm onAnalyze={handleAnalyze} loading={loading} />
         </div>
         {results.length > 0 && (
-          <div className="mt-6 space-y-4">
-            <div className="flex items-center gap-2">
+          <div className="mt-6">
+            <div className="flex items-center gap-2 mb-4">
               <TrendingUp className="text-fire" size={16} />
               <h2 className="font-display text-sm text-gradient-fire tracking-widest uppercase font-bold">
                 Résultats d'analyse
               </h2>
               <Sparkles className="text-gold animate-bounce-subtle" size={14} />
             </div>
-            {results.map((r) => (
-              <ResultCard key={r.id} result={r} />
-            ))}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {results.map((r) => (
+                <ResultCard key={r.id} result={r} />
+              ))}
+            </div>
           </div>
         )}
       </div>
