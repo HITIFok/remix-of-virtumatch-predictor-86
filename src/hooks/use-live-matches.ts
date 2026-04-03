@@ -56,7 +56,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
       return null;
     }
 
-    console.log(`🟢 API: ${data.matches?.length || 0} matches (${data.liveCount || 0} en live) for ${leagueName}`);
+
 
     return {
       matches: (data.matches || []).map((m: any) => ({
@@ -118,7 +118,7 @@ export function useLiveMatches() {
   // Charger les données depuis Supabase (cache)
   const loadFromDatabase = useCallback(async (leagueName?: string) => {
     const targetLeague = leagueName || selectedLeague.name;
-    console.log(`📦 Loading cache for: ${targetLeague}`);
+
 
     try {
       const { data, error: dbError } = await supabase
@@ -208,14 +208,13 @@ export function useLiveMatches() {
 
     // Si l'API a répondu, utiliser ses données (temps réel)
     if (apiData && apiData.matches.length > 0) {
-      console.log(`🟢 Using LIVE data for ${leagueName}`);
+
       setMatches(apiData.matches);
       setResults(apiData.results);
       setRanking(apiData.ranking);
       setLastUpdate(new Date().toISOString());
       setDataSource("api");
     } else if (cacheSuccess) {
-      console.log(`📦 Using CACHE for ${leagueName}`);
     } else {
       setError(`Aucune donnée pour ${leagueName}`);
     }

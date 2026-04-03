@@ -132,14 +132,10 @@ export async function saveToHistory(result: MatchResult) {
     status: 'pending',
   };
 
-  console.log('💾 saveToHistory - Insertion:', insertData);
-
   const { data, error } = await supabase.from("predictions").insert(insertData).select();
 
   if (error) {
-    console.error('❌ saveToHistory - Erreur:', error);
-  } else {
-    console.log('✅ saveToHistory - Succès:', data);
+    console.error('saveToHistory - Erreur:', error);
   }
 }
 
@@ -231,11 +227,11 @@ export async function loginAdminSupabase(password: string): Promise<{ success: b
     }
 
     if (!data) {
-      console.log('No admin settings found in Supabase');
+  
       return { success: false, message: "Aucun paramètre admin trouvé dans la base de données" };
     }
 
-    console.log('Admin settings found:', { key: data.setting_key, value: data.setting_value });
+
 
     if (password === data.setting_value) {
       localStorage.setItem(ADMIN_KEY, "true");
