@@ -63,7 +63,7 @@ export default function Admin() {
   if (!isAdmin()) return null;
 
   return (
-    <div className="min-h-screen pb-24 relative overflow-x-hidden">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden page-enter">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />

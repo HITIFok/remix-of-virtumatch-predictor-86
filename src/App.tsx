@@ -1,38 +1,58 @@
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
-import LiveMatches from "./pages/LiveMatches";
-import History from "./pages/History";
-import Shop from "./pages/Shop";
-import Guide from "./pages/Guide";
-import SettingsPage from "./pages/SettingsPage";
-import Admin from "./pages/Admin";
-import NotFound from "./pages/NotFound";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { Loader2 } from "lucide-react";
 
-const queryClient = new QueryClient();
+const Index = lazy(() => import("./pages/Index"));
+const LiveMatches = lazy(() => import("./pages/LiveMatches"));
+const History = lazy(() => import("./pages/History"));
+const Shop = lazy(() => import("./pages/Shop"));
+const Guide = lazy(() => import("./pages/Guide"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
+const Admin = lazy(() => import("./pages/Admin"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
+      <div className="absolute inset-0 -z-10 animated-multicolor" />
+      <div className="relative z-10 text-center">
+        <div className="relative inline-block mb-4">
+          <Loader2 size={40} className="text-fire animate-spin" />
+          <div className="absolute inset-0 blur-lg bg-fire/30 rounded-full" />
+        </div>
+        <p className="text-sm text-muted-foreground font-display tracking-wider">
+          Chargement...
+        </p>
+      </div>
+    </div>
+  );
+}
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
+  <ErrorBoundary>
     <TooltipProvider>
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/live" element={<LiveMatches />} />
-          <Route path="/history" element={<History />} />
-          <Route path="/shop" element={<Shop />} />
-          <Route path="/guide" element={<Guide />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/admin" element={<Admin />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/live" element={<LiveMatches />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/shop" element={<Shop />} />
+            <Route path="/guide" element={<Guide />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/admin" element={<Admin />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </TooltipProvider>
-  </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;

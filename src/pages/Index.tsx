@@ -14,7 +14,7 @@ import { Sparkles, TrendingUp } from "lucide-react";
 export default function Index() {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [loading, setLoading] = useState(false);
-  const [, forceUpdate] = useState(0);
+  const [premiumRefreshKey, setPremiumRefreshKey] = useState(0);
 
   const handleAnalyze = async (matches: MatchInput[]) => {
     setLoading(true);
@@ -64,11 +64,11 @@ export default function Index() {
   };
 
   return (
-    <div className="min-h-screen pb-24 relative overflow-x-hidden">
+    <div className="min-h-screen pb-24 relative overflow-x-hidden page-enter">
       <AnimatedBackground />
       <div className="container-responsive relative z-10">
         <AppHeader />
-        <PremiumGate onUnlocked={() => forceUpdate((n) => n + 1)} />
+        <PremiumGate onUnlocked={() => setPremiumRefreshKey(k => k + 1)} />
         <div className="mt-6">
           <MatchForm onAnalyze={handleAnalyze} loading={loading} />
         </div>

@@ -83,7 +83,7 @@ export function usePredictions() {
       
       if (response.ok) {
         const data = await response.json()
-        console.log('✅ Auto-verification:', data)
+
         return data
       }
     } catch (err) {
@@ -109,9 +109,8 @@ export function usePredictions() {
         .order('created_at', { ascending: false })
         .limit(200)
 
-      console.log('📊 Prédictions chargées:', predData?.length || 0, predData)
       if (predError) {
-        console.error('❌ Erreur chargement prédictions:', predError)
+        console.error('Erreur chargement prédictions:', predError)
         throw predError
       }
 
@@ -250,9 +249,7 @@ export function usePredictions() {
     winner_1x2?: string
   }) => {
     try {
-      console.log('💾 Sauvegarde prédiction:', pred)
       const deviceId = getDeviceId()
-      console.log('📱 Device ID:', deviceId)
 
       const insertData = {
         ...pred,
@@ -266,7 +263,7 @@ export function usePredictions() {
         exact_score: pred.predicted_score,
         winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
       }
-      console.log('📦 Données à insérer:', insertData)
+
 
       const { data, error } = await supabase
         .from('predictions')
@@ -275,20 +272,19 @@ export function usePredictions() {
         .single()
 
       if (error) {
-        console.error('❌ Erreur insertion:', error)
+        console.error('Erreur insertion:', error)
         if (error.code === '23505') {
-          console.log('⚠️ Prediction already exists for this match today')
           return null
         }
         throw error
       }
 
-      console.log('✅ Prédiction sauvegardée:', data)
+
       await loadPredictions(true) // Skip auto-verify after save (just saved)
 
       return data as Prediction
     } catch (err) {
-      console.error('❌ Error saving prediction:', err)
+      console.error('Error saving prediction:', err)
       throw err
     }
   }, [loadPredictions])
@@ -308,7 +304,7 @@ export function usePredictions() {
         totalResults: result?.totalResults || 0
       }
     } catch (err) {
-      console.error('❌ Error verifying predictions:', err)
+      console.error('Error verifying predictions:', err)
       throw err
     }
   }, [autoVerifyPredictions, loadPredictions])
