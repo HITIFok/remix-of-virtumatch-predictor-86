@@ -7,16 +7,15 @@ const corsHeaders = {
 
 const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
-// Configuration des ligues avec eventCategoryId pour les matchs en direct
-const LEAGUES: Record<string, { name: string; eventCategoryId?: string }> = {
-  "8035": { name: "English League", eventCategoryId: "137844" },
-  "8060": { name: "Coupe d'Afrique", eventCategoryId: "137840" },
-  "8056": { name: "Champions League" },
-  "8036": { name: "Italian League" },
-  "8037": { name: "Spanish League" },
-  "8042": { name: "French League" },
-  "8043": { name: "German League" },
-  "8044": { name: "Portuguese League" },
+const LEAGUES: Record<string, string> = {
+  "8035": "English League",
+  "8060": "Coupe d'Afrique",
+  "8056": "Champions League",
+  "8036": "Italian League",
+  "8037": "Spanish League",
+  "8042": "French League",
+  "8043": "German League",
+  "8044": "Portuguese League",
 };
 
 const HEADERS = {
@@ -26,11 +25,19 @@ const HEADERS = {
   "Accept": "application/json",
 };
 
+// ============================================================
+// CACHE en mémoire des eventCategoryIds par ligue.
+// Persiste entre les appels dans la même instance Deno (cold start).
+// Évite de scanner à chaque requête — cause du "CPU Time exceeded".
+// ============================================================
+const eventCategoryCache: Record<string, { id: string; ts: number }> = {};
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
 /**
- * Requête API avec timeout (AbortController).
- * Retourne null en cas d'erreur ou de timeout — dégradation gracieuse.
+ * Requête API avec timeout AbortController.
+ * Supabase Free: ~400ms CPU max. Chaque fetch doit être rapide.
  */
-async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
+async function fetchAPI(path: string, timeoutMs = 6000): Promise<any> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -42,43 +49,112 @@ async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
     if (!res.ok) return null;
     return await res.json();
   } catch {
-    // Timeout, erreur réseau, ou API injoignable → on ignore silencieusement
     return null;
   }
 }
 
 /**
- * Récupère les matchs en direct depuis les rondes récentes (35-42).
- * Utilise Promise.allSettled pour le traitement parallèle.
+ * Tente de trouver l'eventCategoryId en scannant UNE SEULE FOIS
+ * avec un budget CPU très limité (max 20 IDs testés).
+ * Le résultat est mis en cache pour 10 minutes.
  */
-async function fetchLiveMatches(
-  leagueId: string,
-  eventCategoryId?: string,
-): Promise<Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>> {
-  const liveData = new Map<number, { scoreHome: number; scoreAway: number; minute: number; goals: any[] }>();
-
-  if (!eventCategoryId) return liveData;
-
-  // Rondes 35 à 42 (8 rondes max au lieu de 16) — traitées en parallèle
-  const roundPromises = [];
-  for (let roundNum = 35; roundNum <= 42; roundNum++) {
-    roundPromises.push(
-      fetchAPI(
-        `/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`,
-        6000, // Timeout plus court (6s) pour les requêtes live
-      ),
-    );
+async function findEventCategoryId(leagueId: string): Promise<string | null> {
+  // 1. Vérifier le cache d'abord
+  const cached = eventCategoryCache[leagueId];
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    console.log(`📌 eventCategoryId (cache): ${cached.id}`);
+    return cached.id;
   }
 
-  const results = await Promise.allSettled(roundPromises);
+  // 2. Essayer d'extraire l'eventCategoryId depuis les données de matchs
+  const matchesData = await fetchAPI(`/${leagueId}/matches`, 5000);
+  if (matchesData?.rounds) {
+    for (const rd of matchesData.rounds) {
+      // L'API retourne souvent eventCategoryId dans les données de ronde
+      if (rd.eventCategoryId) {
+        const id = String(rd.eventCategoryId);
+        eventCategoryCache[leagueId] = { id, ts: Date.now() };
+        console.log(`📌 eventCategoryId (from matches): ${id}`);
+        return id;
+      }
+      // Vérifier dans les matchs
+      for (const m of rd.matches || []) {
+        if (m.eventCategoryId) {
+          const id = String(m.eventCategoryId);
+          eventCategoryCache[leagueId] = { id, ts: Date.now() };
+          console.log(`📌 eventCategoryId (from match): ${id}`);
+          return id;
+        }
+      }
+    }
+  }
 
-  for (const result of results) {
+  // 3. Scan minimal : 20 IDs max autour de la valeur connue
+  // Pour English League: ~137840, pour les autres ligues on essaie des plages réduites
+  const knownRanges: Record<string, number[]> = {
+    "8035": [137840, 137841, 137842, 137843, 137844, 137845, 137846, 137847, 137848, 137849],
+    "8060": [137840, 137841, 137842, 137843, 137844, 137845],
+    "8056": [137830, 137831, 137832, 137833, 137834, 137835],
+    "8036": [137850, 137851, 137852, 137853, 137854, 137855],
+    "8037": [137855, 137856, 137857, 137858, 137859, 137860],
+    "8042": [137860, 137861, 137862, 137863, 137864, 137865],
+    "8043": [137865, 137866, 137867, 137868, 137869, 137870],
+    "8044": [137870, 137871, 137872, 137873, 137874, 137875],
+  };
+
+  const candidates = knownRanges[leagueId] || [];
+
+  if (candidates.length > 0) {
+    // Scanner par batch de 6 en parallèle max
+    const batchSize = 6;
+    for (let i = 0; i < candidates.length; i += batchSize) {
+      const batch = candidates.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map(async (id) => {
+          const data = await fetchAPI(`/round/8?eventCategoryId=${id}&getNext=false`, 3000);
+          return { id, found: data?.matches && data.matches.length > 0 };
+        })
+      );
+      const found = results.find(r => r.found);
+      if (found) {
+        eventCategoryCache[leagueId] = { id: String(found.id), ts: Date.now() };
+        console.log(`📌 eventCategoryId (scan): ${found.id}`);
+        return String(found.id);
+      }
+    }
+  }
+
+  console.log(`📌 eventCategoryId: non trouvé (mis en cache négatif pour 5 min)`);
+  // Mettre en cache négatif pour éviter de rescanner à chaque appel
+  eventCategoryCache[leagueId] = { id: "__none__", ts: Date.now() };
+  return null;
+}
+
+/**
+ * Récupère les matchs en direct (playout).
+ * Max 10 rondes en parallèle pour rester dans le budget CPU.
+ */
+async function fetchLiveData(leagueId: string, eventCategoryId: string): Promise<Map<number, any>> {
+  const liveMatches = new Map();
+
+  // Rondes 1 à 10 (couverture large avec budget CPU minimal)
+  const rounds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const roundResults = await Promise.allSettled(
+    rounds.map(roundNum =>
+      fetchAPI(
+        `/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`,
+        4000,
+      )
+    )
+  );
+
+  for (const result of roundResults) {
     if (result.status !== "fulfilled" || !result.value?.matches) continue;
     for (const m of result.value.matches) {
       const goals = m.goals || [];
       if (goals.length > 0) {
         const lastGoal = goals[goals.length - 1];
-        liveData.set(m.id, {
+        liveMatches.set(m.id, {
           scoreHome: lastGoal.homeScore || 0,
           scoreAway: lastGoal.awayScore || 0,
           minute: lastGoal.minute || 0,
@@ -88,7 +164,8 @@ async function fetchLiveMatches(
     }
   }
 
-  return liveData;
+  console.log(`🔴 LIVE matches: ${liveMatches.size}`);
+  return liveMatches;
 }
 
 serve(async (req) => {
@@ -99,46 +176,49 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     const leagueId = url.searchParams.get("leagueId") || "8035";
-    const leagueInfo = LEAGUES[leagueId] || { name: "Unknown League" };
-    const leagueName = leagueInfo.name;
+    const leagueName = LEAGUES[leagueId] || "Unknown League";
 
-    // Récupération parallèle : matchs, classement, résultats et données live
-    const [matchesData, rankingData, resultsData, liveData] = await Promise.all([
+    console.log(`=== 🔄 League ${leagueId} (${leagueName}) ===`);
+
+    // Trouver l'eventCategoryId (cache ou scan minimal)
+    const eventCategoryId = await findEventCategoryId(leagueId);
+    console.log(`📌 eventCategoryId: ${eventCategoryId}`);
+
+    // Récupérer les données en parallèle (max 4 requêtes simultanées)
+    const [matchesData, rankingData, resultsData, liveMatches] = await Promise.all([
       fetchAPI(`/${leagueId}/matches`),
       fetchAPI(`/${leagueId}/ranking`),
       fetchAPI(`/${leagueId}/results?skip=0&take=200`),
-      fetchLiveMatches(leagueId, leagueInfo.eventCategoryId),
+      eventCategoryId && eventCategoryId !== "__none__"
+        ? fetchLiveData(leagueId, eventCategoryId)
+        : Promise.resolve(new Map()),
     ]);
 
-    // Dégradation gracieuse : si l'API principale échoue, on retourne des données vides
-    // au lieu d'une erreur 5xx, pour que le frontend puisse afficher le cache
     if (!matchesData) {
       return new Response(
-        JSON.stringify({
-          success: true,
-          league: leagueName,
-          leagueId,
-          matches: [],
-          ranking: rankingData ? parseRanking(rankingData) : [],
-          results: resultsData ? parseResults(resultsData, leagueName) : [],
-          liveCount: 0,
-          scrapedAt: new Date().toISOString(),
-          counts: { matches: 0, ranking: 0, results: 0 },
-        }),
+        JSON.stringify({ success: false, error: "Failed to fetch matches" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Parse les matchs
+    // Identifier les matchs terminés depuis les résultats
+    const finishedMatchIds = new Set<number>();
+    if (resultsData?.rounds) {
+      for (const rd of resultsData.rounds) {
+        for (const m of rd.matches || []) {
+          if (m.id) finishedMatchIds.add(m.id);
+        }
+      }
+    }
+
     const matches: any[] = [];
-    let liveCount = 0;
+    let liveCount = 0, bettingCount = 0, finishedCount = 0;
 
     if (matchesData?.rounds) {
       for (const rd of matchesData.rounds) {
         const roundNum = rd.roundNumber || 0;
         for (const m of rd.matches || []) {
           let oddHome = 0, oddDraw = 0, oddAway = 0;
-
           for (const bt of m.eventBetTypes || []) {
             if (bt.name === "1X2") {
               for (const it of bt.eventBetTypeItems || []) {
@@ -152,37 +232,68 @@ serve(async (req) => {
             }
           }
 
-          // Vérifie si le match est en direct
-          const liveInfo = liveData.get(m.id);
-          const isLive = liveInfo !== undefined;
-          if (isLive) liveCount++;
-
-          // Statut : live, betting, ou upcoming
           let status = "upcoming";
-          if (isLive) {
+          let scoreHome: number | null = null;
+          let scoreAway: number | null = null;
+          let minute: number | null = null;
+          let goals: any[] | null = null;
+
+          if (finishedMatchIds.has(m.id)) {
+            status = "finished";
+            finishedCount++;
+          } else if (liveMatches.has(m.id)) {
+            const liveInfo = liveMatches.get(m.id)!;
             status = "live";
-          } else if (oddHome > 0 || oddAway > 0) {
+            scoreHome = liveInfo.scoreHome;
+            scoreAway = liveInfo.scoreAway;
+            minute = liveInfo.minute;
+            goals = liveInfo.goals;
+            liveCount++;
+          } else {
             const hasActiveBetting = m.eventBetTypes?.some((bt: any) =>
               bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
             );
-            if (hasActiveBetting) status = "betting";
+            if (hasActiveBetting || oddHome > 0) {
+              status = "betting";
+              bettingCount++;
+            }
           }
 
           matches.push({
-            id: m.id,
-            home: m.homeTeam?.name || "",
-            away: m.awayTeam?.name || "",
-            round: roundNum,
-            league: leagueName,
-            status: status,
-            kickoff: m.expectedStart || "",
-            oddHome,
-            oddDraw,
-            oddAway,
-            scoreHome: liveInfo?.scoreHome ?? null,
-            scoreAway: liveInfo?.scoreAway ?? null,
-            minute: liveInfo?.minute ?? null,
-            goals: liveInfo?.goals ?? null,
+            id: m.id, home: m.homeTeam?.name || "", away: m.awayTeam?.name || "",
+            round: roundNum, league: leagueName, status, kickoff: m.expectedStart || "",
+            oddHome, oddDraw, oddAway, scoreHome, scoreAway, minute, goals,
+          });
+        }
+      }
+    }
+
+    console.log(`=== 📊 live=${liveCount}, betting=${bettingCount}, finished=${finishedCount} ===`);
+
+    // Parser le classement
+    const ranking: any[] = [];
+    if (rankingData?.teams) {
+      for (const t of rankingData.teams) {
+        ranking.push({
+          position: t.position || 0, team: t.name || "",
+          played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
+          won: t.won || 0, drawn: t.draw || 0, lost: t.lost || 0,
+          goalsFor: t.goalsFor || 0, goalsAgainst: t.goalsAgainst || 0,
+          points: t.points || 0,
+        });
+      }
+    }
+
+    // Parser les résultats
+    const results: any[] = [];
+    if (resultsData?.rounds) {
+      for (const rd of resultsData.rounds) {
+        for (const m of rd.matches || []) {
+          const score = String(m.score || "0:0").split(":");
+          results.push({
+            home: m.homeTeam?.name || "", away: m.awayTeam?.name || "",
+            scoreHome: parseInt(score[0]) || 0, scoreAway: parseInt(score[1]) || 0,
+            league: leagueName, matchday: String(rd.roundNumber || ""),
           });
         }
       }
@@ -190,73 +301,18 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        success: true,
-        league: leagueName,
-        leagueId,
-        matches,
-        ranking: parseRanking(rankingData),
-        results: parseResults(resultsData, leagueName),
-        liveCount,
+        success: true, league: leagueName, leagueId, eventCategoryId,
+        matches, ranking, results, liveCount, bettingCount, finishedCount,
         scrapedAt: new Date().toISOString(),
-        counts: { matches: matches.length, ranking: parseRanking(rankingData).length, results: parseResults(resultsData, leagueName).length },
+        counts: { matches: matches.length, ranking: ranking.length, results: results.length },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
 
   } catch (error) {
-    // Dernier recours : retourner un succès avec données vides plutôt qu'une erreur 5xx
     return new Response(
-      JSON.stringify({
-        success: true,
-        league: "Unknown",
-        leagueId: "",
-        matches: [],
-        ranking: [],
-        results: [],
-        liveCount: 0,
-        scrapedAt: new Date().toISOString(),
-        counts: { matches: 0, ranking: 0, results: 0 },
-        fallback: true,
-      }),
+      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });
-
-// --- Fonctions utilitaires de parsing ---
-
-/** Parse le classement depuis la réponse API */
-function parseRanking(data: any): any[] {
-  if (!data?.teams) return [];
-  return data.teams.map((t: any) => ({
-    position: t.position || 0,
-    team: t.name || "",
-    played: (t.won || 0) + (t.draw || 0) + (t.lost || 0),
-    won: t.won || 0,
-    drawn: t.draw || 0,
-    lost: t.lost || 0,
-    goalsFor: t.goalsFor || 0,
-    goalsAgainst: t.goalsAgainst || 0,
-    points: t.points || 0,
-  }));
-}
-
-/** Parse les résultats depuis la réponse API */
-function parseResults(data: any, leagueName: string): any[] {
-  if (!data?.rounds) return [];
-  const results: any[] = [];
-  for (const rd of data.rounds) {
-    for (const m of rd.matches || []) {
-      const score = String(m.score || "0:0").split(":");
-      results.push({
-        home: m.homeTeam?.name || "",
-        away: m.awayTeam?.name || "",
-        scoreHome: parseInt(score[0]) || 0,
-        scoreAway: parseInt(score[1]) || 0,
-        league: leagueName,
-        matchday: String(rd.roundNumber || ""),
-      });
-    }
-  }
-  return results;
-}
