@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 
@@ -30,6 +30,54 @@ interface ScrapedDataRaw {
 const FETCH_LIVE_URL = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/fetch-live`;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
+// Timeout de la requête fetch (10 secondes)
+const FETCH_TIMEOUT_MS = 10_000;
+
+// Délai avant retry (2 secondes)
+const RETRY_DELAY_MS = 2_000;
+
+/** Messages d'erreur conviviaux en français */
+function getFriendlyError(leagueName: string): string {
+  return `Les données en direct pour ${leagueName} ne sont pas disponibles pour le moment. Veuillez réessayer dans quelques instants.`;
+}
+
+/**
+ * Requête fetch avec timeout et logique de retry.
+ * En cas d'échec, retente une fois après RETRY_DELAY_MS.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return res;
+  } catch (firstErr) {
+    clearTimeout(timeoutId);
+    console.warn("[fetchWithRetry] Première tentative échouée, retry dans 2s…", firstErr);
+
+    // Attendre avant le retry
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+
+    // Seconde tentative
+    const retryController = new AbortController();
+    const retryTimeoutId = setTimeout(() => retryController.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, { ...options, signal: retryController.signal });
+      clearTimeout(retryTimeoutId);
+      return res;
+    } catch (retryErr) {
+      clearTimeout(retryTimeoutId);
+      console.error("[fetchWithRetry] Retry échoué :", retryErr);
+      throw retryErr;
+    }
+  }
+}
+
 // Fetch depuis l'API via Supabase Edge Function
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
@@ -37,26 +85,27 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   ranking: RankingEntry[];
 } | null> {
   try {
-    const res = await fetch(`${FETCH_LIVE_URL}?leagueId=${leagueId}`, {
-      headers: {
-        "Accept": "application/json",
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    const res = await fetchWithRetry(
+      `${FETCH_LIVE_URL}?leagueId=${leagueId}`,
+      {
+        headers: {
+          "Accept": "application/json",
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        },
       },
-    });
+    );
 
     if (!res.ok) {
-      console.log(`API returned ${res.status}`);
+      console.warn(`[fetchFromAPI] API a retourné ${res.status} pour ${leagueName}`);
       return null;
     }
 
     const data = await res.json();
     if (!data.success) {
-      console.log(`API error: ${data.error}`);
+      console.warn(`[fetchFromAPI] Erreur API pour ${leagueName}:`, data.error);
       return null;
     }
-
-
 
     return {
       matches: (data.matches || []).map((m: any) => ({
@@ -97,7 +146,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
       })),
     };
   } catch (err) {
-    console.log(`API fetch failed for ${leagueName}:`, err);
+    console.error(`[fetchFromAPI] Échec de la requête pour ${leagueName}:`, err);
     return null;
   }
 }
@@ -113,12 +162,14 @@ export function useLiveMatches() {
   const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
   const [dataSource, setDataSource] = useState<"api" | "cache">("cache");
 
+  // Empêcher les requêtes concurrentes obsolètes (race condition au changement de ligue)
+  const fetchVersionRef = useRef(0);
+
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
   // Charger les données depuis Supabase (cache)
   const loadFromDatabase = useCallback(async (leagueName?: string) => {
     const targetLeague = leagueName || selectedLeague.name;
-
 
     try {
       const { data, error: dbError } = await supabase
@@ -190,13 +241,16 @@ export function useLiveMatches() {
       setDataSource("cache");
       return true;
     } catch (err) {
-      console.error("Cache error:", err);
+      console.error("[loadFromDatabase] Erreur cache:", err);
       return false;
     }
   }, [selectedLeague]);
 
   // Charger les données : API proxy en parallèle avec cache
   const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string) => {
+    // Incrémenter la version pour invalider les anciennes requêtes
+    const currentVersion = ++fetchVersionRef.current;
+
     setLoading(true);
     setError(null);
 
@@ -206,18 +260,21 @@ export function useLiveMatches() {
       loadFromDatabase(leagueName),
     ]);
 
+    // Ignorer si une nouvelle requête a été lancée entre-temps
+    if (fetchVersionRef.current !== currentVersion) return;
+
     // Si l'API a répondu, utiliser ses données (temps réel)
     if (apiData && apiData.matches.length > 0) {
-
       setMatches(apiData.matches);
       setResults(apiData.results);
       setRanking(apiData.ranking);
       setLastUpdate(new Date().toISOString());
       setDataSource("api");
-    } else if (cacheSuccess) {
-    } else {
-      setError(`Aucune donnée pour ${leagueName}`);
+    } else if (!cacheSuccess) {
+      // Message d'erreur convivial : l'API ET le cache ont échoué
+      setError(getFriendlyError(leagueName));
     }
+    // Si le cache a fonctionné, les données sont déjà chargées par loadFromDatabase
 
     setLoading(false);
   }, [loadFromDatabase]);
