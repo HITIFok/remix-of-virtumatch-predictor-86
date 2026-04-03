@@ -36,7 +36,7 @@ function PredictionCard({ prediction }: { prediction: Prediction }) {
     prediction.confidence >= 50 ? "text-gold" : "text-destructive";
 
   return (
-    <div className={`card-premium ${statusColor} p-3 mb-3`}>
+    <div className={`card-premium ${statusColor} p-3`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           {statusIcon}
@@ -324,7 +324,7 @@ export default function History() {
                   <p className="text-sm text-muted-foreground">Toutes les prédictions ont été vérifiées</p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {pendingPredictions.map(pred => (
                     <PredictionCard key={pred.id} prediction={pred} />
                   ))}
@@ -342,7 +342,7 @@ export default function History() {
                   </p>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {verifiedPredictions.map(pred => (
                     <PredictionCard key={pred.id} prediction={pred} />
                   ))}
