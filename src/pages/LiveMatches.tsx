@@ -373,7 +373,7 @@ export default function LiveMatches() {
                           {matchesByLeague[league].length}
                         </Badge>
                       </div>
-                      <div className="space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                         {matchesByLeague[league].map((match, idx) => {
                           const matchKey = `${match.home}-${match.away}`;
                           const prediction = predictions[matchKey];

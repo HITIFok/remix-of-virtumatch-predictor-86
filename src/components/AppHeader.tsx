@@ -44,7 +44,7 @@ export default function AppHeader() {
       </p>
 
       {/* Desktop navigation links */}
-      <nav className="hidden lg:flex items-center justify-center gap-1 mt-4">
+      <nav className="hidden lg:flex items-center justify-center gap-2 xl:gap-3 mt-4">
         {items.map((item) => {
           const active = location.pathname === item.path;
           return (
@@ -52,7 +52,7 @@ export default function AppHeader() {
               key={item.path}
               onClick={() => navigate(item.path)}
               className={`
-                flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-display tracking-wider
+                flex items-center gap-1.5 xl:gap-2 px-3 xl:px-4 py-1.5 xl:py-2 rounded-lg text-xs xl:text-sm font-display tracking-wider
                 transition-all duration-200
                 ${active
                   ? "text-fire bg-fire/10"
@@ -60,7 +60,7 @@ export default function AppHeader() {
                 }
               `}
             >
-              <item.icon size={14} />
+              <item.icon size={14} className="xl:w-[16px] xl:h-[16px]" />
               {item.label}
             </button>
           );
