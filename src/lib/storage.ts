@@ -283,12 +283,22 @@ export async function getGeneratedCodes(): Promise<GeneratedCode[]> {
   }));
 }
 
-export async function saveGeneratedCode(gc: GeneratedCode) {
-  await supabase.from("access_codes").insert({
-    code: gc.code,
-    duration_days: gc.durationDays,
-    used: false,
-  });
+export async function saveGeneratedCode(gc: GeneratedCode): Promise<{ success: boolean; message: string }> {
+  const { data, error } = await supabase
+    .from("access_codes")
+    .insert({
+      code: gc.code,
+      duration_days: gc.durationDays,
+      used: false,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Erreur saveGeneratedCode:", error);
+    return { success: false, message: error.message };
+  }
+  return { success: true, message: "Code sauvegardé" };
 }
 
 export function generateRandomCode(): string {
