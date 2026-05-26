@@ -210,11 +210,13 @@ export function usePredictions() {
 
       setError(null)
     } catch (err) {
-      console.error('Error loading predictions:', err)
-      setError(err instanceof Error ? err.message : 'Erreur de chargement')
-    } finally {
-      setLoading(false)
-    }
+  console.error('Error loading predictions:', err)
+  const msg = err instanceof Error ? err.message : 'Erreur de chargement'
+  setError(msg)
+  console.error('PREDICTIONS ERROR DETAIL:', JSON.stringify(err))
+} finally {
+  setLoading(false)
+}
   }, [])
 
   // Sauvegarder une nouvelle prédiction
