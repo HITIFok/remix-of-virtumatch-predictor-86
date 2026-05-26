@@ -22,19 +22,26 @@ export default function Admin() {
     getGeneratedCodes().then(data => { setCodes(data); setLoading(false); });
   }, [navigate]);
 
-  const handleGenerate = async (days: number) => {
-    const code = generateRandomCode();
-    const gc: GeneratedCode = {
-      code,
-      createdAt: Date.now(),
-      durationDays: days,
-      used: false,
-    };
-    await saveGeneratedCode(gc);
-    const updated = await getGeneratedCodes();
-    setCodes(updated);
-    toast.success(`Code généré : ${code}`);
+const handleGenerate = async (days: number) => {
+  const code = generateRandomCode();
+  const gc: GeneratedCode = {
+    code,
+    createdAt: Date.now(),
+    durationDays: days,
+    used: false,
   };
+
+  const result = await saveGeneratedCode(gc);
+
+  if (!result.success) {
+    toast.error(`Erreur : ${result.message}`);
+    return; // ← STOP ici, ne pas recharger la liste
+  }
+
+  const updated = await getGeneratedCodes();
+  setCodes(updated);
+  toast.success(`Code généré : ${code}`);
+};
 
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
