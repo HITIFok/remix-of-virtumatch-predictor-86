@@ -14,13 +14,20 @@ Usage:
 
 import requests
 import json
+import os
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-SUPABASE_URL = "REDACTED_SUPABASE_URL"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/push-odds"
-PUSH_KEY = "REDACTED_PUSH_KEY"
-ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
+PUSH_KEY = os.environ.get("PUSH_KEY", "")
+ANON_KEY = os.environ.get("ANON_KEY", "")
+
+if not PUSH_KEY or not ANON_KEY:
+    print("ERREUR: Variables d'environnement PUSH_KEY et ANON_KEY requises.")
+    print("  export PUSH_KEY='votre_cle'")
+    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
 
 # Les 8 ligues
 LEAGUES = [

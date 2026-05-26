@@ -20,10 +20,21 @@ import time
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-SUPABASE_URL = "REDACTED_SUPABASE_URL"
+import os
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
 PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
-PUSH_KEY = "REDACTED_PUSH_KEY"
-ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
+PUSH_KEY = os.environ.get("PUSH_KEY", "")
+ANON_KEY = os.environ.get("ANON_KEY", "")
+
+if not PUSH_KEY:
+    print("ERREUR: PUSH_KEY non définie. Exportez-la :")
+    print("  export PUSH_KEY='votre_cle'")
+    sys.exit(1)
+if not ANON_KEY:
+    print("ERREUR: ANON_KEY non définie. Exportez-la :")
+    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
 
 LEAGUE_ID = "8035"
 API_MATCHES = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/matches"

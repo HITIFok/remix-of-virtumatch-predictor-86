@@ -16,8 +16,15 @@ import time
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-SUPABASE_URL = "REDACTED_SUPABASE_URL"
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd4bW1lZW16a2l4aW5zeGdsZmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM0MDUzNTUsImV4cCI6MjA4ODk4MTM1NX0.5MEMH8RS6HX3CJfAJATilNlz_hVrBeOdSjeur-wmr9E"
+import os
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
+SUPABASE_ANON_KEY = os.environ.get("ANON_KEY", "")
+
+if not SUPABASE_ANON_KEY:
+    print("ERREUR: ANON_KEY non définie.")
+    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
 
 LEAGUE_ID = "8035"
 API_MATCHES = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/matches"
