@@ -1,7 +1,7 @@
 // Supabase Edge Function: verify-predictions
 // Vérifie les prédictions en attente en récupérant les résultats de TOUTES les ligues
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const DATABASE_URL = Deno.env.get('DATABASE_URL')!
@@ -28,12 +28,19 @@ const HEADERS = {
   "Accept": "application/json",
 }
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
-  'Content-Type': 'application/json'
+// CORS headers - restreint aux origins autorisées
+const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
+const DEFAULT_ORIGIN = ''; // Définir votre domaine de production ici
+
+function getCorsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get('Origin') || '';
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : DEFAULT_ORIGIN;
+  return {
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
+    'Content-Type': 'application/json'
+  };
 }
 
 async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>> {
@@ -81,6 +88,7 @@ async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: 
 
 serve(async (req) => {
   // Handle CORS preflight
+  const corsHeaders = getCorsHeaders(req);
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders })
   }
@@ -162,17 +170,25 @@ serve(async (req) => {
       }
     }
 
-    // Exécuter les mises à jour
-    await Promise.all(updates)
+    // Exécuter les mises à jour avec Promise.allSettled pour logger les erreurs individuelles
+    const settledResults = await Promise.allSettled(updates)
+    let failedUpdates = 0;
+    for (const result of settledResults) {
+      if (result.status === 'rejected') {
+        failedUpdates++;
+        console.error('Failed update:', result.reason);
+      }
+    }
 
-    console.log(`🎉 Verification complete: ${correct} correct, ${incorrect} incorrect`)
+    console.log(`🎉 Verification complete: ${correct} correct, ${incorrect} incorrect, ${failedUpdates} failed`)
 
     return new Response(
       JSON.stringify({
         success: true,
-        verified: updates.length,
+        verified: settledResults.filter(r => r.status === 'fulfilled').length,
         correct,
         incorrect,
+        failedUpdates,
         stillPending: pendingPredictions.length - updates.length,
         totalResults: resultsMap.size
       }),

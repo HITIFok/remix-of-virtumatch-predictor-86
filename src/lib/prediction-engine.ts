@@ -126,10 +126,6 @@ let idCounter = 0;
 // ============================================
 // ÉTAPE 1 — CONVERSION DES COTES EN PROBABILITÉS 1X2
 // ============================================
-
-/**
- * Convertit les cotes en probabilités normalisées (marge bookmaker retirée)
- */
 function convertOddsToProbabilities(oddHome: number, oddDraw: number, oddAway: number): {
   pH: number;  // Probabilité victoire domicile
   pD: number;  // Probabilité nul
@@ -169,7 +165,7 @@ function convertOddsToProbabilities(oddHome: number, oddDraw: number, oddAway: n
 }
 
 // ============================================
-// ÉTAPE 3 — DISTRIBUTION DE POISSON
+// ÉTAPE 2 — DISTRIBUTION DE POISSON
 // ============================================
 
 /**
@@ -194,7 +190,7 @@ function poisson(lambda: number, k: number): number {
 }
 
 // ============================================
-// ÉTAPE 2 — ESTIMATION DES LAMBDAS (GRID SEARCH)
+// ÉTAPE 3 — ESTIMATION DES LAMBDAS (GRID SEARCH)
 // ============================================
 
 /**
@@ -483,7 +479,7 @@ export function analyzeMatch(
   const { pH, pD, pA, favorite, favoriteProb } = convertOddsToProbabilities(oddHome, oddDraw, oddAway);
   
   // ==========================================
-  // ÉTAPE 2: Grid Search pour les lambdas
+  // ÉTAPE 3: Grid Search pour les lambdas
   // ==========================================
   let { lambdaH, lambdaA } = gridSearchLambdas(pH, pD, pA);
   
@@ -588,8 +584,13 @@ export function analyzeMatch(
   // Expected goals
   const expectedGoals = lambdaH + lambdaA;
   
+  // Utiliser crypto.randomUUID() si disponible, sinon fallback
+  const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `match-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${idCounter++}`;
+
   return {
-    id: input.id || `match-${Date.now()}-${idCounter++}`,
+    id: input.id || uniqueId,
     home,
     away,
     league,
