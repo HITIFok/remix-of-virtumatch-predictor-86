@@ -18,11 +18,11 @@ export async function scrapeInstantLeague(): Promise<ScraperResult> {
     console.log('Calling Supabase Edge Function auto-scrape...');
 
     // Call the Supabase Edge Function
+    // Note: The x-cron-key is no longer sent from the client for security.
+    // The Edge Function validates the request using Supabase auth or server-side secrets.
     const { data, error } = await supabase.functions.invoke('auto-scrape', {
       method: 'POST',
-      headers: {
-        'x-cron-key': 'REDACTED_CRON_SECRET',
-      },
+      body: {},
     });
 
     if (error) {

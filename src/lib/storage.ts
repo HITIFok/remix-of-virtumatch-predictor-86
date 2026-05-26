@@ -2,8 +2,12 @@ import { supabase } from "@/integrations/supabase/client";
 import type { MatchResult } from "./prediction-engine";
 
 const ACCESS_KEY = "virtuxxs_access";
-const ADMIN_KEY = "virtuxxs_admin";
+const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
 const SETTINGS_KEY = "virtuxxs_settings";
+
+// Session admin expirée (timestamp) - stockée dans localStorage pour validation côté client
+// La vérification réelle est faite côté DB via RPC verify_admin_password
+const ADMIN_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24h en ms
 
 // Device ID for tracking predictions per device
 function getDeviceId(): string {
@@ -80,8 +84,12 @@ export async function getHistory(): Promise<MatchResult[]> {
   }));
 }
 
-export async function saveToHistory(result: MatchResult) {
+export async function saveToHistory(result: MatchResult): Promise<{ success: boolean; error?: string }> {
   const deviceId = getDeviceId();
+
+  if (!deviceId) {
+    return { success: false, error: 'Device ID non disponible' };
+  }
 
   // Déterminer la prédiction (1, X, ou 2)
   const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
@@ -89,11 +97,9 @@ export async function saveToHistory(result: MatchResult) {
   const confidence = Math.round(result.aiConfidence);
 
   const insertData = {
-    // Colonnes principales
+    // Colonnes principales (normalisées - un seul alias)
     home_team: result.home,
     away_team: result.away,
-    home: result.home,
-    away: result.away,
     league: result.league || "Instant League",
     // Cotes
     odd_home: result.oddHome,
@@ -107,10 +113,7 @@ export async function saveToHistory(result: MatchResult) {
     prediction: prediction,
     confidence: confidence,
     winner_1x2: result.winner1X2,
-    // Scores
-    predicted_home_score: result.scoreHome,
-    predicted_away_score: result.scoreAway,
-    predicted_score: result.exactScore,
+    // Scores (colonnes canoniques uniquement)
     score_home: result.scoreHome,
     score_away: result.scoreAway,
     exact_score: result.exactScore,
@@ -136,11 +139,18 @@ export async function saveToHistory(result: MatchResult) {
 
   if (error) {
     console.error('saveToHistory - Erreur:', error);
+    return { success: false, error: error.message };
   }
+
+  return { success: true };
 }
 
 export async function clearHistory() {
   const deviceId = getDeviceId();
+  if (!deviceId) {
+    console.error('clearHistory - device_id est null, suppression annulée');
+    return;
+  }
   await supabase.from("predictions").delete().eq("device_id", deviceId);
 }
 
@@ -185,7 +195,20 @@ export function clearAccess() {
 // --- Admin ---
 
 export function isAdmin(): boolean {
-  return localStorage.getItem(ADMIN_KEY) === "true";
+  // Vérifie si une session admin valide existe (non expirée)
+  const sessionData = localStorage.getItem(ADMIN_SESSION_KEY);
+  if (!sessionData) return false;
+  try {
+    const session = JSON.parse(sessionData);
+    if (typeof session.expiresAt !== 'number') return false;
+    if (Date.now() > session.expiresAt) {
+      localStorage.removeItem(ADMIN_SESSION_KEY);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Test Supabase connection
@@ -214,27 +237,22 @@ export async function loginAdminSupabase(password: string): Promise<{ success: b
       return { success: false, message: connectionTest.message };
     }
 
-    // Check admin code from Supabase
+    // Use the secure RPC function to verify password with bcrypt
     const { data, error } = await supabase
-      .from("admin_settings")
-      .select("setting_key, setting_value")
-      .eq("setting_key", "admin_code")
-      .maybeSingle();
+      .rpc('verify_admin_password', { input_password: password });
 
     if (error) {
-      console.error('Supabase error:', error);
-      return { success: false, message: `Erreur requête: ${error.message}` };
+      console.error('RPC error:', error);
+      return { success: false, message: `Erreur de vérification: ${error.message}` };
     }
 
-    if (!data) {
-  
-      return { success: false, message: "Aucun paramètre admin trouvé dans la base de données" };
-    }
-
-
-
-    if (password === data.setting_value) {
-      localStorage.setItem(ADMIN_KEY, "true");
+    if (data === true) {
+      // Stocker une session avec expiration (24h)
+      const session = {
+        expiresAt: Date.now() + ADMIN_SESSION_DURATION,
+        verifiedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
       return { success: true, message: "Connexion admin réussie" };
     }
     
@@ -252,7 +270,7 @@ export async function loginAdmin(password: string): Promise<boolean> {
 }
 
 export function logoutAdmin() {
-  localStorage.removeItem(ADMIN_KEY);
+  localStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
 // --- Generated Codes (Cloud DB) ---
@@ -313,12 +331,21 @@ export function generateRandomCode(): string {
 
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
   try {
-    // Check generated codes in DB
+    const deviceId = getDeviceId();
+
+    // Mise à jour atomique : marquer comme utilisé UNIQUEMENT si non utilisé (race condition proof)
+    // Le filtre .eq("used", false) garantit qu'un seul appareil peut valider le code
     const { data, error } = await supabase
       .from("access_codes")
-      .select("*")
+      .update({
+        used: true,
+        used_at: new Date().toISOString(),
+        used_by_device: deviceId
+      })
       .eq("code", inputCode)
-      .maybeSingle();
+      .eq("used", false)
+      .select("id, duration_days")
+      .single();
 
     if (error) {
       console.error("Erreur Supabase validateCode:", error);
@@ -326,22 +353,8 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
     }
 
     if (!data) {
-      return { valid: false, days: 0, message: "Code invalide ou introuvable" };
-    }
-
-    if (data.used) {
-      return { valid: false, days: 0, message: "Ce code a déjà été utilisé" };
-    }
-
-    const deviceId = getDeviceId();
-    const { error: updateError } = await supabase
-      .from("access_codes")
-      .update({ used: true, used_at: new Date().toISOString(), used_by_device: deviceId })
-      .eq("id", data.id);
-
-    if (updateError) {
-      console.error("Erreur mise à jour code:", updateError);
-      return { valid: false, days: 0, message: `Erreur d'activation: ${updateError.message}` };
+      // Le code n'existe pas ou a déjà été utilisé (update atomique n'a matché aucune ligne)
+      return { valid: false, days: 0, message: "Code invalide, introuvable ou déjà utilisé" };
     }
 
     return { valid: true, days: data.duration_days, message: `Code valide! ${data.duration_days} jours d'accès` };
@@ -355,10 +368,17 @@ export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
   const { error, count } = await supabase
     .from("access_codes")
     .delete()
-    .eq("id", codeId);
+    .eq("id", codeId)
+    .select("id", { count: "exact", head: false });
 
   if (error) {
     console.error("Erreur suppression code:", error);
+    return false;
+  }
+
+  // Vérifier qu'au moins une ligne a été supprimée
+  if (!count || count === 0) {
+    console.error("Aucun code trouvé avec cet ID:", codeId);
     return false;
   }
   
