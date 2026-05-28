@@ -8,12 +8,17 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger
+} from "@/components/ui/alert-dialog";
+import {
   History as HistoryIcon, CheckCircle, XCircle, Clock,
   TrendingUp, Target, AlertTriangle, Trophy, RefreshCw, Loader2,
-  BarChart3, Sparkles
+  BarChart3, Sparkles, Trash2
 } from "lucide-react";
 
-function PredictionCard({ prediction }: { prediction: Prediction }) {
+function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDelete?: (id: string) => void }) {
   const statusColor = 
     prediction.status === "correct" ? "card-glow-success border-success/30" :
     prediction.status === "incorrect" ? "card-glow-fire border-destructive/30" :
@@ -36,7 +41,7 @@ function PredictionCard({ prediction }: { prediction: Prediction }) {
     prediction.confidence >= 50 ? "text-gold" : "text-destructive";
 
   return (
-    <div className={`card-premium ${statusColor} p-3`}>
+    <div className={`card-premium ${statusColor} p-3 relative`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           {statusIcon}
@@ -45,9 +50,45 @@ function PredictionCard({ prediction }: { prediction: Prediction }) {
              prediction.status === "correct" ? "Correct ✓" : "Incorrect ✗"}
           </span>
         </div>
-        <Badge variant="outline" className="text-[9px] font-display">
-          {prediction.league}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {prediction.status === "pending" && onDelete && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 text-destructive/60 hover:text-destructive hover:bg-destructive/10"
+                >
+                  <Trash2 size={13} />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent className="card-premium border-border bg-background">
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="font-display text-foreground">
+                    Supprimer cette prédiction ?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription className="text-muted-foreground">
+                    Cette action est irréversible. La prédiction de
+                    <span className="text-foreground font-bold"> {prediction.home_team} vs {prediction.away_team} </span>
+                    sera définitivement supprimée.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter className="gap-2">
+                  <AlertDialogCancel className="border-border">Annuler</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-display"
+                    onClick={() => onDelete(prediction.id)}
+                  >
+                    Supprimer
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          <Badge variant="outline" className="text-[9px] font-display">
+            {prediction.league}
+          </Badge>
+        </div>
       </div>
 
       <div className="flex items-center justify-between">
@@ -229,7 +270,19 @@ function StatsOverview({ stats }: { stats: AggregatedStats | null }) {
 }
 
 export default function History() {
-  const { predictions, stats, loading, refresh } = usePredictions();
+  const { predictions, stats, loading, refresh, deletePrediction } = usePredictions();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (id: string) => {
+    setDeletingId(id);
+    try {
+      await deletePrediction(id);
+    } catch (err) {
+      console.error('Erreur suppression:', err);
+    } finally {
+      setDeletingId(null);
+    }
+  };
   const [activeTab, setActiveTab] = useState("stats");
 
   const pendingPredictions = predictions.filter(p => p.status === 'pending');
@@ -326,7 +379,11 @@ export default function History() {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {pendingPredictions.map(pred => (
-                    <PredictionCard key={pred.id} prediction={pred} />
+                    <PredictionCard
+                      key={pred.id}
+                      prediction={pred}
+                      onDelete={handleDelete}
+                    />
                   ))}
                 </div>
               )}
