@@ -22,7 +22,7 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 import os
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")

@@ -7,9 +7,14 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Permissions minimales - principe du moindre privilège
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       - name: Checkout repository
@@ -55,7 +60,7 @@ jobs:
           ./gradlew assembleRelease \
             -Pandroid.injected.signing.store.file=${{ github.workspace }}/android/app/release-keystore.jks \
             -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=virutelbet261 \
+            -Pandroid.injected.key.alias=virutelbet261 \
             -Pandroid.injected.signing.key.password=${{ secrets.KEYSTORE_PASSWORD }}
 
       - name: Upload APK
@@ -63,7 +68,7 @@ jobs:
         with:
           name: virutel-bet261-apk
           path: android/app/build/outputs/apk/release/app-release.apk
-          retention-days: 30
+          retention-days: 7
 
       - name: Clean up keystore
         if: always()

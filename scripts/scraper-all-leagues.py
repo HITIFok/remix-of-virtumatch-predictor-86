@@ -18,7 +18,7 @@ import os
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")

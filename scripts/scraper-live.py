@@ -18,7 +18,7 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 import os
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "REDACTED_SUPABASE_URL")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.environ.get("ANON_KEY", "")
 
 if not SUPABASE_ANON_KEY:

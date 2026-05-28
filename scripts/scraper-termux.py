@@ -20,12 +20,27 @@ import os
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-SUPABASE_URL = "REDACTED_SUPABASE_URL"
+# Toutes les clés doivent être définies via des variables d'environnement
+# Ne JAMAIS hardcoder de secrets dans le code source
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
-PUSH_KEY = "REDACTED_PUSH_KEY"
-ANON_KEY = "REDACTED_ANON_KEY"
+PUSH_KEY = os.environ.get("PUSH_KEY", "")
+ANON_KEY = os.environ.get("ANON_KEY", "")
 TARGET_URL = "https://bet261.mg/virtual/category/instant-league"
 REFRESH_INTERVAL = 120
+
+if not SUPABASE_URL:
+    print("ERREUR: SUPABASE_URL non definie. Exportez-la :")
+    print("  export SUPABASE_URL='https://votre-projet.supabase.co'")
+    sys.exit(1)
+if not PUSH_KEY:
+    print("ERREUR: PUSH_KEY non definie. Exportez-la :")
+    print("  export PUSH_KEY='votre_cle'")
+    sys.exit(1)
+if not ANON_KEY:
+    print("ERREUR: ANON_KEY non definie. Exportez-la :")
+    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
 
 # ============ SCRAPING ============
 

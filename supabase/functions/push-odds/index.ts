@@ -2,8 +2,9 @@
 // Receives scraped data from external scraper and stores in scraped_data
 // NO imports — uses Deno.serve() + native fetch
 
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virutel-bet261.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-push-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
