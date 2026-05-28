@@ -22,6 +22,7 @@ const LEAGUES: Record<string, { id: string; name: string }> = {
   "8042": { id: "8042", name: "French League" },
   "8043": { id: "8043", name: "German League" },
   "8044": { id: "8044", name: "Portuguese League" },
+  "8065": { id: "8065", name: "Coupe du monde" },
 };
 
 const HEADERS: Record<string, string> = {

@@ -12,6 +12,7 @@ export const AVAILABLE_LEAGUES = [
   { id: "8042", name: "French League", countryCode: "fr" },
   { id: "8043", name: "German League", countryCode: "de" },
   { id: "8044", name: "Portuguese League", countryCode: "pt" },
+  { id: "8065", name: "Coupe du monde", countryCode: "worldcup" },
 ] as const;
 
 export type LeagueId = typeof AVAILABLE_LEAGUES[number]["id"];
