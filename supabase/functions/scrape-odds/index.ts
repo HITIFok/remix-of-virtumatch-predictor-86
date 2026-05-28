@@ -1,69 +1,71 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// scrape-odds/index.ts — Supabase Edge Function
+// Reads cached scraped data from scraped_data table (pushed by auto-scrape)
+// NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
-const DEFAULT_ORIGIN = ''; // Définir votre domaine de production
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : DEFAULT_ORIGIN;
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-push-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  };
-}
+const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
+const DATABASE_SERVICE_KEY = Deno.env.get("DATABASE_SERVICE_KEY") || "";
 
-serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
-    const body = await req.json().catch(() => ({}));
+    let body: any = {};
+    try { body = await req.json(); } catch { /* empty body */ }
     const leagueSlug = body.league || "";
 
-    // Read cached data from DB (pushed by local scraper)
-    const supabaseUrl = Deno.env.get("DATABASE_URL")!;
-    const supabaseKey = Deno.env.get("DATABASE_SERVICE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    // Read cached data from scraped_data
+    const leagueFilter = leagueSlug ? `&league=eq.${encodeURIComponent(leagueSlug)}` : "";
+    const res = await fetch(
+      `${DATABASE_URL}/rest/v1/scraped_data?select=*&order=scraped_at.desc${leagueFilter}`,
+      {
+        headers: {
+          "apikey": DATABASE_SERVICE_KEY,
+          "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-    const { data: rows, error: dbError } = await supabase
-      .from("scraped_data")
-      .select("*")
-      .eq("league", leagueSlug)
-      .order("scraped_at", { ascending: false });
-
-    if (dbError) {
-      console.error("[scrape-odds] DB error:", dbError);
-      throw new Error(dbError.message);
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`DB error: ${err}`);
+      return new Response(
+        JSON.stringify({ success: false, error: "Database error" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
+
+    const rows = await res.json();
 
     if (!rows || rows.length === 0) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Aucune donnée disponible. Lancez le scraper local depuis Madagascar.",
+          error: "Aucune donnée disponible. Le cron auto-scrape va les créer.",
           noData: true,
-          hint: "Exécutez scripts/scraper-local.py depuis un PC à Madagascar pour alimenter l'app.",
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Get latest data by type
-    const getPayload = (type: string) => {
+    // Extract latest data by type
+    const getPayload = (type: string): any[] => {
       const row = rows.find((r: any) => r.data_type === type);
-      return row ? (Array.isArray(row.payload) ? row.payload : []) : [];
+      return row?.payload && Array.isArray(row.payload) ? row.payload : [];
     };
 
     const matches = getPayload("matches");
     const results = getPayload("results");
     const ranking = getPayload("ranking");
-
-    const latestRow = rows[0];
-    const scrapedAt = latestRow?.scraped_at || new Date().toISOString();
+    const scrapedAt = rows[0]?.scraped_at || new Date().toISOString();
 
     return new Response(
       JSON.stringify({
@@ -72,14 +74,14 @@ serve(async (req) => {
         results,
         ranking,
         scrapedAt,
-        source: "local-scraper",
+        source: "auto-scrape-cron",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (error) {
-    console.error("Scrape error:", error);
+  } catch (error: any) {
+    console.error("scrape-odds error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Erreur inconnue" }),
+      JSON.stringify({ success: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
