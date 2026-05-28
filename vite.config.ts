@@ -126,4 +126,14 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Supprimer console.log et console.info en production
+    // console.error et console.warn sont conserves pour le debugging
+    target: "es2020",
+    minify: "esbuild",
+  },
+  esbuild: {
+    drop: mode === "production" ? ["console", "debugger"] : [],
+    dropLabels: mode === "production" ? ["dev"] : [],
+  },
 }));
