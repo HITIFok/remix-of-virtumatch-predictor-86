@@ -62,19 +62,19 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
                   <Trash2 size={13} />
                 </Button>
               </AlertDialogTrigger>
-              <AlertDialogContent className="card-premium border-border bg-background">
+              <AlertDialogContent className="bg-card border-border rounded-2xl">
                 <AlertDialogHeader>
-                  <AlertDialogTitle className="font-display text-foreground">
+                  <AlertDialogTitle className="font-display text-foreground text-base">
                     Supprimer cette prédiction ?
                   </AlertDialogTitle>
-                  <AlertDialogDescription className="text-muted-foreground">
+                  <AlertDialogDescription className="text-muted-foreground text-sm leading-relaxed">
                     Cette action est irréversible. La prédiction de
-                    <span className="text-foreground font-bold"> {prediction.home_team} vs {prediction.away_team} </span>
+                    <span className="text-foreground font-semibold"> {prediction.home_team} vs {prediction.away_team} </span>
                     sera définitivement supprimée.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
-                <AlertDialogFooter className="gap-2">
-                  <AlertDialogCancel className="border-border">Annuler</AlertDialogCancel>
+                <AlertDialogFooter className="gap-2 sm:gap-2">
+                  <AlertDialogCancel className="border-border font-display">Annuler</AlertDialogCancel>
                   <AlertDialogAction
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-display"
                     onClick={() => onDelete(prediction.id)}
