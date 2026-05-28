@@ -2,8 +2,9 @@
 // Reads cached scraped data from scraped_data table (pushed by auto-scrape)
 // NO imports — uses Deno.serve() + native fetch
 
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virutel-bet261.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
@@ -17,6 +18,15 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Verification : requete doit provenir du frontend (apikey header)
+    const apiKey = req.headers.get("apikey");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ success: false, error: "apikey header required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     let body: any = {};
     try { body = await req.json(); } catch { /* empty body */ }
     const leagueSlug = body.league || "";

@@ -18,7 +18,7 @@ import os
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-DATABASE_URL = os.environ.get("DATABASE_URL", "REDACTED_DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 FUNCTION_URL = f"{DATABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")

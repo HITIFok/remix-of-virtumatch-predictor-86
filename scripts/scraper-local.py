@@ -25,7 +25,7 @@ from datetime import datetime
 import os
 
 # URL de votre projet Supabase
-DATABASE_URL = os.environ.get("DATABASE_URL", "REDACTED_DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
 
 # Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans Edge Functions > Secrets)

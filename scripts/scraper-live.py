@@ -18,7 +18,7 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 import os
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "REDACTED_DATABASE_URL")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
 DATABASE_ANON_KEY = os.environ.get("ANON_KEY", "")
 
 if not DATABASE_ANON_KEY:

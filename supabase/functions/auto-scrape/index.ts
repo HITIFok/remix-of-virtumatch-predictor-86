@@ -2,8 +2,9 @@
 // Scrape Instant League data and store in scraped_data table
 // NO imports — uses Deno.serve() + native fetch
 
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virutel-bet261.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
@@ -171,14 +172,19 @@ Deno.serve(async (req: Request) => {
 
   try {
     // --- Authorization check ---
+    // Auth stricte : uniquement via x-cron-key (pas de Bearer token)
     const cronKey = req.headers.get("x-cron-key");
-    const authHeader = req.headers.get("Authorization");
     const expectedCronKey = Deno.env.get("CRON_SECRET");
-    const isAuthorized =
-      (cronKey && expectedCronKey && cronKey === expectedCronKey) ||
-      (authHeader && authHeader.startsWith("Bearer "));
 
-    if (!isAuthorized) {
+    if (!expectedCronKey) {
+      console.error("CRON_SECRET not configured");
+      return new Response(
+        JSON.stringify({ error: "Server not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!cronKey || cronKey !== expectedCronKey) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
