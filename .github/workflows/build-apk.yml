@@ -51,25 +51,40 @@ jobs:
 
       - name: Decode keystore
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/android/app/release-keystore.jks
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release-keystore.jks
+
+      - name: Create keystore.properties
+        run: |
+          cat > android/keystore.properties << EOF
+          storeFile=app/release-keystore.jks
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=virutelbet261
+          keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
+          EOF
 
       - name: Build APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=${{ github.workspace }}/android/app/release-keystore.jks \
-            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.key.alias=virutelbet261 \
-            -Pandroid.injected.signing.key.password=${{ secrets.KEYSTORE_PASSWORD }}
+          ./gradlew assembleRelease
+
+      - name: Find APK
+        run: |
+          echo "=== Listing APK outputs ==="
+          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null || echo "No APK found in outputs"
+          echo "=== Listing all build outputs ==="
+          ls -laR android/app/build/outputs/ 2>/dev/null || echo "No outputs dir"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: virutel-bet261-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
           retention-days: 7
 
       - name: Clean up keystore
         if: always()
-        run: rm -f ${{ github.workspace }}/android/app/release-keystore.jks
+        run: |
+          rm -f android/app/release-keystore.jks
+          rm -f android/keystore.properties
