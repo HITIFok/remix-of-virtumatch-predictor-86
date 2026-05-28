@@ -1,26 +1,36 @@
 #!/usr/bin/env python3
 """
-Scraper bet261.mg - Version DEBUG
-=================================
+Scraper - Version DEBUG
+=======================
 Affiche la structure de l'API pour comprendre le format des cotes
 
-Usage:
-  python debug-api.py
+Variables d'environnement requises:
+  export SPORTY_API_BASE='your-api-base-url'
+  export API_ORIGIN='your-origin'
+  export API_REFERER='your-referer'
 """
 
-import json
+import os
+import sys
 
 # ============ CONFIGURATION ============
 LEAGUE_ID = "8035"
-API_BASE = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}"
+
+SPORTY_API_BASE = os.environ.get("SPORTY_API_BASE", "")
+if not SPORTY_API_BASE:
+    print("ERREUR: SPORTY_API_BASE non définie.")
+    sys.exit(1)
+
+API_BASE = f"{SPORTY_API_BASE}/{LEAGUE_ID}"
 API_MATCHES = f"{API_BASE}/matches"
 
 # Headers requis
 HEADERS = {
-    "Origin": "https://bet261.mg",
-    "Referer": "https://bet261.mg/",
+    "Origin": os.environ.get("API_ORIGIN", ""),
+    "Referer": os.environ.get("API_REFERER", ""),
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/137.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json",
+    "App-Version": os.environ.get("API_APP_VERSION", ""),
 }
 
 
@@ -28,7 +38,7 @@ def main():
     import requests
     
     print("=" * 60)
-    print("🔍 DEBUG API bet261.mg - Instant League")
+    print("DEBUG API - Instant League")
     print("=" * 60)
     
     print(f"\n📡 Récupération de: {API_MATCHES}")

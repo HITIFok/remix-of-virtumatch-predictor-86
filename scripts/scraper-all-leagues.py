@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Scraper Multi-Ligues bet261.mg
-==============================
+Scraper Multi-Ligues
+=====================
 Scrape TOUTES les 8 ligues et envoie vers Supabase.
 
-Installation Termux:
-  pkg install python
-  pip install requests
-
-Usage:
-  python scraper-all-leagues.py
+Variables d'environnement requises:
+  export SUPABASE_URL='https://your-project.supabase.co'
+  export PUSH_KEY='your-push-key'
+  export ANON_KEY='your-anon-key'
+  export SPORTY_API_BASE='your-api-base-url'
+  export API_ORIGIN='your-origin'
+  export API_REFERER='your-referer'
 """
 
 import requests
@@ -22,6 +23,11 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 FUNCTION_URL = f"{SUPABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")
+
+SPORTY_API_BASE = os.environ.get("SPORTY_API_BASE", "")
+if not SPORTY_API_BASE:
+    print("ERREUR: SPORTY_API_BASE non définie.")
+    sys.exit(1)
 
 if not PUSH_KEY or not ANON_KEY:
     print("ERREUR: Variables d'environnement PUSH_KEY et ANON_KEY requises.")
@@ -41,12 +47,13 @@ LEAGUES = [
     ("8044", "Portuguese League"),
 ]
 
-API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues"
+API_BASE = SPORTY_API_BASE
 HEADERS = {
-    "Origin": "https://bet261.mg",
-    "Referer": "https://bet261.mg/",
+    "Origin": os.environ.get("API_ORIGIN", ""),
+    "Referer": os.environ.get("API_REFERER", ""),
     "User-Agent": "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36",
     "Accept": "application/json",
+    "App-Version": os.environ.get("API_APP_VERSION", ""),
 }
 
 
@@ -179,7 +186,7 @@ def send_data(league, matches, ranking, results):
 def main():
     print()
     print("=" * 50)
-    print("SCRAPER BET261.MG - TOUTES LES LIGUES")
+    print("SCRAPER MULTI-LIGUES")
     print("=" * 50)
     print(f"Heure: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     print()

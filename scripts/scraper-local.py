@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 """
-Scraper local bet261.mg - À exécuter depuis Madagascar
-========================================================
-Ce script scrape les données Instant League de bet261.mg
-et les envoie vers votre application Lovable.
+Scraper local - A exécuter depuis Madagascar
+=============================================
+Scrape les données Instant League et les envoie vers Supabase.
 
-Installation:
-  pip install requests beautifulsoup4 selenium webdriver-manager
-
-Usage:
-  python scraper-local.py
-
-Configuration:
-  Modifiez les variables ci-dessous selon votre setup.
+Variables d'environnement requises:
+  export SUPABASE_URL='https://your-project.supabase.co'
+  export PUSH_KEY='your-push-key'
+  export ANON_KEY='your-anon-key'
+  export SCRAPER_TARGET_URL='your-target-url'
 """
 
 import json
@@ -28,7 +24,7 @@ import os
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
 
-# Clé d'authentification (même valeur que SCRAPER_PUSH_KEY dans Edge Functions > Secrets)
+# Clé d'authentification
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 
 # Publishable key (anon) pour l'en-tête apikey
@@ -43,13 +39,17 @@ if not PUSH_KEY or not ANON_KEY:
 # Intervalle de rafraîchissement (secondes)
 REFRESH_INTERVAL = 120  # 2 minutes
 
-# URL cible
-TARGET_URL = "https://bet261.mg/virtual/category/instant-league"
+# URL cible (via variable d'environnement)
+TARGET_URL = os.environ.get("SCRAPER_TARGET_URL", "")
+if not TARGET_URL:
+    print("ERREUR: SCRAPER_TARGET_URL non definie.")
+    print("  export SCRAPER_TARGET_URL='your-target-url'")
+    sys.exit(1)
 
 # ============ SCRAPING ============
 
 def scrape_with_selenium():
-    """Scrape bet261.mg en utilisant Selenium (navigateur headless)"""
+    """Scrape en utilisant Selenium (navigateur headless)"""
     try:
         from selenium import webdriver
         from selenium.webdriver.chrome.service import Service
@@ -333,7 +333,7 @@ def main():
         sys.exit(1)
 
     print("=" * 50)
-    print("🏟️  Scraper bet261.mg - Instant League")
+    print("Scraper local - Instant League")
     print("=" * 50)
     print(f"📍 Intervalle: {REFRESH_INTERVAL}s")
     print()

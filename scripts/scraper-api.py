@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-Scraper bet261.mg - Instant League
-==================================
-API: hg-event-api-prod.sporty-tech.net
+Scraper Instant League
+====================
 Structure des cotes: eventBetTypes[0].eventBetTypeItems[{shortName:"1", odds:1.71}, ...]
 
 Note: expectedStart est toujours "0001-01-01T00:00:00Z" (valeur par défaut)
@@ -13,6 +12,14 @@ Installation:
 
 Usage:
   python scraper-api.py
+
+Variables d'environnement requises:
+  export SUPABASE_URL='https://your-project.supabase.co'
+  export PUSH_KEY='your-push-key'
+  export ANON_KEY='your-anon-key'
+  export SPORTY_API_BASE='your-api-base-url'
+  export API_ORIGIN='your-origin'
+  export API_REFERER='your-referer'
 """
 
 import json
@@ -27,6 +34,11 @@ PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")
 
+SPORTY_API_BASE = os.environ.get("SPORTY_API_BASE", "")
+if not SPORTY_API_BASE:
+    print("ERREUR: SPORTY_API_BASE non définie.")
+    sys.exit(1)
+
 if not PUSH_KEY:
     print("ERREUR: PUSH_KEY non définie. Exportez-la :")
     print("  export PUSH_KEY='votre_cle'")
@@ -37,17 +49,18 @@ if not ANON_KEY:
     sys.exit(1)
 
 LEAGUE_ID = "8035"
-API_MATCHES = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/matches"
-API_RANKING = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/ranking"
-API_RESULTS = f"https://hg-event-api-prod.sporty-tech.net/api/instantleagues/{LEAGUE_ID}/results?skip=0&take=100"
+API_MATCHES = f"{SPORTY_API_BASE}/{LEAGUE_ID}/matches"
+API_RANKING = f"{SPORTY_API_BASE}/{LEAGUE_ID}/ranking"
+API_RESULTS = f"{SPORTY_API_BASE}/{LEAGUE_ID}/results?skip=0&take=100"
 
 REFRESH_INTERVAL = 120
 
 HEADERS = {
-    "Origin": "https://bet261.mg",
-    "Referer": "https://bet261.mg/",
+    "Origin": os.environ.get("API_ORIGIN", ""),
+    "Referer": os.environ.get("API_REFERER", ""),
     "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/137.0.0.0 Mobile Safari/537.36",
     "Accept": "application/json",
+    "App-Version": os.environ.get("API_APP_VERSION", ""),
 }
 
 
@@ -226,7 +239,7 @@ def push_data(data):
 def main():
     print()
     print("=" * 50)
-    print("🏟️  SCRAPER bet261.mg - Instant League")
+    print("SCRAPER Instant League")
     print("=" * 50)
     print(f"📍 Supabase: {SUPABASE_URL}")
     print(f"⏱️  Intervalle: {REFRESH_INTERVAL}s")

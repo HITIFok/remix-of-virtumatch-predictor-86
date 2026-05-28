@@ -1,4 +1,4 @@
-// Client-side scraper for bet261.mg Instant League
+// Client-side scraper for Instant League
 // Calls Supabase Edge Function which scrapes the API
 
 import { supabase } from "@/integrations/supabase/client";
