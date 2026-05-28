@@ -2,7 +2,7 @@
 // Scrape Instant League data and store in scraped_data table
 // NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virutel-bet261.vercel.app";
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key",
