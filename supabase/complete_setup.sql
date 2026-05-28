@@ -3,7 +3,11 @@
 -- Exécutez ce script dans l'éditeur SQL de Supabase
 -- =====================================================
 
--- 1. CRÉER LA TABLE ADMIN_SETTINGS SI ELLE N'EXISTE PAS
+-- 1. CRÉER L'EXTENSION PGCRYPTO (nécessaire pour bcrypt)
+-- Sur Supabase, pgcrypto est installé dans le schéma 'extensions'
+CREATE EXTENSION IF NOT EXISTS pgcrypto SCHEMA extensions;
+
+-- 2. CRÉER LA TABLE ADMIN_SETTINGS SI ELLE N'EXISTE PAS
 CREATE TABLE IF NOT EXISTS admin_settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   setting_key TEXT UNIQUE NOT NULL,
@@ -12,23 +16,23 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. INSÉRER LE MOT DE PASSE ADMIN HASHÉ (bcrypt)
--- ⚠️ Remplacez LE_HASH_BCRYPT_ICI par votre propre hash généré avec :
---    SELECT pgcrypto.crypt('VOTRE_MOT_DE_PASSE', pgcrypto.gen_salt('bf'));
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
+-- 3. INSÉRER LE MOT DE PASSE ADMIN HASHÉ (bcrypt)
+-- ⚠️ Remplacez VOTRE_MOT_DE_PASSE_ICI par votre vrai mot de passe
+--    extensions.crypt() et extensions.gen_salt() car pgcrypto est dans 'extensions' sur Supabase
 INSERT INTO admin_settings (setting_key, setting_value)
-VALUES ('admin_code', 'LE_HASH_BCRYPT_ICI')
+VALUES ('admin_code', extensions.crypt('VOTRE_MOT_DE_PASSE_ICI', extensions.gen_salt('bf')))
 ON CONFLICT (setting_key)
-DO UPDATE SET updated_at = NOW();
+DO UPDATE SET setting_value = extensions.crypt('VOTRE_MOT_DE_PASSE_ICI', extensions.gen_salt('bf')),
+              updated_at = NOW();
 
--- 3. CONFIGURER RLS POUR ADMIN_SETTINGS (sécurisé)
+-- 4. CONFIGURER RLS POUR ADMIN_SETTINGS (sécurisé)
 ALTER TABLE admin_settings ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Allow read access" ON admin_settings;
 DROP POLICY IF EXISTS "Allow write access" ON admin_settings;
 DROP POLICY IF EXISTS "Allow all access on admin_settings" ON admin_settings;
 DROP POLICY IF EXISTS "Service role admin_settings" ON admin_settings;
+DROP POLICY IF EXISTS "No direct read admin_settings" ON admin_settings;
 
 -- Lecture : via la fonction RPC verify_admin_password uniquement (pas de SELECT direct)
 CREATE POLICY "No direct read admin_settings" ON admin_settings
@@ -37,6 +41,29 @@ CREATE POLICY "No direct read admin_settings" ON admin_settings
 -- Écriture : service_role uniquement
 CREATE POLICY "Service role admin_settings" ON admin_settings
   FOR ALL USING (auth.role() = 'service_role');
+
+-- 5. CRÉER LA FONCTION verify_admin_password (SECURITY DEFINER)
+-- SECURITY DEFINER contourne RLS, et search_path inclut 'extensions' pour crypt()
+DROP FUNCTION IF EXISTS verify_admin_password(TEXT);
+CREATE OR REPLACE FUNCTION verify_admin_password(input_password TEXT)
+RETURNS BOOLEAN AS $$
+DECLARE
+  stored_hash TEXT;
+BEGIN
+  SELECT setting_value INTO stored_hash
+  FROM admin_settings
+  WHERE setting_key = 'admin_code'
+  LIMIT 1;
+
+  IF stored_hash IS NULL THEN
+    RETURN FALSE;
+  END IF;
+
+  -- Comparaison bcrypt avec le chemin complet vers extensions.crypt()
+  RETURN (stored_hash = extensions.crypt(input_password, stored_hash));
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE
+SET search_path = public, extensions;
 
 -- 4. CRÉER LA TABLE ACCESS_CODES SI ELLE N'EXISTE PAS
 CREATE TABLE IF NOT EXISTS access_codes (
