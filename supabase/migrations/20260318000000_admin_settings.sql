@@ -10,8 +10,7 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Insert the admin code as a bcrypt hash (password: REDACTED_SECRET)
--- Hash generated with: crypt('REDACTED_SECRET', gen_salt('bf'))
+-- Insert the admin code as a bcrypt hash (hashed with pgcrypto, never store plaintext)
 INSERT INTO admin_settings (setting_key, setting_value)
 VALUES ('admin_code', 'REDACTED_BCRYPT_HASH')
 ON CONFLICT (setting_key) DO NOTHING;
