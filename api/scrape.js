@@ -1,16 +1,16 @@
-// Vercel Serverless Function - Scraper for bet261.mg Instant League
+// Vercel Serverless Function - Scraper
 // Correct field names: shortName ("1", "X", "2") and odds (number)
 
-const API_MATCHES = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/matches";
-const API_RANKING = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/ranking";
-const API_RESULTS = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues/8035/results?skip=0&take=100";
+const API_BASE = process.env.SPORTY_API_BASE || "";
+const LEAGUE_ID = "8035";
 
 const HEADERS = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
+  "Origin": process.env.API_ORIGIN || "",
+  "Referer": process.env.API_REFERER || "",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+  "App-Version": process.env.API_APP_VERSION || "",
 };
 
 // CORS headers
@@ -32,6 +32,14 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  if (!API_BASE) {
+    return res.status(200).json({ success: false, error: "Server not configured", matches: [], ranking: [], results: [] });
+  }
+
+  const API_MATCHES = `${API_BASE}/${LEAGUE_ID}/matches`;
+  const API_RANKING = `${API_BASE}/${LEAGUE_ID}/ranking`;
+  const API_RESULTS = `${API_BASE}/${LEAGUE_ID}/results?skip=0&take=100`;
+
   const sendJson = (status, data) => {
     res.status(status).json(data);
   };
@@ -48,7 +56,7 @@ module.exports = async function handler(req, res) {
     if (matchesRes.status === 403 || rankingRes.status === 403 || resultsRes.status === 403) {
       return sendJson(200, {
         success: false,
-        error: "Accès bloqué - Vercel n'est pas autorisé à accéder à cette API",
+        error: "Accès bloqué - Proxy non autorisé",
         geoBlocked: true,
         matches: [],
         ranking: [],
@@ -79,7 +87,7 @@ module.exports = async function handler(req, res) {
           for (const m of round.matches) {
             // Extraire les cotes depuis eventBetTypes
             let oddHome = 0, oddDraw = 0, oddAway = 0;
-            
+
             const eventBetTypes = m.eventBetTypes || [];
             for (const betType of eventBetTypes) {
               if (betType.name === "1X2") {
@@ -87,7 +95,7 @@ module.exports = async function handler(req, res) {
                 for (const item of items) {
                   const shortName = (item.shortName || "").toUpperCase();
                   const odds = item.odds || 0;
-                  
+
                   // CORRECTION: shortName est "1", "X", "2"
                   if (shortName === "1") {
                     oddHome = odds;
@@ -100,7 +108,7 @@ module.exports = async function handler(req, res) {
                 break; // Trouvé 1X2, on sort
               }
             }
-            
+
             matches.push({
               league: "Instant League",
               home: m.homeTeam?.name || "",

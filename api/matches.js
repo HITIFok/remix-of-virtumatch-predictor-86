@@ -1,7 +1,7 @@
-// Vercel Serverless Function - Proxy API for bet261.mg
-// Supports all 8 leagues via ?leagueId=8035 parameter
+// Vercel Serverless Function - Proxy API
+// Supports all 9 leagues via ?leagueId=8035 parameter
 
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+const API_BASE = process.env.SPORTY_API_BASE || "";
 
 const LEAGUES = {
   "8035": "English League",
@@ -15,10 +15,11 @@ const LEAGUES = {
 };
 
 const HEADERS = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
+  "Origin": process.env.API_ORIGIN || "",
+  "Referer": process.env.API_REFERER || "",
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
   "Accept": "application/json",
+  "App-Version": process.env.API_APP_VERSION || "",
 };
 
 const corsHeaders = {
@@ -46,6 +47,10 @@ module.exports = async function handler(req, res) {
     ]);
 
     // Check for geo-blocking
+    if (!API_BASE) {
+      return res.status(500).json({ success: false, error: "Server not configured" });
+    }
+
     if (matchesRes.status === 403) {
       return res.status(200).json({ success: false, error: "Geo-blocked", geoBlocked: true });
     }

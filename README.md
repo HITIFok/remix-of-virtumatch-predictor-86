@@ -1,8 +1,8 @@
 # VirtuMatch Predictor
 
-Application de prédiction de matchs virtuels Instant League (bet261.mg) avec analyses statistiques avancées.
+Application de prédiction de matchs virtuels Instant League avec analyses statistiques avancées.
 
-> Dernière mise à jour : Mars 2026
+> Dernière mise à jour : Mai 2026
 
 ## Fonctionnalités
 
@@ -16,7 +16,7 @@ Application de prédiction de matchs virtuels Instant League (bet261.mg) avec an
 - **Frontend**: React + TypeScript + Vite
 - **UI**: shadcn-ui + Tailwind CSS
 - **Backend**: Supabase (PostgreSQL + Edge Functions)
-- **Scraper**: Python (API sporty-tech.net)
+- **Scraper**: Python
 
 ## Installation
 
@@ -44,19 +44,26 @@ Créez un fichier `.env` avec :
 
 ```
 VITE_DATABASE_URL=https://votre-projet.redacted.example.com
-VITE_SUPABASE_PROJECT_ID=votre-project-id
-VITE_SUPABASE_PUBLISHABLE_KEY=votre-anon-key
+VITE_DATABASE_ANON_KEY=votre-anon-key
 ```
+
+Voir `.env.example` pour la liste complète des variables requises.
 
 ## Scraper (Termux/Android)
 
-Le scraper Python récupère les données depuis l'API bet261.mg :
+Les scrapers Python récupèrent les données depuis l'API :
 
 ```bash
 # Dans Termux avec connexion 4G
 pip install requests
 python scripts/scraper-api.py
 ```
+
+Les variables d'environnement suivantes sont requises pour les scripts :
+- `SPORTY_API_BASE` — URL de base de l'API
+- `API_ORIGIN` / `API_REFERER` — Headers d'authentification API
+- `API_APP_VERSION` — Version de l'API
+- `DATABASE_URL` / `PUSH_KEY` / `ANON_KEY` — Connexion Supabase
 
 ## Déploiement
 
@@ -78,8 +85,8 @@ Le projet peut être déployé sur Vercel :
 │   └── integrations/   # Intégration Supabase
 ├── supabase/
 │   └── functions/      # Edge Functions Deno
-├── scripts/
-│   └── scraper-api.py  # Scraper Python
+├── api/                # Vercel Serverless Functions
+├── scripts/            # Scrapers Python
 └── public/             # Assets statiques
 ```
 

@@ -1,5 +1,5 @@
 // fetch-live/index.ts — Supabase Edge Function
-// Fetches live match data, ranking, results from sporty-tech.net API
+// Fetches live match data, ranking, results
 // NO imports — uses Deno.serve() + native fetch
 
 const corsHeaders: Record<string, string> = {
@@ -8,7 +8,10 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+const API_BASE = Deno.env.get("SPORTY_API_BASE") || "";
+if (!API_BASE) {
+  console.error("SPORTY_API_BASE not configured");
+}
 
 const LEAGUES: Record<string, string> = {
   "8035": "English League",
@@ -23,12 +26,12 @@ const LEAGUES: Record<string, string> = {
 };
 
 const HEADERS: Record<string, string> = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
+  "Origin": Deno.env.get("API_ORIGIN") || "",
+  "Referer": Deno.env.get("API_REFERER") || "",
   "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": "33335",
+  "App-Version": Deno.env.get("API_APP_VERSION") || "",
 };
 
 async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
@@ -53,7 +56,7 @@ async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
 
 /**
  * Fetch live playout data for a specific round.
- * Uses parentEventCategoryId (leagueId) as per bet261.mg API spec.
+ * Uses parentEventCategoryId (leagueId) for live data fetching.
  */
 async function fetchLiveData(leagueId: string, round: number): Promise<Map<number, any>> {
   const liveMatches = new Map();
