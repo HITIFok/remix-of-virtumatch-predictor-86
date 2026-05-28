@@ -16,7 +16,7 @@ Deno.serve(async (req: Request) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const systemPrompt = `Tu es un expert en prédiction de matchs de football virtuels (type bet261.mg/virtuel).
+    const systemPrompt = `Tu es un expert en prédiction de matchs de football virtuels.
 Tu analyses les cotes 1X2 fournies et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
 
 ## MÉTHODE D'ANALYSE — Algorithme de Précision

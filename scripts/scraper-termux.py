@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Scraper bet261.mg - Version Termux (Android)
-============================================
-À exécuter dans Termux avec connexion 4G
+Scraper - Version Termux (Android)
+===================================
+A exécuter dans Termux avec connexion 4G
 
-Installation dans Termux:
-  pkg install python
-  pip install requests beautifulsoup4
-
-Usage:
-  python scraper-termux.py
+Variables d'environnement requises:
+  export SUPABASE_URL='https://your-project.supabase.co'
+  export PUSH_KEY='your-push-key'
+  export ANON_KEY='your-anon-key'
+  export SCRAPER_TARGET_URL='your-target-url'
 """
 
 import json
@@ -26,7 +25,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 PUSH_ENDPOINT = f"{SUPABASE_URL}/functions/v1/push-odds"
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 ANON_KEY = os.environ.get("ANON_KEY", "")
-TARGET_URL = "https://bet261.mg/virtual/category/instant-league"
+TARGET_URL = os.environ.get("SCRAPER_TARGET_URL", "")
 REFRESH_INTERVAL = 120
 
 if not SUPABASE_URL:
@@ -41,11 +40,15 @@ if not ANON_KEY:
     print("ERREUR: ANON_KEY non definie. Exportez-la :")
     print("  export ANON_KEY='votre_cle_anon'")
     sys.exit(1)
+if not TARGET_URL:
+    print("ERREUR: SCRAPER_TARGET_URL non definie. Exportez-la :")
+    print("  export SCRAPER_TARGET_URL='your-target-url'")
+    sys.exit(1)
 
 # ============ SCRAPING ============
 
 def scrape():
-    """Scrape bet261.mg avec requests"""
+    """Scrape avec requests"""
     import requests
     from bs4 import BeautifulSoup
     import urllib3
@@ -209,7 +212,7 @@ def push_data(data):
 def main():
     print()
     print("=" * 50)
-    print("🏟️  SCRAPER bet261.mg - Version Termux")
+    print("SCRAPER - Version Termux")
     print("=" * 50)
     print(f"📍 Supabase: {SUPABASE_URL}")
     print(f"⏱️  Intervalle: {REFRESH_INTERVAL}s")

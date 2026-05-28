@@ -8,7 +8,10 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+const API_BASE = Deno.env.get("SPORTY_API_BASE") || "";
+if (!API_BASE) {
+  console.error("SPORTY_API_BASE not configured");
+}
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -26,12 +29,12 @@ const LEAGUES = [
 ];
 
 const HEADERS: Record<string, string> = {
-  "Origin": "https://bet261.mg",
-  "Referer": "https://bet261.mg/",
+  "Origin": Deno.env.get("API_ORIGIN") || "",
+  "Referer": Deno.env.get("API_REFERER") || "",
   "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": "33335",
+  "App-Version": Deno.env.get("API_APP_VERSION") || "",
 };
 
 async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
