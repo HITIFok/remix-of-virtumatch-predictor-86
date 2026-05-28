@@ -22,6 +22,7 @@ const LEAGUES = [
   { id: "8042", name: "French League" },
   { id: "8043", name: "German League" },
   { id: "8044", name: "Portuguese League" },
+  { id: "8065", name: "Coupe du monde" },
 ];
 
 const HEADERS: Record<string, string> = {
