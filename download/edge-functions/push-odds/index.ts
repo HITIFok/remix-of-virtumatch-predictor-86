@@ -1,113 +1,85 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// push-odds/index.ts — Supabase Edge Function
+// Pushes user odds input to predictions table
+// ZERO imports to avoid WORKER_ERROR
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("Origin") || "";
-  const allowedFromEnv = Deno.env.get("ALLOWED_ORIGINS");
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  };
-
-  if (allowedFromEnv) {
-    const allowedList = allowedFromEnv.split(",").map((o) => o.trim());
-    if (allowedList.includes(requestOrigin)) {
-      headers["Access-Control-Allow-Origin"] = requestOrigin;
-      headers["Vary"] = "Origin";
-    }
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-Deno.serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
-
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), {
-        status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
+    const authHeader = req.headers.get('Authorization');
     const body = await req.json();
-    const { league, matches, odds_data, scraped_at } = body;
 
-    if (!league || !matches) {
+    if (!body || !body.matches || !Array.isArray(body.matches)) {
       return new Response(
-        JSON.stringify({ error: "league and matches are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        JSON.stringify({ success: false, error: 'No matches array provided' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Upsert odds data into the scraped_data table
-    const records = (matches || []).map((match: Record<string, unknown>) => ({
-      league,
-      home_team: match.home_team || match.home,
-      away_team: match.away_team || match.away,
-      home_odds: match.home_odds || match.odds_home || match.home_win,
-      draw_odds: match.draw_odds || match.odds_draw || match.draw,
-      away_odds: match.away_odds || match.odds_away || match.away_win,
-      match_time: match.match_time || match.kickoff || match.time,
-      match_date: match.match_date || match.date,
-      scraped_at: scraped_at || new Date().toISOString(),
-      ...(odds_data ? { raw_data: odds_data } : {}),
-      ...(match.match_id ? { match_id: match.match_id } : {}),
-      ...(match.id ? { id: match.id } : {}),
-    }));
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Missing env vars' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-    if (records.length > 0) {
-      const { error } = await supabase
-        .from("scraped_data")
-        .upsert(records, { onConflict: "league,home_team,away_team,match_date" });
+    const results = [];
+    for (const match of body.matches) {
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/predictions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_SERVICE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+            'Prefer': 'return=representation',
+          },
+          body: JSON.stringify({
+            user_id: body.userId || match.userId,
+            match_id: match.matchId || match.match_id,
+            home_team: match.homeTeam || match.home_team,
+            away_team: match.awayTeam || match.away_team,
+            predicted_home_score: match.homeScore ?? match.home_score,
+            predicted_away_score: match.awayScore ?? match.away_score,
+            home_odds: match.homeOdds ?? match.home_odds,
+            away_odds: match.awayOdds ?? match.away_odds,
+            draw_odds: match.drawOdds ?? match.draw_odds,
+            created_at: new Date().toISOString(),
+          }),
+        });
 
-      if (error) {
-        console.error("[push-odds] Upsert error:", error);
-        return new Response(
-          JSON.stringify({ error: `Database error: ${error.message}` }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
+        if (res.ok) {
+          results.push({ matchId: match.matchId, success: true });
+        } else {
+          const err = await res.text();
+          results.push({ matchId: match.matchId, success: false, error: err });
+        }
+      } catch (e: any) {
+        results.push({ matchId: match.matchId, success: false, error: e.message });
       }
     }
 
+    const successCount = results.filter((r: any) => r.success).length;
     return new Response(
-      JSON.stringify({
-        success: true,
-        inserted: records.length,
-        league,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: true, total: results.length, saved: successCount, results }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
-    console.error("[push-odds] Unexpected error:", error);
+  } catch (error: any) {
+    console.error('push-odds error:', error.message);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

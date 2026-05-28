@@ -1,140 +1,143 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// fetch-live/index.ts — Supabase Edge Function
+// Fetches live match data from sporty-tech.net API
+// ZERO imports to avoid WORKER_ERROR
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("Origin") || "";
-  const allowedFromEnv = Deno.env.get("ALLOWED_ORIGINS");
+const API_BASE = 'https://hg-event-api-prod.sporty-tech.net';
+const API_HEADERS: Record<string, string> = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'fr-FR,fr;q=0.9',
+  'App-Version': '33335',
+  'Origin': 'https://bet261.mg',
+  'Referer': 'https://bet261.mg/',
+  'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+};
 
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  };
-
-  if (allowedFromEnv) {
-    const allowedList = allowedFromEnv.split(",").map((o) => o.trim());
-    if (allowedList.includes(requestOrigin)) {
-      headers["Access-Control-Allow-Origin"] = requestOrigin;
-      headers["Vary"] = "Origin";
-    }
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
+async function fetchJSON(url: string): Promise<any> {
+  const res = await fetch(url, { headers: API_HEADERS });
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${await res.text()}`);
   }
-
-  return headers;
+  return res.json();
 }
 
-Deno.serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
-
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+Deno.serve(async (req: Request) => {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   try {
-    // Support both GET and POST
-    let leagueId: string | null = null;
+    const url = new URL(req.url);
+    const leagueId = url.searchParams.get('leagueId') || '8035';
 
-    if (req.method === "GET") {
-      const url = new URL(req.url);
-      leagueId = url.searchParams.get("leagueId") || url.searchParams.get("league");
-    } else if (req.method === "POST") {
-      const body = await req.json();
-      leagueId = body.leagueId || body.league;
+    // Step 1: Get league info to find current round
+    let currentRound = 0;
+    try {
+      const info = await fetchJSON(`${API_BASE}/api/instantleagues/${leagueId}/info`);
+      currentRound = info?.currentRound || info?.round || info?.data?.currentRound || 0;
+    } catch (e) {
+      console.log('Info fetch failed, trying direct round approach');
     }
 
-    if (!leagueId) {
-      return new Response(
-        JSON.stringify({ error: "leagueId parameter is required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // Step 2: Get matches list
+    let matches: any[] = [];
+    try {
+      const matchData = await fetchJSON(`${API_BASE}/api/instantleagues/${leagueId}/matches`);
+      // Handle different response structures
+      if (Array.isArray(matchData)) {
+        matches = matchData;
+      } else if (matchData?.data && Array.isArray(matchData.data)) {
+        matches = matchData.data;
+      } else if (matchData?.matches && Array.isArray(matchData.matches)) {
+        matches = matchData.matches;
+      } else if (matchData?.events && Array.isArray(matchData.events)) {
+        matches = matchData.events;
+      } else if (matchData?.result && Array.isArray(matchData.result)) {
+        matches = matchData.result;
+      } else {
+        // Try to extract any array from the response
+        for (const key of Object.keys(matchData || {})) {
+          if (Array.isArray(matchData[key]) && matchData[key].length > 0) {
+            matches = matchData[key];
+            break;
+          }
         }
-      );
-    }
-
-    // Fetch live matches from external API
-    const apiKey = Deno.env.get("HIGH FLYER") || Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) {
-      console.error("[fetch-live] No API key configured");
-      return new Response(
-        JSON.stringify({ error: "API key not configured" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const apiUrl = `https://api-football-v1.p.rapidapi.com/v3/fixtures?league=${leagueId}&live=all`;
-    const response = await fetch(apiUrl, {
-      headers: {
-        "x-rapidapi-key": apiKey,
-        "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[fetch-live] API error: ${response.status}`);
-      return new Response(
-        JSON.stringify({ error: `External API error: ${response.status}` }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const data = await response.json();
-
-    // Transform and return live match data
-    const liveMatches = (data.response || []).map(
-      (fixture: Record<string, unknown>) => {
-        const fixtureData = fixture.fixture || fixture;
-        const teams = fixture.teams || {};
-        const goals = fixture.goals || {};
-        const score = fixture.score || {};
-
-        return {
-          id: fixtureData.id,
-          league: fixtureData.league,
-          home_team: teams.home?.name || teams.home,
-          away_team: teams.away?.name || teams.away,
-          home_logo: teams.home?.logo,
-          away_logo: teams.away?.logo,
-          status: fixtureData.status?.short || fixtureData.status,
-          home_score: goals.home ?? score.fulltime?.home ?? null,
-          away_score: goals.away ?? score.fulltime?.away ?? null,
-          minute: fixtureData.status?.elapsed || null,
-          match_date: fixtureData.date,
-        };
       }
-    );
+    } catch (e: any) {
+      console.error('Matches fetch failed:', e.message);
+    }
+
+    // Step 3: If we have a round, try to get live playout data
+    let liveData: any[] = [];
+    if (currentRound > 0) {
+      try {
+        const playout = await fetchJSON(
+          `${API_BASE}/api/instantleagues/round/${currentRound}/playout?parentEventCategoryId=${leagueId}`
+        );
+        if (Array.isArray(playout)) {
+          liveData = playout;
+        } else if (playout?.data && Array.isArray(playout.data)) {
+          liveData = playout.data;
+        } else if (playout?.matches && Array.isArray(playout.matches)) {
+          liveData = playout.matches;
+        } else if (playout?.events && Array.isArray(playout.events)) {
+          liveData = playout.events;
+        } else {
+          for (const key of Object.keys(playout || {})) {
+            if (Array.isArray(playout[key])) {
+              liveData = playout[key];
+              break;
+            }
+          }
+        }
+
+        // Merge live data into matches if we have both
+        if (liveData.length > 0 && matches.length > 0) {
+          const liveMap = new Map(liveData.map((m: any) => [m.id || m.matchId, m]));
+          matches = matches.map((m: any) => {
+            const live = liveMap.get(m.id || m.matchId);
+            return live ? { ...m, ...live, isLive: true } : m;
+          });
+        } else if (liveData.length > 0) {
+          matches = liveData;
+        }
+      } catch (e: any) {
+        console.error('Playout fetch failed:', e.message);
+      }
+    }
+
+    // Ensure matches is ALWAYS an array (frontend expects .map())
+    if (!Array.isArray(matches)) {
+      matches = [];
+    }
 
     return new Response(
       JSON.stringify({
-        success: true,
-        league: leagueId,
-        live: liveMatches,
-        total: liveMatches.length,
-        fetched_at: new Date().toISOString(),
+        matches,
+        live: liveData.length > 0 ? liveData : undefined,
+        round: currentRound,
+        leagueId,
+        totalMatches: matches.length,
       }),
       {
         status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
-  } catch (error) {
-    console.error("[fetch-live] Unexpected error:", error);
+  } catch (error: any) {
+    console.error('fetch-live error:', error.message);
+    // Always return 200 with empty array to prevent frontend crash
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
+      JSON.stringify({ matches: [], live: [], error: error.message }),
       {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       }
     );
   }

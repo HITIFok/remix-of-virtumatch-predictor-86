@@ -1,108 +1,104 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// analyze-match/index.ts — Supabase Edge Function
+// Analyzes a specific match using scraped data + odds
+// ZERO imports to avoid WORKER_ERROR
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("Origin") || "";
-  const allowedFromEnv = Deno.env.get("ALLOWED_ORIGINS");
+const API_BASE = 'https://hg-event-api-prod.sporty-tech.net';
+const API_HEADERS: Record<string, string> = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'fr-FR,fr;q=0.9',
+  'App-Version': '33335',
+  'Origin': 'https://bet261.mg',
+  'Referer': 'https://bet261.mg/',
+  'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+};
 
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  };
-
-  if (allowedFromEnv) {
-    const allowedList = allowedFromEnv.split(",").map((o) => o.trim());
-    if (allowedList.includes(requestOrigin)) {
-      headers["Access-Control-Allow-Origin"] = requestOrigin;
-      headers["Vary"] = "Origin";
-    }
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-Deno.serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
-
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), {
-        status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    const url = new URL(req.url);
+    const matchId = url.searchParams.get('matchId') || '';
+    const leagueId = url.searchParams.get('leagueId') || '8035';
+
+    if (!matchId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'matchId is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Fetch match details from API
+    let matchData = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/instantleagues/${leagueId}/matches`, {
+        headers: API_HEADERS,
       });
+      if (res.ok) {
+        const all = await res.json();
+        const matches = Array.isArray(all) ? all : (all?.data || all?.matches || []);
+        matchData = matches.find((m: any) =>
+          String(m.id || m.matchId) === String(matchId)
+        );
+      }
+    } catch (e: any) {
+      console.error('API fetch failed:', e.message);
     }
 
-    const { match_id, league, home_team, away_team, home_stats, away_stats, analysis } =
-      await req.json();
+    // Simple analysis based on available data
+    const analysis: any = {
+      matchId,
+      matchData: matchData || null,
+      prediction: null,
+      confidence: 0,
+    };
 
-    if (!match_id || !league) {
-      return new Response(
-        JSON.stringify({ error: "match_id and league are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    if (matchData) {
+      const homeOdds = matchData.oddsHome ?? matchData.homeOdds ?? matchData.odds?.home;
+      const awayOdds = matchData.oddsAway ?? matchData.awayOdds ?? matchData.odds?.away;
+      const drawOdds = matchData.oddsDraw ?? matchData.drawOdds ?? matchData.odds?.draw;
+
+      if (homeOdds && awayOdds) {
+        const totalImplied = (1 / homeOdds + 1 / (drawOdds || 10) + 1 / awayOdds);
+        const homeProb = Math.round((1 / homeOdds / totalImplied) * 100);
+        const awayProb = Math.round((1 / awayOdds / totalImplied) * 100);
+        const drawProb = 100 - homeProb - awayProb;
+
+        let prediction = 'draw';
+        let confidence = Math.max(homeProb, awayProb, drawProb);
+
+        if (homeProb > awayProb && homeProb > drawProb) {
+          prediction = 'home';
+        } else if (awayProb > homeProb && awayProb > drawProb) {
+          prediction = 'away';
         }
-      );
-    }
 
-    // Store analysis results
-    const { data, error } = await supabase
-      .from("match_analysis")
-      .upsert(
-        {
-          match_id,
-          league,
-          home_team,
-          away_team,
-          home_stats: home_stats || {},
-          away_stats: away_stats || {},
-          analysis: analysis || {},
-          analyzed_at: new Date().toISOString(),
-        },
-        { onConflict: "match_id" }
-      );
+        analysis.prediction = {
+          outcome: prediction,
+          confidence,
+          probabilities: { home: homeProb, draw: Math.max(0, drawProb), away: awayProb },
+        };
 
-    if (error) {
-      console.error("[analyze-match] Upsert error:", error);
-      return new Response(
-        JSON.stringify({ error: `Database error: ${error.message}` }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+        analysis.odds = { home: homeOdds, draw: drawOdds, away: awayOdds };
+      }
     }
 
     return new Response(
-      JSON.stringify({
-        success: true,
-        match_id,
-        analysis: data,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: true, ...analysis }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
-    console.error("[analyze-match] Unexpected error:", error);
+  } catch (error: any) {
+    console.error('analyze-match error:', error.message);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

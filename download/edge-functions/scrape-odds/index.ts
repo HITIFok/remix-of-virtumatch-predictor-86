@@ -1,189 +1,160 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// scrape-odds/index.ts — Supabase Edge Function
+// Scrapes match data + odds from sporty-tech.net and inserts into scraped_data
+// ZERO imports to avoid WORKER_ERROR
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("Origin") || "";
-  const allowedFromEnv = Deno.env.get("ALLOWED_ORIGINS");
+const API_BASE = 'https://hg-event-api-prod.sporty-tech.net';
+const API_HEADERS: Record<string, string> = {
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'fr-FR,fr;q=0.9',
+  'App-Version': '33335',
+  'Origin': 'https://bet261.mg',
+  'Referer': 'https://bet261.mg/',
+  'User-Agent': 'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+};
 
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  };
+// Supabase project details — REPLACE WITH YOUR VALUES
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-  if (allowedFromEnv) {
-    const allowedList = allowedFromEnv.split(",").map((o) => o.trim());
-    if (allowedList.includes(requestOrigin)) {
-      headers["Access-Control-Allow-Origin"] = requestOrigin;
-      headers["Vary"] = "Origin";
-    }
-  } else {
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
+async function fetchJSON(url: string): Promise<any> {
+  const res = await fetch(url, { headers: API_HEADERS });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
-Deno.serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
+async function upsertScrapedData(matches: any[], leagueId: string, round: number) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    console.error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
+    return { success: false, error: 'Missing env vars' };
+  }
 
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+  const inserted = [];
+  const errors = [];
+
+  for (const match of matches) {
+    try {
+      // Extract match data — adapt field names based on actual API response
+      const matchId = String(match.id || match.matchId || match.eventId || '');
+      const homeTeam = match.homeTeam?.name || match.homeName || match.teamA || match.home || '';
+      const awayTeam = match.awayTeam?.name || match.awayName || match.teamB || match.away || '';
+      const homeScore = match.homeScore ?? match.scoreHome ?? match.homeTeamScore ?? null;
+      const awayScore = match.awayScore ?? match.scoreAway ?? match.awayTeamScore ?? null;
+      const matchStatus = match.status || match.matchStatus || match.state || 'upcoming';
+      const startTime = match.startTime || match.startDate || match.kickoff || match.time || '';
+      const homeOdds = match.oddsHome ?? match.homeOdds ?? match.odds?.home ?? null;
+      const drawOdds = match.oddsDraw ?? match.drawOdds ?? match.odds?.draw ?? null;
+      const awayOdds = match.oddsAway ?? match.awayOdds ?? match.odds?.away ?? null;
+
+      // Upsert into scraped_data
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/scraped_data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_SERVICE_KEY,
+          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
+          'Prefer': 'resolution=merge-duplicates,return=representation',
+        },
+        body: JSON.stringify({
+          match_id: matchId,
+          league_id: leagueId,
+          round: round,
+          home_team: homeTeam,
+          away_team: awayTeam,
+          home_score: homeScore,
+          away_score: awayScore,
+          status: matchStatus,
+          start_time: startTime,
+          home_odds: homeOdds,
+          draw_odds: drawOdds,
+          away_odds: awayOdds,
+          raw_data: match,
+          scraped_at: new Date().toISOString(),
+        }),
+      });
+
+      if (res.ok) {
+        inserted.push(matchId);
+      } else {
+        const errText = await res.text();
+        errors.push({ matchId, error: errText });
+      }
+    } catch (e: any) {
+      errors.push({ matchId: match.id || 'unknown', error: e.message });
+    }
+  }
+
+  return { success: true, inserted: inserted.length, errors: errors.length, errorDetails: errors };
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), {
-        status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    const url = new URL(req.url);
+    const leagueId = url.searchParams.get('leagueId') || '8035';
+
+    // Get current round
+    let currentRound = 0;
+    try {
+      const info = await fetchJSON(`${API_BASE}/api/instantleagues/${leagueId}/info`);
+      currentRound = info?.currentRound || info?.round || info?.data?.currentRound || 0;
+    } catch (e) {
+      console.log('Could not fetch round info');
     }
 
-    const { league, auto } = await req.json();
+    // Get matches
+    const matchData = await fetchJSON(`${API_BASE}/api/instantleagues/${leagueId}/matches`);
 
-    if (!league) {
-      return new Response(
-        JSON.stringify({ error: "league parameter is required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+    let matches: any[] = [];
+    if (Array.isArray(matchData)) {
+      matches = matchData;
+    } else if (matchData?.data && Array.isArray(matchData.data)) {
+      matches = matchData.data;
+    } else if (matchData?.matches && Array.isArray(matchData.matches)) {
+      matches = matchData.data?.matches || matchData.matches;
+    } else {
+      for (const key of Object.keys(matchData || {})) {
+        if (Array.isArray(matchData[key])) {
+          matches = matchData[key];
+          break;
         }
-      );
-    }
-
-    // Fetch odds from external API
-    const apiKey = Deno.env.get("HIGH FLYER") || Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) {
-      console.error("[scrape-odds] No API key configured");
-      return new Response(
-        JSON.stringify({ error: "API key not configured" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // Map league names to API-Football league IDs
-    const leagueMap: Record<string, number> = {
-      "English League": 39,
-      "Spanish League": 140,
-      "Italian League": 135,
-      "German League": 78,
-      "French League": 61,
-    };
-
-    const apiLeagueId = leagueMap[league];
-    if (!apiLeagueId) {
-      return new Response(
-        JSON.stringify({ error: `Unknown league: ${league}` }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // Fetch upcoming fixtures with odds from API-Football
-    const oddsUrl = `https://api-football-v1.p.rapidapi.com/v3/odds?league=${apiLeagueId}&season=2024`;
-    const response = await fetch(oddsUrl, {
-      headers: {
-        "x-rapidapi-key": apiKey,
-        "x-rapidapi-host": "api-football-v1.p.rapidapi.com",
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[scrape-odds] API error: ${response.status}`);
-      return new Response(
-        JSON.stringify({ error: `External API error: ${response.status}` }),
-        {
-          status: 502,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    const data = await response.json();
-    const scraped_at = new Date().toISOString();
-
-    // Transform and store the odds data
-    const matches = (data.response || []).map(
-      (item: Record<string, unknown>) => {
-        const fixture = item.fixture || {};
-        const teams = item.teams || {};
-        const values = (item.values || [])[0] || {};
-        const oddValues = values.values || [];
-
-        return {
-          league,
-          home_team: teams.home?.name,
-          away_team: teams.away?.name,
-          home_logo: teams.home?.logo,
-          away_logo: teams.away?.logo,
-          home_odds:
-            oddValues.find(
-              (o: Record<string, unknown>) => o.value === "Home"
-            )?.odd || null,
-          draw_odds:
-            oddValues.find(
-              (o: Record<string, unknown>) => o.value === "Draw"
-            )?.odd || null,
-          away_odds:
-            oddValues.find(
-              (o: Record<string, unknown>) => o.value === "Away"
-            )?.odd || null,
-          match_date: fixture.date,
-          match_time: fixture.timestamp,
-          match_id: String(fixture.id),
-          scraped_at,
-        };
-      }
-    );
-
-    // Store in database
-    if (matches.length > 0) {
-      const { error } = await supabase.from("scraped_data").upsert(matches, {
-        onConflict: "league,home_team,away_team,match_date",
-      });
-
-      if (error) {
-        console.error("[scrape-odds] Database error:", error);
-        return new Response(
-          JSON.stringify({ error: `Database error: ${error.message}` }),
-          {
-            status: 500,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
       }
     }
+
+    if (matches.length === 0) {
+      return new Response(
+        JSON.stringify({ success: true, message: 'No matches found', inserted: 0 }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Upsert all matches into scraped_data
+    const result = await upsertScrapedData(matches, leagueId, currentRound);
 
     return new Response(
       JSON.stringify({
         success: true,
-        league,
-        scraped: matches.length,
-        scraped_at,
-        auto: !!auto,
+        totalMatches: matches.length,
+        round: currentRound,
+        leagueId,
+        ...result,
+        timestamp: new Date().toISOString(),
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
-    console.error("[scrape-odds] Unexpected error:", error);
+  } catch (error: any) {
+    console.error('scrape-odds error:', error.message);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });

@@ -1,149 +1,118 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// verify-predictions/index.ts — Supabase Edge Function
+// Verifies user predictions against scraped_data results
+// ZERO imports to avoid WORKER_ERROR
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const requestOrigin = req.headers.get("Origin") || "";
-  const allowedFromEnv = Deno.env.get("ALLOWED_ORIGINS");
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-  };
-
-  if (allowedFromEnv) {
-    const allowedList = allowedFromEnv.split(",").map((o) => o.trim());
-    if (allowedList.includes(requestOrigin)) {
-      headers["Access-Control-Allow-Origin"] = requestOrigin;
-      headers["Vary"] = "Origin";
-    }
-  } else {
-    // Fallback: allow ALL origins if secret is not configured
-    headers["Access-Control-Allow-Origin"] = "*";
-  }
-
-  return headers;
-}
-
-Deno.serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
-
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: corsHeaders });
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders });
   }
 
   try {
-    if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), {
-        status: 405,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Get auth header
+    const authHeader = req.headers.get('Authorization');
 
-    const { predictions } = await req.json();
-
-    if (!predictions || !Array.isArray(predictions)) {
+    // Read body
+    let body: any = {};
+    try {
+      const text = await req.text();
+      if (text) body = JSON.parse(text);
+    } catch {
+      // Empty body — return default response
       return new Response(
-        JSON.stringify({ error: "predictions array is required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+        JSON.stringify({ success: true, verified: [], total: 0, correct: 0 }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Verify all predictions in parallel with allSettled for resilience
-    const results = await Promise.allSettled(
-      predictions.map(async (prediction: Record<string, unknown>) => {
-        const { id, predicted_home_score, predicted_away_score, league } =
-          prediction;
+    const predictions = body.predictions || body.matches || [];
+    if (!Array.isArray(predictions) || predictions.length === 0) {
+      return new Response(
+        JSON.stringify({ success: true, verified: [], total: 0, correct: 0 }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-        if (!id) throw new Error("Prediction missing id");
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Missing Supabase env vars' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
-        // Fetch the actual match result
-        const { data: matchData, error: matchError } = await supabase
-          .from("matches")
-          .select("*")
-          .eq("id", id)
-          .single();
+    // Fetch scraped_data for these match IDs
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+    };
+    if (authHeader) headers['Authorization'] = authHeader;
 
-        if (matchError) throw new Error(`Match lookup failed: ${matchError.message}`);
-        if (!matchData) throw new Error(`Match ${id} not found`);
-
-        const actualHome = matchData.home_score ?? matchData.home_goals;
-        const actualAway = matchData.away_score ?? matchData.away_goals;
-
-        // Determine if prediction was correct
-        const predictedHome = Number(predicted_home_score);
-        const predictedAway = Number(predicted_away_score);
-
-        let isCorrect = false;
-        if (
-          !isNaN(predictedHome) &&
-          !isNaN(predictedAway) &&
-          actualHome !== null &&
-          actualHome !== undefined &&
-          actualAway !== null &&
-          actualAway !== undefined
-        ) {
-          // Correct if exact score matches
-          if (predictedHome === actualHome && predictedAway === actualAway) {
-            isCorrect = true;
-          }
-        }
-
-        return {
-          predictionId: id,
-          predicted_home: predictedHome,
-          predicted_away: predictedAway,
-          actual_home: actualHome,
-          actual_away: actualAway,
-          isCorrect,
-          league: league || matchData.league,
-        };
-      })
-    );
-
-    // Process results - log failures but don't crash
-    const verified: Record<string, unknown>[] = [];
-    const errors: string[] = [];
-
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        verified.push(result.value);
-      } else {
-        const reason = result.reason?.message || String(result.reason);
-        errors.push(`Prediction ${index}: ${reason}`);
-        console.error(`[verify-predictions] Prediction ${index} failed:`, reason);
-      }
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/scraped_data?select=match_id,home_team,away_team,home_score,away_score,status`, {
+      headers,
     });
+
+    if (!res.ok) {
+      return new Response(
+        JSON.stringify({ success: true, verified: [], total: predictions.length, correct: 0, note: 'Could not fetch scraped_data' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const scrapedMatches = await res.json();
+    const scrapedMap = new Map(scrapedMatches.map((m: any) => [m.match_id, m]));
+
+    const verified = predictions.map((pred: any) => {
+      const scraped = scrapedMap.get(pred.matchId || pred.match_id);
+      let isCorrect = false;
+
+      if (scraped && scraped.status === 'finished') {
+        const predictedHome = pred.homeScore ?? pred.home_score;
+        const predictedAway = pred.awayScore ?? pred.away_score;
+
+        if (predictedHome != null && predictedAway != null) {
+          isCorrect = Number(predictedHome) === Number(scraped.home_score) &&
+                      Number(predictedAway) === Number(scraped.away_score);
+        }
+      }
+
+      return {
+        matchId: pred.matchId || pred.match_id,
+        homeTeam: pred.homeTeam || pred.home_team,
+        awayTeam: pred.awayTeam || pred.away_team,
+        predictedHome: pred.homeScore ?? pred.home_score,
+        predictedAway: pred.awayScore ?? pred.away_score,
+        actualHome: scraped?.home_score ?? null,
+        actualAway: scraped?.away_score ?? null,
+        status: scraped?.status || 'pending',
+        isCorrect,
+      };
+    });
+
+    const correct = verified.filter((v: any) => v.isCorrect).length;
 
     return new Response(
       JSON.stringify({
         success: true,
         verified,
-        total: predictions.length,
-        correct: verified.filter((v) => v.isCorrect).length,
-        errors: errors.length > 0 ? errors : undefined,
+        total: verified.length,
+        correct,
+        accuracy: verified.length > 0 ? Math.round((correct / verified.length) * 100) : 0,
       }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
-  } catch (error) {
-    console.error("[verify-predictions] Unexpected error:", error);
+  } catch (error: any) {
+    console.error('verify-predictions error:', error.message);
     return new Response(
-      JSON.stringify({ error: "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
