@@ -211,33 +211,10 @@ export function isAdmin(): boolean {
   }
 }
 
-// Test Supabase connection
-export async function testSupabaseConnection(): Promise<{ success: boolean; message: string }> {
-  try {
-    const { data, error } = await supabase
-      .from("admin_settings")
-      .select("setting_key, setting_value")
-      .limit(1);
-
-    if (error) {
-      return { success: false, message: `Erreur Supabase: ${error.message}` };
-    }
-    
-    return { success: true, message: `Connexion OK - ${data?.length || 0} entrée(s) trouvée(s)` };
-  } catch (err: any) {
-    return { success: false, message: `Exception: ${err.message}` };
-  }
-}
-
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // First, test connection
-    const connectionTest = await testSupabaseConnection();
-    if (!connectionTest.success) {
-      return { success: false, message: connectionTest.message };
-    }
-
-    // Use the secure RPC function to verify password with bcrypt
+    // Appel direct au RPC verify_admin_password (SECURITY DEFINER contourne la RLS)
+    // Pas de test de connexion séparé car admin_settings bloque les SELECT directs
     const { data, error } = await supabase
       .rpc('verify_admin_password', { input_password: password });
 
