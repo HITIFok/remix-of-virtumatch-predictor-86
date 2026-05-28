@@ -173,11 +173,17 @@ Deno.serve(async (req: Request) => {
     // --- Authorization check ---
     const cronKey = req.headers.get("x-cron-key");
     const authHeader = req.headers.get("Authorization");
-    const expectedCronKey = Deno.env.get("CRON_SECRET") || "REDACTED_CRON_SECRET";
+    const expectedCronKey = Deno.env.get("CRON_SECRET");
     const isAuthorized =
-      cronKey === expectedCronKey ||
-      (authHeader && authHeader.startsWith("Bearer ")) ||
-      true; // Allow all for now (RLS handles security)
+      (cronKey && expectedCronKey && cronKey === expectedCronKey) ||
+      (authHeader && authHeader.startsWith("Bearer "));
+
+    if (!isAuthorized) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Read body for optional league_id
     let body: any = {};
