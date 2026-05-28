@@ -1,15 +1,18 @@
-// Supabase Edge Function: verify-predictions
-// Vérifie les prédictions en attente en récupérant les résultats de TOUTES les ligues
+// verify-predictions/index.ts — Supabase Edge Function
+// Verifies pending predictions by comparing with API results
+// NO imports — uses Deno.serve() + native fetch
 
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
-const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
-const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues"
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-// Toutes les ligues
 const LEAGUES = [
   { id: "8035", name: "English League" },
   { id: "8060", name: "Coupe d'Afrique" },
@@ -19,187 +22,154 @@ const LEAGUES = [
   { id: "8042", name: "French League" },
   { id: "8043", name: "German League" },
   { id: "8044", name: "Portuguese League" },
-]
+];
 
-const HEADERS = {
+const HEADERS: Record<string, string> = {
   "Origin": "https://bet261.mg",
   "Referer": "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
-  "Accept": "application/json",
-}
+  "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "fr-FR,fr;q=0.9",
+  "App-Version": "33335",
+};
 
-// CORS headers - restreint aux origins autorisées
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
-const DEFAULT_ORIGIN = ''; // Définir votre domaine de production ici
-
-function getCorsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : DEFAULT_ORIGIN;
-  return {
-    'Access-Control-Allow-Origin': allowedOrigin,
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey',
-    'Content-Type': 'application/json'
-  };
-}
-
-async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>> {
-  const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>()
-
+async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
+  const resultsMap = new Map();
   try {
-    const response = await fetch(`${API_BASE}/${leagueId}/results?skip=0&take=200`, { headers: HEADERS })
-
+    const response = await fetch(`${API_BASE}/${leagueId}/results?skip=0&take=200`, { headers: HEADERS });
     if (!response.ok) {
-      console.log(`⚠️ League ${leagueId}: API returned ${response.status}`)
-      return resultsMap
+      console.log(`League ${leagueId}: API returned ${response.status}`);
+      return resultsMap;
     }
-
-    const data = await response.json()
-
-    if (data.rounds) {
+    const data = await response.json();
+    if (data?.rounds) {
       for (const roundData of data.rounds) {
         for (const match of (roundData.matches || [])) {
-          const homeTeam = match.homeTeam?.name
-          const awayTeam = match.awayTeam?.name
-          const score = match.score || "0:0"
-          const parts = score.split(":")
-          const homeScore = parseInt(parts[0]) || 0
-          const awayScore = parseInt(parts[1]) || 0
-
-          let outcome: string
-          if (homeScore > awayScore) outcome = '1'
-          else if (homeScore < awayScore) outcome = '2'
-          else outcome = 'X'
-
+          const homeTeam = match.homeTeam?.name;
+          const awayTeam = match.awayTeam?.name;
+          const score = match.score || "0:0";
+          const parts = score.split(":");
+          const homeScore = parseInt(parts[0]) || 0;
+          const awayScore = parseInt(parts[1]) || 0;
+          let outcome: string;
+          if (homeScore > awayScore) outcome = "1";
+          else if (homeScore < awayScore) outcome = "2";
+          else outcome = "X";
           if (homeTeam && awayTeam) {
-            resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome, league: LEAGUES.find(l => l.id === leagueId)?.name || 'Unknown' })
+            resultsMap.set(`${homeTeam}|${awayTeam}`, {
+              homeScore, awayScore, outcome,
+              league: LEAGUES.find(l => l.id === leagueId)?.name || "Unknown",
+            });
           }
         }
       }
     }
-
-    console.log(`✅ League ${leagueId}: ${resultsMap.size} results`)
-  } catch (err) {
-    console.log(`❌ League ${leagueId}: ${err.message}`)
+    console.log(`League ${leagueId}: ${resultsMap.size} results`);
+  } catch (err: any) {
+    console.log(`League ${leagueId}: ${err.message}`);
   }
-
-  return resultsMap
+  return resultsMap;
 }
 
-serve(async (req) => {
-  // Handle CORS preflight
-  const corsHeaders = getCorsHeaders(req);
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: corsHeaders })
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  console.log('🔍 Verify predictions called')
-
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  console.log("=== verify-predictions called ===");
 
   try {
-    // 1. Récupérer les prédictions en attente
-    const { data: pendingPredictions, error: fetchError } = await supabase
-      .from('predictions')
-      .select('*')
-      .eq('status', 'pending')
-      .order('created_at', { ascending: true })
-      .limit(100)
-
-    if (fetchError) {
+    // 1. Fetch pending predictions from DB
+    const dbRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/predictions?status=eq.pending&order=created_at.asc&limit=100`,
+      {
+        headers: {
+          "apikey": SUPABASE_SERVICE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    if (!dbRes.ok) {
       return new Response(
-        JSON.stringify({ error: 'Failed to fetch predictions', details: fetchError.message }),
-        { status: 500, headers: corsHeaders }
-      )
+        JSON.stringify({ error: "Failed to fetch predictions" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-
-    console.log(`📋 Found ${pendingPredictions?.length || 0} pending predictions`)
+    const pendingPredictions = await dbRes.json();
+    console.log(`Found ${pendingPredictions?.length || 0} pending predictions`);
 
     if (!pendingPredictions || pendingPredictions.length === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: 'Aucune prédiction à vérifier', verified: 0 }),
-        { status: 200, headers: corsHeaders }
-      )
+        JSON.stringify({ success: true, message: "Aucune prédiction à vérifier", verified: 0 }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // 2. Récupérer les résultats de TOUTES les ligues en parallèle
-    console.log('🌐 Fetching results from ALL leagues...')
-    const allResults = await Promise.all(LEAGUES.map(l => fetchResults(l.id)))
-
-    // Combiner tous les résultats
-    const resultsMap = new Map<string, { homeScore: number, awayScore: number, outcome: string, league: string }>()
+    // 2. Fetch results from ALL leagues in parallel
+    const allResults = await Promise.all(LEAGUES.map(l => fetchResults(l.id)));
+    const resultsMap = new Map();
     for (const leagueResults of allResults) {
       for (const [key, value] of leagueResults) {
-        resultsMap.set(key, value)
+        resultsMap.set(key, value);
       }
     }
+    console.log(`Total results: ${resultsMap.size}`);
 
-    console.log(`📊 Total results: ${resultsMap.size}`)
-
-    // 3. Comparer et mettre à jour
-    let correct = 0
-    let incorrect = 0
-    const updates: Promise<any>[] = []
+    // 3. Compare and update predictions
+    let correct = 0, incorrect = 0;
+    const updates: Promise<any>[] = [];
 
     for (const pred of pendingPredictions) {
-      const key = `${pred.home_team}|${pred.away_team}`
-      const result = resultsMap.get(key)
-
+      const key = `${pred.home_team}|${pred.away_team}`;
+      const result = resultsMap.get(key);
       if (result) {
-        const isCorrect = pred.prediction === result.outcome
-        const status = isCorrect ? 'correct' : 'incorrect'
-
-        if (isCorrect) correct++
-        else incorrect++
+        const isCorrect = pred.prediction === result.outcome;
+        const status = isCorrect ? "correct" : "incorrect";
+        if (isCorrect) correct++; else incorrect++;
 
         updates.push(
-          supabase
-            .from('predictions')
-            .update({
+          fetch(`${SUPABASE_URL}/rest/v1/predictions?id=eq.${pred.id}`, {
+            method: "PATCH",
+            headers: {
+              "apikey": SUPABASE_SERVICE_KEY,
+              "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+              "Content-Type": "application/json",
+              "Prefer": "return=minimal",
+            },
+            body: JSON.stringify({
               actual_home_score: result.homeScore,
               actual_away_score: result.awayScore,
               actual_outcome: result.outcome,
               actual_score: `${result.homeScore}:${result.awayScore}`,
               status: status,
-              verified_at: new Date().toISOString()
-            })
-            .eq('id', pred.id)
-        )
-
-        console.log(`${isCorrect ? '✅' : '❌'} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome} (${result.league})`)
+              verified_at: new Date().toISOString(),
+            }),
+          })
+        );
+        console.log(`${isCorrect ? "✅" : "❌"} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome}`);
       }
     }
 
-    // Exécuter les mises à jour avec Promise.allSettled pour logger les erreurs individuelles
-    const settledResults = await Promise.allSettled(updates)
-    let failedUpdates = 0;
-    for (const result of settledResults) {
-      if (result.status === 'rejected') {
-        failedUpdates++;
-        console.error('Failed update:', result.reason);
-      }
-    }
-
-    console.log(`🎉 Verification complete: ${correct} correct, ${incorrect} incorrect, ${failedUpdates} failed`)
+    const settledResults = await Promise.allSettled(updates);
+    const failedUpdates = settledResults.filter(r => r.status === "rejected").length;
+    console.log(`Verification: ${correct} correct, ${incorrect} incorrect, ${failedUpdates} failed`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        verified: settledResults.filter(r => r.status === 'fulfilled').length,
-        correct,
-        incorrect,
-        failedUpdates,
+        verified: updates.length,
+        correct, incorrect, failedUpdates,
         stillPending: pendingPredictions.length - updates.length,
-        totalResults: resultsMap.size
+        totalResults: resultsMap.size,
       }),
-      { status: 200, headers: corsHeaders }
-    )
-
-  } catch (error) {
-    console.error('💥 Error:', error)
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error: any) {
+    console.error("verify-predictions error:", error);
     return new Response(
       JSON.stringify({ error: error.message }),
-      { status: 500, headers: corsHeaders }
-    )
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
-})
+});

@@ -1,33 +1,29 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// push-odds/index.ts — Supabase Edge Function
+// Receives scraped data from external scraper and stores in scraped_data
+// NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
-const DEFAULT_ORIGIN = ''; // Définir votre domaine de production
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-push-key",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
 
-function getCorsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : DEFAULT_ORIGIN;
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-push-key, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-  };
-}
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
     // Authenticate with push key
     const pushKey = req.headers.get("x-push-key");
     const expectedKey = Deno.env.get("SCRAPER_PUSH_KEY");
-    
+
     if (!expectedKey) {
       return new Response(
-        JSON.stringify({ success: false, error: "SCRAPER_PUSH_KEY not configured on server" }),
+        JSON.stringify({ success: false, error: "SCRAPER_PUSH_KEY not configured" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -44,41 +40,27 @@ serve(async (req) => {
 
     if (!matches && !results && !ranking) {
       return new Response(
-        JSON.stringify({ success: false, error: "No data provided (matches, results, or ranking required)" }),
+        JSON.stringify({ success: false, error: "No data provided" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
     const leagueSlug = league || "";
     const now = new Date().toISOString();
-    const upserts = [];
+    const upserts: Promise<boolean>[] = [];
 
     if (Array.isArray(matches)) {
-      upserts.push({ data_type: "matches", league: leagueSlug, payload: matches, scraped_at: now });
+      upserts.push(supabasePush("matches", leagueSlug, matches, now));
     }
     if (Array.isArray(results)) {
-      upserts.push({ data_type: "results", league: leagueSlug, payload: results, scraped_at: now });
+      upserts.push(supabasePush("results", leagueSlug, results, now));
     }
     if (Array.isArray(ranking)) {
-      upserts.push({ data_type: "ranking", league: leagueSlug, payload: ranking, scraped_at: now });
+      upserts.push(supabasePush("ranking", leagueSlug, ranking, now));
     }
 
-    // Delete old data for this league, then insert fresh
-    for (const entry of upserts) {
-      await supabase
-        .from("scraped_data")
-        .delete()
-        .eq("data_type", entry.data_type)
-        .eq("league", entry.league);
-
-      await supabase.from("scraped_data").insert(entry);
-    }
-
-    console.log(`[push-odds] Saved: ${matches?.length || 0} matches, ${results?.length || 0} results, ${ranking?.length || 0} ranking for league "${leagueSlug}"`);
+    const results2 = await Promise.allSettled(upserts);
+    const successCount = results2.filter(r => r.status === "fulfilled" && r.value).length;
 
     return new Response(
       JSON.stringify({
@@ -88,15 +70,58 @@ serve(async (req) => {
           results: results?.length || 0,
           ranking: ranking?.length || 0,
         },
+        upserted: successCount,
         timestamp: now,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error("[push-odds] Error:", error);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ success: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
+
+async function supabasePush(
+  dataType: string,
+  leagueSlug: string,
+  payload: any[],
+  scrapedAt: string,
+): Promise<boolean> {
+  try {
+    // Delete old data for this type+league, then insert fresh
+    const deleteRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/scraped_data?data_type=eq.${dataType}&league=eq.${encodeURIComponent(leagueSlug)}`,
+      {
+        method: "DELETE",
+        headers: {
+          "apikey": SUPABASE_SERVICE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+        },
+      }
+    );
+
+    const insertRes = await fetch(`${SUPABASE_URL}/rest/v1/scraped_data`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify({
+        data_type: dataType,
+        league: leagueSlug,
+        payload: payload,
+        scraped_at: scrapedAt,
+      }),
+    });
+
+    return insertRes.ok;
+  } catch (e: any) {
+    console.error(`Push error for ${dataType}:`, e.message);
+    return false;
+  }
+}

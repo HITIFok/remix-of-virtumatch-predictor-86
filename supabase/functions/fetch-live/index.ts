@@ -1,16 +1,12 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
+// fetch-live/index.ts — Supabase Edge Function
+// Fetches live match data, ranking, results from sporty-tech.net API
+// NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
-const DEFAULT_ORIGIN = ''; // Définir votre domaine de production
-
-function getCorsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get('Origin') || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : DEFAULT_ORIGIN;
-  return {
-    "Access-Control-Allow-Origin": allowedOrigin,
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  };
-}
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+};
 
 const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
@@ -25,26 +21,16 @@ const LEAGUES: Record<string, string> = {
   "8044": "Portuguese League",
 };
 
-const HEADERS = {
+const HEADERS: Record<string, string> = {
   "Origin": "https://bet261.mg",
   "Referer": "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-  "Accept": "application/json",
+  "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "fr-FR,fr;q=0.9",
+  "App-Version": "33335",
 };
 
-// ============================================================
-// CACHE en mémoire des eventCategoryIds par ligue.
-// Persiste entre les appels dans la même instance Deno (cold start).
-// Évite de scanner à chaque requête — cause du "CPU Time exceeded".
-// ============================================================
-const eventCategoryCache: Record<string, { id: string; ts: number }> = {};
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-
-/**
- * Requête API avec timeout AbortController.
- * Supabase Free: ~400ms CPU max. Chaque fetch doit être rapide.
- */
-async function fetchAPI(path: string, timeoutMs = 6000): Promise<any> {
+async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -53,163 +39,75 @@ async function fetchAPI(path: string, timeoutMs = 6000): Promise<any> {
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.log(`API ${res.status} for ${path}`);
+      return null;
+    }
     return await res.json();
-  } catch {
+  } catch (e: any) {
+    console.log(`fetchAPI error for ${path}: ${e.message}`);
     return null;
   }
 }
 
 /**
- * Tente de trouver l'eventCategoryId en scannant UNE SEULE FOIS
- * avec un budget CPU très limité (max 20 IDs testés).
- * Le résultat est mis en cache pour 10 minutes.
+ * Fetch live playout data for a specific round.
+ * Uses parentEventCategoryId (leagueId) as per bet261.mg API spec.
  */
-async function findEventCategoryId(leagueId: string): Promise<string | null> {
-  // 1. Vérifier le cache d'abord
-  const cached = eventCategoryCache[leagueId];
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    console.log(`📌 eventCategoryId (cache): ${cached.id}`);
-    return cached.id;
-  }
-
-  // 2. Essayer d'extraire l'eventCategoryId depuis les données de matchs
-  const matchesData = await fetchAPI(`/${leagueId}/matches`, 5000);
-  if (matchesData?.rounds) {
-    for (const rd of matchesData.rounds) {
-      // L'API retourne souvent eventCategoryId dans les données de ronde
-      if (rd.eventCategoryId) {
-        const id = String(rd.eventCategoryId);
-        eventCategoryCache[leagueId] = { id, ts: Date.now() };
-        console.log(`📌 eventCategoryId (from matches): ${id}`);
-        return id;
-      }
-      // Vérifier dans les matchs
-      for (const m of rd.matches || []) {
-        if (m.eventCategoryId) {
-          const id = String(m.eventCategoryId);
-          eventCategoryCache[leagueId] = { id, ts: Date.now() };
-          console.log(`📌 eventCategoryId (from match): ${id}`);
-          return id;
+async function fetchLiveData(leagueId: string, round: number): Promise<Map<number, any>> {
+  const liveMatches = new Map();
+  try {
+    const data = await fetchAPI(
+      `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
+      5000
+    );
+    if (data?.matches && Array.isArray(data.matches)) {
+      for (const m of data.matches) {
+        const goals = m.goals || [];
+        if (goals.length > 0) {
+          const lastGoal = goals[goals.length - 1];
+          liveMatches.set(m.id, {
+            scoreHome: lastGoal.homeScore || 0,
+            scoreAway: lastGoal.awayScore || 0,
+            minute: lastGoal.minute || 0,
+            goals: goals,
+          });
         }
       }
     }
+    console.log(`LIVE round ${round}: ${liveMatches.size} matches`);
+  } catch (e: any) {
+    console.log(`Playout error: ${e.message}`);
   }
-
-  // 3. Scan minimal : 20 IDs max autour de la valeur connue
-  // Pour English League: ~137840, pour les autres ligues on essaie des plages réduites
-  const knownRanges: Record<string, number[]> = {
-    "8035": [137840, 137841, 137842, 137843, 137844, 137845, 137846, 137847, 137848, 137849],
-    "8060": [137840, 137841, 137842, 137843, 137844, 137845],
-    "8056": [137830, 137831, 137832, 137833, 137834, 137835],
-    "8036": [137850, 137851, 137852, 137853, 137854, 137855],
-    "8037": [137855, 137856, 137857, 137858, 137859, 137860],
-    "8042": [137860, 137861, 137862, 137863, 137864, 137865],
-    "8043": [137865, 137866, 137867, 137868, 137869, 137870],
-    "8044": [137870, 137871, 137872, 137873, 137874, 137875],
-  };
-
-  const candidates = knownRanges[leagueId] || [];
-
-  if (candidates.length > 0) {
-    // Scanner par batch de 6 en parallèle max
-    const batchSize = 6;
-    for (let i = 0; i < candidates.length; i += batchSize) {
-      const batch = candidates.slice(i, i + batchSize);
-      const results = await Promise.all(
-        batch.map(async (id) => {
-          const data = await fetchAPI(`/round/8?eventCategoryId=${id}&getNext=false`, 3000);
-          return { id, found: data?.matches && data.matches.length > 0 };
-        })
-      );
-      const found = results.find(r => r.found);
-      if (found) {
-        eventCategoryCache[leagueId] = { id: String(found.id), ts: Date.now() };
-        console.log(`📌 eventCategoryId (scan): ${found.id}`);
-        return String(found.id);
-      }
-    }
-  }
-
-  console.log(`📌 eventCategoryId: non trouvé (mis en cache négatif pour 5 min)`);
-  // Mettre en cache négatif pour éviter de rescanner à chaque appel
-  eventCategoryCache[leagueId] = { id: "__none__", ts: Date.now() };
-  return null;
-}
-
-/**
- * Récupère les matchs en direct (playout).
- * Max 10 rondes en parallèle pour rester dans le budget CPU.
- */
-async function fetchLiveData(leagueId: string, eventCategoryId: string): Promise<Map<number, any>> {
-  const liveMatches = new Map();
-
-  // Rondes 1 à 10 (couverture large avec budget CPU minimal)
-  const rounds = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-  const roundResults = await Promise.allSettled(
-    rounds.map(roundNum =>
-      fetchAPI(
-        `/round/${roundNum}/playout?eventCategoryId=${eventCategoryId}&parentEventCategoryId=${leagueId}`,
-        4000,
-      )
-    )
-  );
-
-  for (const result of roundResults) {
-    if (result.status !== "fulfilled" || !result.value?.matches) continue;
-    for (const m of result.value.matches) {
-      const goals = m.goals || [];
-      if (goals.length > 0) {
-        const lastGoal = goals[goals.length - 1];
-        liveMatches.set(m.id, {
-          scoreHome: lastGoal.homeScore || 0,
-          scoreAway: lastGoal.awayScore || 0,
-          minute: lastGoal.minute || 0,
-          goals: goals,
-        });
-      }
-    }
-  }
-
-  console.log(`🔴 LIVE matches: ${liveMatches.size}`);
   return liveMatches;
 }
 
-serve(async (req) => {
-  const corsHeaders = getCorsHeaders(req);
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
     const url = new URL(req.url);
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
+    console.log(`=== fetch-live: ${leagueName} (${leagueId}) ===`);
 
-    console.log(`=== 🔄 League ${leagueId} (${leagueName}) ===`);
-
-    // Trouver l'eventCategoryId (cache ou scan minimal)
-    const eventCategoryId = await findEventCategoryId(leagueId);
-    console.log(`📌 eventCategoryId: ${eventCategoryId}`);
-
-    // Récupérer les données en parallèle (max 4 requêtes simultanées)
-    const [matchesData, rankingData, resultsData, liveMatches] = await Promise.all([
+    // Fetch matches, ranking, results in parallel
+    const [matchesData, rankingData, resultsData] = await Promise.all([
       fetchAPI(`/${leagueId}/matches`),
       fetchAPI(`/${leagueId}/ranking`),
       fetchAPI(`/${leagueId}/results?skip=0&take=200`),
-      eventCategoryId && eventCategoryId !== "__none__"
-        ? fetchLiveData(leagueId, eventCategoryId)
-        : Promise.resolve(new Map()),
     ]);
 
     if (!matchesData) {
       return new Response(
-        JSON.stringify({ success: false, error: "Failed to fetch matches" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        JSON.stringify({ success: false, error: "API unavailable", matches: [], results: [], ranking: [] }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Identifier les matchs terminés depuis les résultats
+    // Identify finished matches from results
     const finishedMatchIds = new Set<number>();
     if (resultsData?.rounds) {
       for (const rd of resultsData.rounds) {
@@ -219,6 +117,32 @@ serve(async (req) => {
       }
     }
 
+    // Determine which rounds to check for live data (max 5 to save CPU)
+    const roundsToCheck = new Set<number>();
+    if (matchesData?.rounds) {
+      for (const rd of matchesData.rounds) {
+        roundsToCheck.add(rd.roundNumber || 0);
+      }
+    }
+    const roundList = [...roundsToCheck].filter(r => r > 0).slice(0, 5);
+
+    // Fetch live data for active rounds (parallel, max 5)
+    let liveMatches = new Map<number, any>();
+    if (roundList.length > 0) {
+      const liveResults = await Promise.allSettled(
+        roundList.map(r => fetchLiveData(leagueId, r))
+      );
+      for (const result of liveResults) {
+        if (result.status === "fulfilled") {
+          for (const [id, data] of result.value) {
+            liveMatches.set(id, data);
+          }
+        }
+      }
+    }
+    console.log(`Total LIVE matches: ${liveMatches.size}`);
+
+    // Build matches array
     const matches: any[] = [];
     let liveCount = 0, bettingCount = 0, finishedCount = 0;
 
@@ -276,9 +200,9 @@ serve(async (req) => {
       }
     }
 
-    console.log(`=== 📊 live=${liveCount}, betting=${bettingCount}, finished=${finishedCount} ===`);
+    console.log(`live=${liveCount}, betting=${bettingCount}, finished=${finishedCount}`);
 
-    // Parser le classement
+    // Parse ranking
     const ranking: any[] = [];
     if (rankingData?.teams) {
       for (const t of rankingData.teams) {
@@ -292,7 +216,7 @@ serve(async (req) => {
       }
     }
 
-    // Parser les résultats
+    // Parse results
     const results: any[] = [];
     if (resultsData?.rounds) {
       for (const rd of resultsData.rounds) {
@@ -309,18 +233,18 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        success: true, league: leagueName, leagueId, eventCategoryId,
+        success: true, league: leagueName, leagueId,
         matches, ranking, results, liveCount, bettingCount, finishedCount,
         scrapedAt: new Date().toISOString(),
         counts: { matches: matches.length, ranking: ranking.length, results: results.length },
       }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-
-  } catch (error) {
+  } catch (error: any) {
+    console.error("fetch-live error:", error.message);
     return new Response(
-      JSON.stringify({ success: false, error: error instanceof Error ? error.message : "Unknown error" }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({ success: false, error: error.message, matches: [], results: [], ranking: [] }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
