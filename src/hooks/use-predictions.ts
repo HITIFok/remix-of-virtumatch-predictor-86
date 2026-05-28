@@ -291,6 +291,27 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
+  // Supprimer une prédiction par ID
+  const deletePrediction = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('predictions')
+        .delete()
+        .eq('id', id)
+
+      if (error) {
+        console.error('Erreur suppression:', error)
+        throw error
+      }
+
+      await loadPredictions(true)
+      return true
+    } catch (err) {
+      console.error('Error deleting prediction:', err)
+      throw err
+    }
+  }, [loadPredictions])
+
   // Vérifier manuellement les prédictions via Edge Function (optionnel)
   const verifyPredictions = useCallback(async () => {
     try {
@@ -322,6 +343,7 @@ export function usePredictions() {
     loading,
     error,
     savePrediction,
+    deletePrediction,
     verifyPredictions,
     refresh: () => loadPredictions(false)
   }
