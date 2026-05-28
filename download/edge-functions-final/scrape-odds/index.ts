@@ -1,0 +1,88 @@
+// scrape-odds/index.ts — Supabase Edge Function
+// Reads cached scraped data from scraped_data table (pushed by auto-scrape)
+// NO imports — uses Deno.serve() + native fetch
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+};
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  try {
+    let body: any = {};
+    try { body = await req.json(); } catch { /* empty body */ }
+    const leagueSlug = body.league || "";
+
+    // Read cached data from scraped_data
+    const leagueFilter = leagueSlug ? `&league=eq.${encodeURIComponent(leagueSlug)}` : "";
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/scraped_data?select=*&order=scraped_at.desc${leagueFilter}`,
+      {
+        headers: {
+          "apikey": SUPABASE_SERVICE_KEY,
+          "Authorization": `Bearer ${SUPABASE_SERVICE_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      console.error(`DB error: ${err}`);
+      return new Response(
+        JSON.stringify({ success: false, error: "Database error" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const rows = await res.json();
+
+    if (!rows || rows.length === 0) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Aucune donnée disponible. Le cron auto-scrape va les créer.",
+          noData: true,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Extract latest data by type
+    const getPayload = (type: string): any[] => {
+      const row = rows.find((r: any) => r.data_type === type);
+      return row?.payload && Array.isArray(row.payload) ? row.payload : [];
+    };
+
+    const matches = getPayload("matches");
+    const results = getPayload("results");
+    const ranking = getPayload("ranking");
+    const scrapedAt = rows[0]?.scraped_at || new Date().toISOString();
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        matches,
+        results,
+        ranking,
+        scrapedAt,
+        source: "auto-scrape-cron",
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error: any) {
+    console.error("scrape-odds error:", error);
+    return new Response(
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
