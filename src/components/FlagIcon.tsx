@@ -46,6 +46,31 @@ export default function FlagIcon({ countryCode, size = 20 }: FlagIconProps) {
       </svg>
     );
   }
+  // Coupe du monde - Trophée FIFA stylisé
+  if (countryCode === "worldcup") {
+    return (
+      <svg width={size} height={size * 0.9} viewBox="0 0 50 45" className="inline-block">
+        {/* Fond bleu marine FIFA */}
+        <rect width="50" height="45" fill="#0b2a5c" rx="2"/>
+        {/* Lignes dorées décoratives */}
+        <rect x="0" y="2" width="50" height="1" fill="#d4af37" opacity="0.5"/>
+        <rect x="0" y="42" width="50" height="1" fill="#d4af37" opacity="0.5"/>
+        {/* Trophée - Coupe */}
+        <path d="M18 10 L18 20 Q18 26 25 28 Q32 26 32 20 L32 10" fill="none" stroke="#d4af37" strokeWidth="1.8"/>
+        {/* Anses de la coupe */}
+        <path d="M18 12 Q12 12 12 16 Q12 20 18 18" fill="none" stroke="#d4af37" strokeWidth="1.5"/>
+        <path d="M32 12 Q38 12 38 16 Q38 20 32 18" fill="none" stroke="#d4af37" strokeWidth="1.5"/>
+        {/* Base du trophée */}
+        <rect x="22" y="28" width="6" height="3" fill="#d4af37" rx="0.5"/>
+        <rect x="19" y="31" width="12" height="2.5" fill="#d4af37" rx="0.5"/>
+        <rect x="21" y="33.5" width="8" height="2" fill="#d4af37" rx="0.5"/>
+        {/* Globe terrestre stylisé au centre */}
+        <circle cx="25" cy="18" r="5" fill="none" stroke="#d4af37" strokeWidth="1" opacity="0.6"/>
+        <ellipse cx="25" cy="18" rx="2.5" ry="5" fill="none" stroke="#d4af37" strokeWidth="0.6" opacity="0.4"/>
+        <line x1="20" y1="18" x2="30" y2="18" stroke="#d4af37" strokeWidth="0.6" opacity="0.4"/>
+      </svg>
+    );
+  }
   // Angleterre
   if (countryCode === "gb-eng") {
     return (
