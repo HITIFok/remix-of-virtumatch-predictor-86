@@ -30,3 +30,27 @@ Stage Summary:
 - auto-scrape uses native fetch (no createClient) to upsert into scraped_data
 - scraped_data auto-update via cron (existing cron-setup.sql calls auto-scrape every 2 min)
 - Files also saved to /home/z/my-project/download/edge-functions-final/
+
+---
+Task ID: security-audit-fix
+Agent: main
+Task: Corriger toutes les vulnérabilités de sécurité identifiées dans l'audit
+
+Work Log:
+- Analysé le document d'audit (Audit_Securite_GitHub.docx) avec 10+ points critiques
+- Supprimé les secrets hardcodés (PUSH_KEY, ANON_KEY) de scraper-termux.py
+- Supprimé les fallbacks URL Supabase de 5 scripts Python
+- Restreint auth de auto-scrape (x-cron-key uniquement, plus de Bearer bypass)
+- Restreint CORS dans 3 Edge Functions (auto-scrape, push-odds, scrape-odds)
+- Ajouté verification apikey dans scrape-odds
+- Sécurisé le workflow GitHub Actions (permissions minimales, environment, retention 7j)
+- Désactivé console.log/debugger en production via esbuild.drop
+- Mis à jour .env.example avec toutes les variables documentées
+- Purgé tous les secrets de l'historique git via git-filter-repo (3 passes)
+- Force-pushed vers GitHub
+
+Stage Summary:
+- 11 fichiers modifiés, 86 insertions, 25 suppressions
+- Tous les secrets supprimés du code ET de l'historique git
+- 0 occurrences de secrets dans le scan final
+- Commit: 0a31e69 (force push)
