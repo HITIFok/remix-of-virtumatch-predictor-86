@@ -12,23 +12,31 @@ CREATE TABLE IF NOT EXISTS admin_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. INSÉRER OU METTRE À JOUR LE MOT DE PASSE ADMIN
-INSERT INTO admin_settings (setting_key, setting_value)
-VALUES ('admin_code', 'REDACTED_SECRET')
-ON CONFLICT (setting_key) 
-DO UPDATE SET setting_value = 'REDACTED_SECRET', updated_at = NOW();
+-- 2. INSÉRER LE MOT DE PASSE ADMIN HASHÉ (bcrypt)
+-- ⚠️ Remplacez LE_HASH_BCRYPT_ICI par votre propre hash généré avec :
+--    SELECT pgcrypto.crypt('VOTRE_MOT_DE_PASSE', pgcrypto.gen_salt('bf'));
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- 3. CONFIGURER RLS POUR ADMIN_SETTINGS
+INSERT INTO admin_settings (setting_key, setting_value)
+VALUES ('admin_code', 'LE_HASH_BCRYPT_ICI')
+ON CONFLICT (setting_key)
+DO UPDATE SET updated_at = NOW();
+
+-- 3. CONFIGURER RLS POUR ADMIN_SETTINGS (sécurisé)
 ALTER TABLE admin_settings ENABLE ROW LEVEL SECURITY;
 
--- Supprimer les anciennes politiques
 DROP POLICY IF EXISTS "Allow read access" ON admin_settings;
 DROP POLICY IF EXISTS "Allow write access" ON admin_settings;
 DROP POLICY IF EXISTS "Allow all access on admin_settings" ON admin_settings;
+DROP POLICY IF EXISTS "Service role admin_settings" ON admin_settings;
 
--- Créer une politique qui permet tout accès (pour l'APK)
-CREATE POLICY "Allow all access on admin_settings" ON admin_settings
-  FOR ALL USING (true) WITH CHECK (true);
+-- Lecture : via la fonction RPC verify_admin_password uniquement (pas de SELECT direct)
+CREATE POLICY "No direct read admin_settings" ON admin_settings
+  FOR SELECT USING (false);
+
+-- Écriture : service_role uniquement
+CREATE POLICY "Service role admin_settings" ON admin_settings
+  FOR ALL USING (auth.role() = 'service_role');
 
 -- 4. CRÉER LA TABLE ACCESS_CODES SI ELLE N'EXISTE PAS
 CREATE TABLE IF NOT EXISTS access_codes (
@@ -41,18 +49,23 @@ CREATE TABLE IF NOT EXISTS access_codes (
   used_by_device TEXT
 );
 
--- 5. CONFIGURER RLS POUR ACCESS_CODES
+-- 5. CONFIGURER RLS POUR ACCESS_CODES (sécurisé)
 ALTER TABLE access_codes ENABLE ROW LEVEL SECURITY;
 
--- Supprimer les anciennes politiques
 DROP POLICY IF EXISTS "Allow all access" ON access_codes;
 DROP POLICY IF EXISTS "Allow read access" ON access_codes;
 DROP POLICY IF EXISTS "Allow write access" ON access_codes;
 DROP POLICY IF EXISTS "Allow all operations on access_codes" ON access_codes;
+DROP POLICY IF EXISTS "Public read access_codes" ON access_codes;
+DROP POLICY IF EXISTS "Service role access_codes" ON access_codes;
 
--- Créer une politique qui permet tout accès (pour l'APK)
-CREATE POLICY "Allow all access on access_codes" ON access_codes
-  FOR ALL USING (true) WITH CHECK (true);
+-- Lecture publique (nécessaire pour vérifier un code)
+CREATE POLICY "Public read access_codes" ON access_codes
+  FOR SELECT USING (true);
+
+-- Écriture : service_role uniquement
+CREATE POLICY "Service role access_codes" ON access_codes
+  FOR ALL USING (auth.role() = 'service_role');
 
 -- 6. CRÉER LA TABLE PREDICTIONS SI ELLE N'EXISTE PAS
 CREATE TABLE IF NOT EXISTS predictions (
@@ -103,25 +116,37 @@ CREATE TABLE IF NOT EXISTS predictions (
 -- 7. CONFIGURER RLS POUR PREDICTIONS
 ALTER TABLE predictions ENABLE ROW LEVEL SECURITY;
 
--- Supprimer les anciennes politiques
 DROP POLICY IF EXISTS "Allow all access" ON predictions;
 DROP POLICY IF EXISTS "Allow all operations on predictions" ON predictions;
+DROP POLICY IF EXISTS "Public read predictions" ON predictions;
+DROP POLICY IF EXISTS "Public insert predictions" ON predictions;
+DROP POLICY IF EXISTS "Service role predictions" ON predictions;
 
--- Créer une politique qui permet tout accès
-CREATE POLICY "Allow all access on predictions" ON predictions
-  FOR ALL USING (true) WITH CHECK (true);
+-- Lecture publique (nécessaire pour l'historique)
+CREATE POLICY "Public read predictions" ON predictions
+  FOR SELECT USING (true);
+
+-- Insertion publique (pour sauvegarder les prédictions)
+CREATE POLICY "Public insert predictions" ON predictions
+  FOR INSERT WITH CHECK (true);
+
+-- Suppression : owner uniquement (même device_id) OU service_role
+CREATE POLICY "Delete own predictions" ON predictions
+  FOR DELETE USING (
+    device_id = (current_setting('request.header.x-device-id', true)) OR
+    auth.role() = 'service_role'
+  );
+
+-- Service role : accès complet
+CREATE POLICY "Service role predictions" ON predictions
+  FOR ALL USING (auth.role() = 'service_role');
 
 -- =====================================================
--- VÉRIFICATION - Afficher les données
+-- VÉRIFICATION
 -- =====================================================
 
--- Vérifier que le mot de passe admin est bien configuré
-SELECT 'admin_settings' as table_name, setting_key, setting_value FROM admin_settings;
-
--- Vérifier les tables
 SELECT 'access_codes' as table_name, COUNT(*) as count FROM access_codes
 UNION ALL
 SELECT 'predictions' as table_name, COUNT(*) as count FROM predictions;
 
--- Message de confirmation
 SELECT '✅ Configuration Supabase terminée avec succès!' as status;
