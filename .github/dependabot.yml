@@ -1,19 +1,50 @@
 version: 2
 updates:
+  # npm dependencies - only patch and minor updates (no breaking changes)
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
     open-pull-requests-limit: 5
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Block major version bumps that cause breaking changes
+    ignore:
+      - dependency-name: "eslint"
+        versions: [">=10.0.0"]
+      - dependency-name: "tailwindcss"
+        versions: [">=4.0.0"]
+      - dependency-name: "tailwind-merge"
+        versions: [">=3.0.0"]
+      - dependency-name: "react-day-picker"
+        versions: [">=9.0.0"]
+      - dependency-name: "typescript-eslint"
+        versions: [">=9.0.0"]
+      - dependency-name: "eslint-plugin-react-hooks"
+        versions: [">=6.0.0"]
+    # Group minor/patch updates together
+    groups:
+      production-dependencies:
+        dependency-type: "production"
+      development-dependencies:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
     labels:
       - "dependencies"
-      - "automated"
 
+  # GitHub Actions - only patch and minor updates
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
     labels:
       - "dependencies"
       - "github-actions"
-      - "automated"

@@ -3,18 +3,18 @@ name: Build APK
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
-# Permissions minimales - principe du moindre privilège
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       - name: Checkout repository
@@ -55,12 +55,7 @@ jobs:
 
       - name: Create keystore.properties
         run: |
-          cat > android/keystore.properties << EOF
-          storeFile=app/release-keystore.jks
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=virutelbet261
-          keyPassword=${{ secrets.KEYSTORE_PASSWORD }}
-          EOF
+          printf 'storeFile=app/release-keystore.jks\nstorePassword=%s\nkeyAlias=virutelbet261\nkeyPassword=%s\n' "${{ secrets.KEYSTORE_PASSWORD }}" "${{ secrets.KEYSTORE_PASSWORD }}" > android/keystore.properties
 
       - name: Build APK
         run: |
@@ -68,23 +63,17 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Find APK
-        run: |
-          echo "=== Listing APK outputs ==="
-          find android/app/build/outputs -name "*.apk" -type f 2>/dev/null || echo "No APK found in outputs"
-          echo "=== Listing all build outputs ==="
-          ls -laR android/app/build/outputs/ 2>/dev/null || echo "No outputs dir"
+      - name: Find APK files
+        run: find android/app/build/outputs -name "*.apk" -type f
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: virutel-bet261-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: virutel-apk
+          path: android/app/build/outputs/**/*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Clean up keystore
         if: always()
-        run: |
-          rm -f android/app/release-keystore.jks
-          rm -f android/keystore.properties
+        run: rm -f android/app/release-keystore.jks android/keystore.properties
