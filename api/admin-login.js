@@ -10,11 +10,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-// Origins autorisées (web + APK Capacitor)
-const ALLOWED_ORIGINS = [
-  process.env.ALLOWED_ORIGIN || 'https://virtual-match-hitifproject.vercel.app',
-  'https://localhost',
-];
+// CORS géré par vercel.json (Access-Control-Allow-Origin: *)
+// Pas de credentials nécessaires (auth via token HMAC dans le body)
 
 // Signer un timestamp en HMAC-SHA256 → token
 function signToken(timestamp) {
@@ -27,15 +24,7 @@ function signToken(timestamp) {
 }
 
 export default async function handler(req, res) {
-  // CORS dynamique
-  const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
+  // CORS et OPTIONS gérés par vercel.json
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }
