@@ -381,25 +381,24 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
   }
 }
 
-export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
-  const { error, count } = await supabase
-    .from("access_codes")
-    .delete()
-    .eq("id", codeId)
-    .select("id", { count: "exact", head: false });
+export async function deleteGeneratedCode(codeId: string, adminPassword?: string): Promise<boolean> {
+  if (!adminPassword) {
+    console.error("Mot de passe admin requis pour supprimer un code");
+    return false;
+  }
+
+  const { data, error } = await supabase
+    .rpc("admin_delete_access_code", {
+      p_code_id: codeId,
+      p_admin_password: adminPassword,
+    });
 
   if (error) {
     console.error("Erreur suppression code:", error);
     return false;
   }
 
-  // Vérifier qu'au moins une ligne a été supprimée
-  if (!count || count === 0) {
-    console.error("Aucun code trouvé avec cet ID:", codeId);
-    return false;
-  }
-  
-  return true;
+  return data === true;
 }
 
 // --- Settings (localStorage) ---
