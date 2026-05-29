@@ -1,9 +1,9 @@
-// Vercel Serverless Function - Admin Login
+// Vercel Serverless Function - Admin Login (ESM)
 // Vérifie le mot de passe admin via Supabase RPC (service_role)
 // Retourne un token HMAC-SHA256 signé valable 24h
 
-const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
+import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
 const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
@@ -26,7 +26,7 @@ function signToken(timestamp) {
   return `${payload}.${signature}`;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // CORS dynamique
   const origin = req.headers.origin || '';
   if (ALLOWED_ORIGINS.includes(origin)) {
@@ -67,11 +67,6 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Password manquant ou invalide' });
   }
 
-  // Rate limiting simple (IP-based)
-  const forwarded = req.headers['x-forwarded-for'];
-  const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
-  // Les appels fréquents sont limités par le middleware.js global
-
   try {
     // Créer un client Supabase avec service_role (contourne RLS)
     const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
@@ -87,7 +82,6 @@ module.exports = async function handler(req, res) {
     }
 
     if (data !== true) {
-      // Timing-attack mitigation: réponse identique (pas de détails)
       return res.status(200).json({ success: false, error: 'Mot de passe incorrect' });
     }
 

@@ -1,8 +1,8 @@
-// Vercel Serverless Function - Admin Delete Access Code
+// Vercel Serverless Function - Admin Delete Access Code (ESM)
 // Vérifie le token admin, puis supprime le code via RPC (service_role)
 
-const crypto = require('crypto');
-const { createClient } = require('@supabase/supabase-js');
+import crypto from 'crypto';
+import { createClient } from '@supabase/supabase-js';
 
 const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
 const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
@@ -42,7 +42,7 @@ function verifyToken(token) {
   return { valid: true };
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // CORS dynamique
   const origin = req.headers.origin || '';
   if (ALLOWED_ORIGINS.includes(origin)) {

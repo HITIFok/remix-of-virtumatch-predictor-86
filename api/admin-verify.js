@@ -1,8 +1,7 @@
-// Vercel Serverless Function - Verify Admin Token
+// Vercel Serverless Function - Verify Admin Token (ESM)
 // Vérifie un token HMAC-SHA256 signé par admin-login
-// Utilisé avant chaque action admin (suppression de code, etc.)
 
-const crypto = require('crypto');
+import crypto from 'crypto';
 
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
@@ -53,7 +52,7 @@ function verifyToken(token) {
   return { valid: true, timestamp };
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // CORS dynamique
   const origin = req.headers.origin || '';
   if (ALLOWED_ORIGINS.includes(origin)) {

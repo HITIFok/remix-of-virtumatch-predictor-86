@@ -1,8 +1,7 @@
-// Vercel Serverless Function - Check Premium Status
+// Vercel Serverless Function - Check Premium Status (ESM)
 // Vérifie si un device_id a un accès premium actif via RPC (service_role)
-// Endpoint public (pas de token admin requis) mais sécurisé côté serveur
 
-const { createClient } = require('@supabase/supabase-js');
+import { createClient } from '@supabase/supabase-js';
 
 const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
 const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
@@ -12,7 +11,7 @@ const ALLOWED_ORIGINS = [
   'https://localhost',
 ];
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
   // CORS dynamique
   const origin = req.headers.origin || '';
   if (ALLOWED_ORIGINS.includes(origin)) {
