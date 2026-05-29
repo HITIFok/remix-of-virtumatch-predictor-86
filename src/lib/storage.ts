@@ -247,8 +247,37 @@ export function isAdmin(): boolean {
 
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // Use REST API RPC instead of Edge Function for Capacitor compatibility
-    // The RPC function verify_admin_password is SECURITY DEFINER (server-side bcrypt)
+    // Tenter d'abord la Edge Function admin-login (web)
+    // - vérifie le mot de passe via RPC SECURITY DEFINER (bcrypt côté serveur)
+    // - retourne un token HMAC-SHA256 signé valable 24h
+    let usedEdgeFunction = false;
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-login', {
+        body: { password },
+      });
+
+      if (!error && data?.success && data.token) {
+        // Stocker le token HMAC signé + expiration en localStorage
+        const session = {
+          token: data.token,
+          expiresAt: Date.now() + (data.expiresIn ?? ADMIN_SESSION_DURATION),
+          verifiedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        usedEdgeFunction = true;
+        return { success: true, message: 'Connexion admin réussie' };
+      }
+
+      if (!error && data?.success === false) {
+        return { success: false, message: data?.error ?? 'Mot de passe incorrect' };
+      }
+      // Edge Function indisponible → fallback RPC
+      console.warn('[loginAdmin] Edge Function indisponible, fallback RPC.');
+    } catch {
+      // Edge Function indisponible (Capacitor CORS) → fallback RPC
+    }
+
+    // Fallback RPC : vérification directe via verify_admin_password
     const { data, error } = await supabase
       .rpc('verify_admin_password', { input_password: password });
 
@@ -258,7 +287,7 @@ export async function loginAdminSupabase(password: string): Promise<{ success: b
     }
 
     if (data === true) {
-      // Store admin session with 24h expiration
+      // Stocker session locale (sans token HMAC — format legacy compatible)
       const session = {
         expiresAt: Date.now() + ADMIN_SESSION_DURATION,
         verifiedAt: new Date().toISOString(),
@@ -269,15 +298,36 @@ export async function loginAdminSupabase(password: string): Promise<{ success: b
 
     return { success: false, message: 'Mot de passe incorrect' };
   } catch (err: any) {
-    console.error('Exception in loginAdminSupabase:', err);
+    console.error('[loginAdmin] Exception:', err);
     return { success: false, message: `Exception: ${err.message}` };
   }
 }
 
-// Validate admin session locally (for Capacitor compatibility)
-// The RPC function handles the real auth; this is a convenience check
+// Validate admin session (tries Edge Function, falls back to local check)
 export async function verifyAdminSession(): Promise<boolean> {
-  return isAdmin();
+  try {
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return false;
+    const session = JSON.parse(raw);
+
+    // Si un token HMAC est présent, tenter la vérification serveur
+    if (session?.token) {
+      try {
+        const { data, error } = await supabase.functions.invoke('verify-admin', {
+          body: { token: session.token },
+        });
+        if (!error && data?.valid) return true;
+      } catch {
+        // Edge Function indisponible → fallback local
+      }
+    }
+
+    // Fallback : vérifier l'expiration locale
+    if (!session?.expiresAt) return false;
+    return Date.now() <= session.expiresAt;
+  } catch {
+    return false;
+  }
 }
 
 // Legacy function for backwards compatibility
