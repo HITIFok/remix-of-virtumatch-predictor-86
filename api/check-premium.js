@@ -1,15 +1,35 @@
 // Vercel Serverless Function - Check Premium Status (ESM)
 // Vérifie si un device_id a un accès premium actif via RPC (service_role)
+// CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// CORS géré par vercel.json (Access-Control-Allow-Origin: *)
+// CORS dynamique
+const ALLOWED_ORIGINS = [
+  'https://virtual-match-hitifproject.vercel.app',
+  'https://localhost',
+  'capacitor://localhost',
+  'http://localhost',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
 export default async function handler(req, res) {
-  // CORS et OPTIONS gérés par vercel.json
+  setCorsHeaders(req, res);
+
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }

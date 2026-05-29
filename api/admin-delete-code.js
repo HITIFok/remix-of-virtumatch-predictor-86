@@ -1,5 +1,6 @@
 // Vercel Serverless Function - Admin Delete Access Code (ESM)
 // Vérifie le token admin, puis supprime le code via RPC (service_role)
+// CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -9,7 +10,25 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-// CORS géré par vercel.json (Access-Control-Allow-Origin: *)
+// CORS dynamique
+const ALLOWED_ORIGINS = [
+  'https://virtual-match-hitifproject.vercel.app',
+  'https://localhost',
+  'capacitor://localhost',
+  'http://localhost',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
 function verifyToken(token) {
   if (!token || typeof token !== 'string') return { valid: false };
@@ -40,7 +59,8 @@ function verifyToken(token) {
 }
 
 export default async function handler(req, res) {
-  // CORS et OPTIONS gérés par vercel.json
+  setCorsHeaders(req, res);
+
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }
@@ -73,7 +93,6 @@ export default async function handler(req, res) {
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-    // Supprimer via RPC avec service_role (contourne RLS)
     const { data, error } = await supabase.rpc('admin_delete_access_code', {
       p_code_id: codeId,
     });
