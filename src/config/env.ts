@@ -5,20 +5,26 @@
 export const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 export const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-// API Routes Vercel — URL de base pour les appels backend sécurisés
-// En web (Vercel) : window.location.origin = https://virtual-match-hitifproject.vercel.app ✓
-// En APK (Capacitor) : window.location.origin = https://localhost ✗
-//   → VITE_API_BASE doit être défini au build APK avec l'URL Vercel
-export const API_BASE = import.meta.env.VITE_API_BASE ||
-  (typeof window !== 'undefined' ? window.location.origin : '');
+// URL Vercel de production (pour les appels API Routes depuis l'APK)
+const VERCEL_PRODUCTION_URL = 'https://virtual-match-hitifproject.vercel.app';
 
-// Vérification de la configuration (debug uniquement)
-if (typeof window !== 'undefined') {
-  if (import.meta.env.DEV) {
-    console.log('[CONFIG] API_BASE:', API_BASE);
-    console.log('[CONFIG] SUPABASE_URL:', SUPABASE_URL ? SUPABASE_URL.substring(0, 20) + '...' : '(VIDE)');
+// API Routes Vercel — URL de base pour les appels backend sécurisés
+// En web (Vercel) : window.location.origin = URL Vercel ✓
+// En APK (Capacitor) : window.location.origin = 'https://localhost' ✗
+//   → On utilise VITE_API_BASE si défini, sinon VERCEL_PRODUCTION_URL
+export const API_BASE = (() => {
+  // 1. Variable d'env explicite (priorité)
+  if (import.meta.env.VITE_API_BASE) return import.meta.env.VITE_API_BASE;
+  // 2. En web : window.location.origin est l'URL Vercel
+  if (typeof window !== 'undefined') {
+    const origin = window.location.origin;
+    if (origin && origin !== 'https://localhost' && origin !== 'capacitor://localhost' && origin !== 'http://localhost') {
+      return origin;
+    }
   }
-}
+  // 3. En APK : fallback sur l'URL Vercel de production
+  return VERCEL_PRODUCTION_URL;
+})();
 
 export const config = {
   supabase: {
