@@ -6,21 +6,10 @@ import { createClient } from '@supabase/supabase-js';
 const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
 const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
 
-const ALLOWED_ORIGINS = [
-  process.env.ALLOWED_ORIGIN || 'https://virtual-match-hitifproject.vercel.app',
-  'https://localhost',
-];
+// CORS géré par vercel.json (Access-Control-Allow-Origin: *)
 
 export default async function handler(req, res) {
-  // CORS dynamique
-  const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-
+  // CORS et OPTIONS gérés par vercel.json
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }
