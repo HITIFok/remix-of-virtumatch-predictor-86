@@ -17,6 +17,19 @@ if (!API_BASE) {
 const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
 const DATABASE_SERVICE_KEY = Deno.env.get("DATABASE_SERVICE_KEY") || "";
 
+// Timing-safe comparison to prevent timing attacks
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const result = new Uint8Array(aBytes.length);
+  for (let i = 0; i < aBytes.length; i++) {
+    result[i] = aBytes[i] ^ bBytes[i];
+  }
+  return result.every(byte => byte === 0);
+}
+
 const LEAGUES: Record<string, { id: string; name: string }> = {
   "8035": { id: "8035", name: "English League" },
   "8060": { id: "8060", name: "Coupe d'Afrique" },
@@ -187,7 +200,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (!cronKey || cronKey !== expectedCronKey) {
+    if (!cronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }

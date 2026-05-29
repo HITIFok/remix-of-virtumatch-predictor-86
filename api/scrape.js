@@ -13,18 +13,17 @@ const HEADERS = {
   "App-Version": process.env.API_APP_VERSION || "",
 };
 
-// CORS headers
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+// CORS: restrict to configured origin
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://virtual-match-hitifproject.vercel.app";
 
 module.exports = async function handler(req, res) {
-  // Set CORS headers
-  Object.entries(corsHeaders).forEach(([key, value]) => {
-    res.setHeader(key, value);
-  });
+  // Dynamic CORS: only allow configured origin
+  const origin = req.headers.origin || "";
+  if (origin === ALLOWED_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
