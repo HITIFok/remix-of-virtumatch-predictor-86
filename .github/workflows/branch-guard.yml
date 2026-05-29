@@ -1,0 +1,19 @@
+name: Branch Guard
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    if: github.event.head_commit.author.name != 'dependabot[bot]'
+    steps:
+      - name: Check commit author
+        run: |
+          echo "Author: ${{ github.actor }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Head commit: ${{ github.sha }}"
+          echo "Main branch push detected."
+          echo "NOTE: Enable GitHub Pro for full branch protection (no force push, no delete)."
+          echo "This workflow serves as an audit trail for all main branch pushes."
