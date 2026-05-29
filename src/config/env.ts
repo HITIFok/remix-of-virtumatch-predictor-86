@@ -5,12 +5,18 @@
 export const DATABASE_URL = import.meta.env.VITE_DATABASE_URL || '';
 export const DATABASE_ANON_KEY = import.meta.env.VITE_DATABASE_ANON_KEY || '';
 
-// Vérification de la configuration
+// API Routes Vercel — URL de base pour les appels backend sécurisés
+// En web (Vercel) : window.location.origin = https://virtual-match-hitifproject.vercel.app ✓
+// En APK (Capacitor) : window.location.origin = https://localhost ✗
+//   → VITE_API_BASE doit être défini au build APK avec l'URL Vercel
+export const API_BASE = import.meta.env.VITE_API_BASE ||
+  (typeof window !== 'undefined' ? window.location.origin : '');
+
+// Vérification de la configuration (debug uniquement)
 if (typeof window !== 'undefined') {
-  console.log('[DEBUG] DATABASE_URL:', DATABASE_URL || '(VIDE)');
-  console.log('[DEBUG] ANON_KEY:', DATABASE_ANON_KEY ? DATABASE_ANON_KEY.substring(0, 10) + '...' : '(VIDE)');
-  if (!DATABASE_URL || !DATABASE_ANON_KEY) {
-    console.warn('⚠️ Configuration Supabase manquante. Vérifiez les variables d\'environnement.');
+  if (import.meta.env.DEV) {
+    console.log('[CONFIG] API_BASE:', API_BASE);
+    console.log('[CONFIG] DATABASE_URL:', DATABASE_URL ? DATABASE_URL.substring(0, 20) + '...' : '(VIDE)');
   }
 }
 
@@ -20,6 +26,12 @@ export const config = {
     anonKey: DATABASE_ANON_KEY,
   },
   api: {
+    // Vercel API Routes (backend sécurisé avec service_role)
+    adminLogin: `${API_BASE}/api/admin-login`,
+    adminVerify: `${API_BASE}/api/admin-verify`,
+    adminDeleteCode: `${API_BASE}/api/admin-delete-code`,
+    checkPremium: `${API_BASE}/api/check-premium`,
+    // Edge Functions Supabase
     fetchLiveUrl: DATABASE_URL
       ? `${DATABASE_URL}/functions/v1/fetch-live`
       : '',
