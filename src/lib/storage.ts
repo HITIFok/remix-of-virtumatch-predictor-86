@@ -10,6 +10,14 @@ const SETTINGS_KEY = "virtuxxs_settings";
 // La vérification réelle est faite côté DB via RPC verify_admin_password
 const ADMIN_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24h en ms
 
+// Détecte si on est dans un environnement Capacitor (APK)
+// En APK, window.location.origin = 'https://localhost' ou 'capacitor://localhost'
+function isCapacitorApp(): boolean {
+  if (typeof window === 'undefined') return false;
+  const origin = window.location.origin;
+  return origin === 'https://localhost' || origin === 'capacitor://localhost' || origin === 'http://localhost';
+}
+
 // Device ID for tracking predictions per device
 function getDeviceId(): string {
   let id = localStorage.getItem("virtuxxs_device_id");
@@ -155,7 +163,7 @@ export async function clearHistory() {
   await supabase.from("predictions").delete().eq("device_id", deviceId);
 }
 
-// --- Premium Access (server-validated via Edge Function) ---
+// --- Premium Access (server-validated) ---
 // Local cache for quick UI checks, but server-side validation available.
 export interface AccessData {
   code: string;
@@ -192,30 +200,35 @@ export function isPremium(): boolean {
 }
 
 // Server-side premium validation (tamper-proof)
-// Appelle l'API Route Vercel /api/check-premium qui utilise service_role
+// Web → API Route Vercel (service_role)
+// APK → Supabase RPC (CORS compatible avec Capacitor)
 export async function verifyPremium(): Promise<boolean> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    const res = await fetch(config.api.checkPremium, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
-    });
-
-    if (!res.ok) {
-      clearAccess();
-      return false;
+    if (isCapacitorApp()) {
+      // APK : utiliser Supabase RPC (CORS OK avec Capacitor)
+      const { data, error } = await supabase.rpc('check_premium_status', {
+        p_device_id: deviceId,
+      });
+      if (error || !data) {
+        clearAccess();
+        return false;
+      }
+      return data === true;
+    } else {
+      // Web : utiliser l'API Route Vercel (service_role)
+      const res = await fetch(config.api.checkPremium, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      });
+      if (!res.ok) { clearAccess(); return false; }
+      const data = await res.json();
+      if (!data.premium) { clearAccess(); return false; }
+      return true;
     }
-
-    const data = await res.json();
-    if (!data.premium) {
-      clearAccess();
-      return false;
-    }
-
-    return true;
   } catch {
     return false;
   }
@@ -225,9 +238,9 @@ export function clearAccess() {
   localStorage.removeItem(ACCESS_KEY);
 }
 
-// --- Admin (server-verified via RPC) ---
-// Password is verified server-side by verify_admin_password (SECURITY DEFINER + bcrypt).
-// Session is stored locally with 24h expiry for convenience.
+// --- Admin (server-verified) ---
+// Web → API Route Vercel avec service_role + token HMAC (sécurisé)
+// APK → Supabase RPC verify_admin_password (CORS compatible avec Capacitor)
 
 export function isAdmin(): boolean {
   const raw = localStorage.getItem(ADMIN_SESSION_KEY);
@@ -235,7 +248,6 @@ export function isAdmin(): boolean {
   try {
     const session = JSON.parse(raw);
     if (!session.expiresAt) {
-      // Legacy format: raw string (timestamp)
       const expiresAt = parseInt(raw, 10);
       if (isNaN(expiresAt) || Date.now() > expiresAt) {
         localStorage.removeItem(ADMIN_SESSION_KEY);
@@ -243,7 +255,6 @@ export function isAdmin(): boolean {
       }
       return true;
     }
-    // New format: JSON { expiresAt, verifiedAt }
     if (Date.now() > session.expiresAt) {
       localStorage.removeItem(ADMIN_SESSION_KEY);
       return false;
@@ -256,51 +267,73 @@ export function isAdmin(): boolean {
 
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // Appeler l'API Route Vercel /api/admin-login
-    // Le serveur vérifie le mot de passe via RPC verify_admin_password avec service_role
-    // et retourne un token HMAC-SHA256 signé valable 24h
-    const res = await fetch(config.api.adminLogin, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
+    if (isCapacitorApp()) {
+      // ═══ APK : Supabase RPC direct (CORS compatible) ═══
+      const { data, error } = await supabase
+        .rpc('verify_admin_password', { input_password: password });
 
-    if (!res.ok) {
-      return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
+      if (error) {
+        return { success: false, message: `Erreur: ${error.message}` };
+      }
+
+      if (data === true) {
+        // Session sans token HMAC (pas de backend Vercel dans l'APK)
+        const session = {
+          expiresAt: Date.now() + ADMIN_SESSION_DURATION,
+          verifiedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        return { success: true, message: 'Connexion admin réussie' };
+      }
+
+      return { success: false, message: 'Mot de passe incorrect' };
+    } else {
+      // ═══ Web : API Route Vercel (service_role + HMAC token) ═══
+      const res = await fetch(config.api.adminLogin, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+
+      if (!res.ok) {
+        return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
+      }
+
+      const data = await res.json();
+
+      if (!data.success) {
+        return { success: false, message: data.error || 'Mot de passe incorrect' };
+      }
+
+      if (data.token) {
+        const session = {
+          token: data.token,
+          expiresAt: Date.now() + (data.expiresIn || ADMIN_SESSION_DURATION),
+          verifiedAt: new Date().toISOString(),
+        };
+        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+        return { success: true, message: 'Connexion admin réussie' };
+      }
+
+      return { success: false, message: 'Réponse serveur invalide' };
     }
-
-    const data = await res.json();
-
-    if (!data.success) {
-      return { success: false, message: data.error || 'Mot de passe incorrect' };
-    }
-
-    if (data.token) {
-      const session = {
-        token: data.token,
-        expiresAt: Date.now() + (data.expiresIn || ADMIN_SESSION_DURATION),
-        verifiedAt: new Date().toISOString(),
-      };
-      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-      return { success: true, message: 'Connexion admin réussie' };
-    }
-
-    return { success: false, message: 'Réponse serveur invalide' };
   } catch (err: any) {
     console.error('[loginAdmin] Exception:', err);
     return { success: false, message: `Erreur de connexion: ${err.message}` };
   }
 }
 
-// Validate admin session via API Route Vercel /api/admin-verify
+// Validate admin session
+// Web → vérifie le token HMAC via API Route Vercel
+// APK → vérifie l'expiration locale (pas de token HMAC dans l'APK)
 export async function verifyAdminSession(): Promise<boolean> {
   try {
     const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return false;
     const session = JSON.parse(raw);
 
-    // Si un token HMAC est présent, vérifier via l'API Route
-    if (session?.token) {
+    // Web : vérifier le token HMAC côté serveur
+    if (!isCapacitorApp() && session?.token) {
       try {
         const res = await fetch(config.api.adminVerify, {
           method: 'POST',
@@ -313,11 +346,10 @@ export async function verifyAdminSession(): Promise<boolean> {
         }
       } catch {
         // API indisponible → fallback local
-        console.warn('[verifyAdminSession] API indisponible, fallback local.');
       }
     }
 
-    // Fallback : vérifier l'expiration locale
+    // APK ou fallback : vérifier l'expiration locale
     if (!session?.expiresAt) return false;
     return Date.now() <= session.expiresAt;
   } catch {
@@ -396,7 +428,6 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
     const deviceId = getDeviceId();
 
     // Mise à jour atomique : marquer comme utilisé UNIQUEMENT si non utilisé (race condition proof)
-    // Le filtre .eq("used", false) garantit qu'un seul appareil peut valider le code
     const { data, error } = await supabase
       .from("access_codes")
       .update({
@@ -415,7 +446,6 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
     }
 
     if (!data) {
-      // Le code n'existe pas ou a déjà été utilisé (update atomique n'a matché aucune ligne)
       return { valid: false, days: 0, message: "Code invalide, introuvable ou déjà utilisé" };
     }
 
@@ -426,33 +456,39 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
   }
 }
 
+// Suppression d'un code premium
+// Web → API Route Vercel (vérifie le token HMAC + service_role)
+// APK → Supabase RPC admin_delete_access_code (CORS compatible)
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
   try {
-    // Récupérer le token admin depuis localStorage
-    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-    if (!raw) {
-      console.error('[deleteCode] Session admin introuvable');
-      return false;
+    if (isCapacitorApp()) {
+      // APK : Supabase RPC direct
+      const { data, error } = await supabase
+        .rpc("admin_delete_access_code", { p_code_id: codeId });
+
+      if (error) {
+        console.error("Erreur suppression code:", error);
+        return false;
+      }
+      return data === true;
+    } else {
+      // Web : API Route Vercel avec token HMAC
+      const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+      if (!raw) return false;
+      const session = JSON.parse(raw);
+      const token = session?.token;
+      if (!token) return false;
+
+      const res = await fetch(config.api.adminDeleteCode, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, codeId }),
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json();
+      return data.success === true;
     }
-    const session = JSON.parse(raw);
-    const token = session?.token;
-
-    if (!token) {
-      console.error('[deleteCode] Token admin manquant');
-      return false;
-    }
-
-    // Appeler l'API Route Vercel /api/admin-delete-code
-    const res = await fetch(config.api.adminDeleteCode, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, codeId }),
-    });
-
-    if (!res.ok) return false;
-
-    const data = await res.json();
-    return data.success === true;
   } catch (err: any) {
     console.error('[deleteCode] Exception:', err);
     return false;
