@@ -1,12 +1,31 @@
 // Vercel Serverless Function - Verify Admin Token (ESM)
 // Vérifie un token HMAC-SHA256 signé par admin-login
+// CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
 
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-// CORS géré par vercel.json (Access-Control-Allow-Origin: *)
+// CORS dynamique : whitelist des origines autorisées
+const ALLOWED_ORIGINS = [
+  'https://virtual-match-hitifproject.vercel.app',
+  'https://localhost',
+  'capacitor://localhost',
+  'http://localhost',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
 // Vérification timing-safe du token
 function verifyToken(token) {
@@ -17,7 +36,6 @@ function verifyToken(token) {
 
   const [payload, signature] = parts;
 
-  // Décoder le timestamp
   let timestamp;
   try {
     timestamp = parseInt(Buffer.from(payload, 'base64url').toString(), 10);
@@ -50,7 +68,8 @@ function verifyToken(token) {
 }
 
 export default async function handler(req, res) {
-  // CORS et OPTIONS gérés par vercel.json
+  setCorsHeaders(req, res);
+
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }

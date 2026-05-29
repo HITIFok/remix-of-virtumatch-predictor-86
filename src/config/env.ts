@@ -36,6 +36,7 @@ export const config = {
     adminLogin: `${API_BASE}/api/admin-login`,
     adminVerify: `${API_BASE}/api/admin-verify`,
     adminDeleteCode: `${API_BASE}/api/admin-delete-code`,
+    adminCodes: `${API_BASE}/api/admin-codes`,
     checkPremium: `${API_BASE}/api/check-premium`,
     // Edge Functions Supabase
     fetchLiveUrl: DATABASE_URL

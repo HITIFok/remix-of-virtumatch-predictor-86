@@ -6,45 +6,31 @@ const ACCESS_KEY = "virtuxxs_access";
 const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
 const SETTINGS_KEY = "virtuxxs_settings";
 
-// Session admin expirée (timestamp) - stockée dans localStorage pour validation côté client
-// La vérification réelle est faite côté DB via RPC verify_admin_password
 const ADMIN_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24h en ms
 
-// Détecte si on est dans un environnement Capacitor (APK)
-// En APK, window.location.origin = 'https://localhost' ou 'capacitor://localhost'
-function isCapacitorApp(): boolean {
-  if (typeof window === 'undefined') return false;
-  const origin = window.location.origin;
-  return origin === 'https://localhost' || origin === 'capacitor://localhost' || origin === 'http://localhost';
-}
+// ─── History (Cloud DB) ───────────────────────────────────────────────────────
+// RLS doit filtrer par device_id côté Supabase pour éviter les fuites de données
 
-// Device ID for tracking predictions per device
-function getDeviceId(): string {
-  let id = localStorage.getItem("virtuxxs_device_id");
-  if (!id) {
-    id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem("virtuxxs_device_id", id);
-  }
-  return id;
-}
-
-// --- History (Cloud DB) ---
 export async function getHistory(): Promise<MatchResult[]> {
   const deviceId = getDeviceId();
-  const { data, error } = await supabase
+
+  // ═══ SÉCURISÉ : filtrer device_id côté serveur (pas côté client) ═══
+  const query = supabase
     .from("predictions")
     .select("*")
     .order("created_at", { ascending: false })
     .limit(200);
 
+  // Appliquer le filtre device_id dans la requête Supabase (côté DB)
+  // Si RLS est activé, seuls les rows du device sont retournés
+  // Si RLS n'est pas activé, on filtre manuellement dans la query
+  const { data, error } = deviceId
+    ? await query.eq("device_id", deviceId)
+    : await query;
+
   if (error || !data) return [];
 
-  // Filtrer par device_id si disponible, sinon retourner toutes les prédictions
-  const filteredData = deviceId
-    ? data.filter(row => row.device_id === deviceId || !row.device_id)
-    : data;
-
-  return filteredData.map(row => ({
+  return data.map(row => ({
     id: row.id,
     home: row.home || row.home_team,
     away: row.away || row.away_team,
@@ -86,7 +72,6 @@ export async function getHistory(): Promise<MatchResult[]> {
     systemAway: "équilibré",
     possessionHome: 50,
     possessionAway: 50,
-    // Statut de vérification
     status: row.status,
     actualOutcome: row.actual_outcome,
     actualScore: row.actual_score,
@@ -100,33 +85,25 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
     return { success: false, error: 'Device ID non disponible' };
   }
 
-  // Déterminer la prédiction (1, X, ou 2)
   const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
-  // aiConfidence is already a percentage (0-100), don't multiply again
   const confidence = Math.round(result.aiConfidence);
 
   const insertData = {
-    // Colonnes principales (normalisées - un seul alias)
     home_team: result.home,
     away_team: result.away,
     league: result.league || "Instant League",
-    // Cotes
     odd_home: result.oddHome,
     odd_draw: result.oddDraw,
     odd_away: result.oddAway,
-    // Probabilités
     prob_home: result.probHome,
     prob_draw: result.probDraw,
     prob_away: result.probAway,
-    // Prédiction
     prediction: prediction,
     confidence: confidence,
     winner_1x2: result.winner1X2,
-    // Scores (colonnes canoniques uniquement)
     score_home: result.scoreHome,
     score_away: result.scoreAway,
     exact_score: result.exactScore,
-    // Autres données
     first_half_goal_prob: result.firstHalfGoalProb,
     expected_goals: result.expectedGoals,
     goals_home: result.goalsHome,
@@ -139,7 +116,6 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
     over_under_15: result.overUnder15,
     over_under_25: result.overUnder25,
     over_under_35: result.overUnder35,
-    // Métadonnées
     device_id: deviceId,
     status: 'pending',
   };
@@ -160,11 +136,11 @@ export async function clearHistory() {
     console.error('clearHistory - device_id est null, suppression annulée');
     return;
   }
+  // ═══ SÉCURISÉ : supprimer uniquement les prédictions de CE device ═══
   await supabase.from("predictions").delete().eq("device_id", deviceId);
 }
 
-// --- Premium Access (server-validated) ---
-// Local cache for quick UI checks, but server-side validation available.
+// ─── Premium Access (server-validated via API Route) ────────────────────────────
 export interface AccessData {
   code: string;
   activatedAt: number;
@@ -199,36 +175,24 @@ export function isPremium(): boolean {
   return getAccess() !== null;
 }
 
-// Server-side premium validation (tamper-proof)
-// Web → API Route Vercel (service_role)
-// APK → Supabase RPC (CORS compatible avec Capacitor)
+// ═══ SÉCURISÉ : premium vérifié côté SERVEUR via API Route (Web ET APK) ═══
+// Plus d'appel direct Supabase RPC depuis le client
 export async function verifyPremium(): Promise<boolean> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    if (isCapacitorApp()) {
-      // APK : utiliser Supabase RPC (CORS OK avec Capacitor)
-      const { data, error } = await supabase.rpc('check_premium_status', {
-        p_device_id: deviceId,
-      });
-      if (error || !data) {
-        clearAccess();
-        return false;
-      }
-      return data === true;
-    } else {
-      // Web : utiliser l'API Route Vercel (service_role)
-      const res = await fetch(config.api.checkPremium, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceId }),
-      });
-      if (!res.ok) { clearAccess(); return false; }
-      const data = await res.json();
-      if (!data.premium) { clearAccess(); return false; }
-      return true;
-    }
+    // TOUJOURS passer par l'API Route Vercel (service_role)
+    // Fonctionne pour Web ET APK (fetch cross-origin OK dans Capacitor)
+    const res = await fetch(config.api.checkPremium, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId }),
+    });
+    if (!res.ok) { clearAccess(); return false; }
+    const data = await res.json();
+    if (!data.premium) { clearAccess(); return false; }
+    return true;
   } catch {
     return false;
   }
@@ -238,9 +202,9 @@ export function clearAccess() {
   localStorage.removeItem(ACCESS_KEY);
 }
 
-// --- Admin (server-verified) ---
-// Web → API Route Vercel avec service_role + token HMAC (sécurisé)
-// APK → Supabase RPC verify_admin_password (CORS compatible avec Capacitor)
+// ─── Admin (server-verified via API Routes — Web ET APK) ─────────────────────────
+// ═══ PLUS AUCUN APPEL DIRECT SUPABASE RPC POUR L'ADMIN ═══
+// Web ET APK passent par les API Routes Vercel avec HMAC token
 
 export function isAdmin(): boolean {
   const raw = localStorage.getItem(ADMIN_SESSION_KEY);
@@ -265,93 +229,69 @@ export function isAdmin(): boolean {
   }
 }
 
+// ═══ SÉCURISÉ : login admin TOUJOURS via API Route Vercel ═══
+// Web ET APK utilisent le même endpoint
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    if (isCapacitorApp()) {
-      // ═══ APK : Supabase RPC direct (CORS compatible) ═══
-      const { data, error } = await supabase
-        .rpc('verify_admin_password', { input_password: password });
+    // TOUJOURS via l'API Route Vercel (service_role + rate limiting)
+    const res = await fetch(config.api.adminLogin, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
 
-      if (error) {
-        return { success: false, message: `Erreur: ${error.message}` };
+    if (!res.ok) {
+      if (res.status === 429) {
+        return { success: false, message: 'Trop de tentatives. Réessayez dans quelques minutes.' };
       }
-
-      if (data === true) {
-        // Session sans token HMAC (pas de backend Vercel dans l'APK)
-        const session = {
-          expiresAt: Date.now() + ADMIN_SESSION_DURATION,
-          verifiedAt: new Date().toISOString(),
-        };
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-        return { success: true, message: 'Connexion admin réussie' };
-      }
-
-      return { success: false, message: 'Mot de passe incorrect' };
-    } else {
-      // ═══ Web : API Route Vercel (service_role + HMAC token) ═══
-      const res = await fetch(config.api.adminLogin, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-
-      if (!res.ok) {
-        return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
-      }
-
-      const data = await res.json();
-
-      if (!data.success) {
-        return { success: false, message: data.error || 'Mot de passe incorrect' };
-      }
-
-      if (data.token) {
-        const session = {
-          token: data.token,
-          expiresAt: Date.now() + (data.expiresIn || ADMIN_SESSION_DURATION),
-          verifiedAt: new Date().toISOString(),
-        };
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-        return { success: true, message: 'Connexion admin réussie' };
-      }
-
-      return { success: false, message: 'Réponse serveur invalide' };
+      return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
     }
+
+    const data = await res.json();
+
+    if (!data.success) {
+      return { success: false, message: data.error || 'Mot de passe incorrect' };
+    }
+
+    if (data.token) {
+      const session = {
+        token: data.token,
+        expiresAt: Date.now() + (data.expiresIn || ADMIN_SESSION_DURATION),
+        verifiedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
+      return { success: true, message: 'Connexion admin réussie' };
+    }
+
+    return { success: false, message: 'Réponse serveur invalide' };
   } catch (err: any) {
     console.error('[loginAdmin] Exception:', err);
     return { success: false, message: `Erreur de connexion: ${err.message}` };
   }
 }
 
-// Validate admin session
-// Web → vérifie le token HMAC via API Route Vercel
-// APK → vérifie l'expiration locale (pas de token HMAC dans l'APK)
+// ═══ SÉCURISÉ : vérification session admin TOUJOURS via API Route ═══
 export async function verifyAdminSession(): Promise<boolean> {
   try {
     const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return false;
     const session = JSON.parse(raw);
+    if (!session?.token) return false;
+    if (Date.now() > (session.expiresAt || 0)) return false;
 
-    // Web : vérifier le token HMAC côté serveur
-    if (!isCapacitorApp() && session?.token) {
-      try {
-        const res = await fetch(config.api.adminVerify, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: session.token }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.valid) return true;
-        }
-      } catch {
-        // API indisponible → fallback local
-      }
+    // Vérifier le token HMAC côté serveur
+    const res = await fetch(config.api.adminVerify, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: session.token }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.valid) return true;
     }
 
-    // APK ou fallback : vérifier l'expiration locale
-    if (!session?.expiresAt) return false;
-    return Date.now() <= session.expiresAt;
+    // API indisponible → vérification locale en fallback
+    return Date.now() <= (session.expiresAt || 0);
   } catch {
     return false;
   }
@@ -367,7 +307,7 @@ export function logoutAdmin() {
   localStorage.removeItem(ADMIN_SESSION_KEY);
 }
 
-// --- Generated Codes (Cloud DB) ---
+// ─── Generated Codes (Cloud DB — via API Route sécurisée) ─────────────────────────
 export interface GeneratedCode {
   id?: string;
   code: string;
@@ -377,40 +317,74 @@ export interface GeneratedCode {
   usedAt?: number;
 }
 
+// ═══ SÉCURISÉ : lecture des codes via API Route (vérifie token admin) ═══
 export async function getGeneratedCodes(): Promise<GeneratedCode[]> {
-  const { data, error } = await supabase
-    .from("access_codes")
-    .select("*")
-    .order("created_at", { ascending: false });
+  try {
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return [];
+    const session = JSON.parse(raw);
+    if (!session?.token) return [];
 
-  if (error || !data) return [];
+    // Appel API Route avec token HMAC dans Authorization header
+    const res = await fetch(config.api.adminCodes, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${session.token}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-  return data.map(row => ({
-    id: row.id,
-    code: row.code,
-    createdAt: new Date(row.created_at).getTime(),
-    durationDays: row.duration_days,
-    used: row.used,
-    usedAt: row.used_at ? new Date(row.used_at).getTime() : undefined,
-  }));
+    if (!res.ok) return [];
+    const data = await res.json();
+
+    if (!data.success || !data.codes) return [];
+
+    return data.codes.map((row: any) => ({
+      id: row.id,
+      code: row.code,
+      createdAt: row.createdAt,
+      durationDays: row.durationDays,
+      used: row.used,
+      usedAt: row.usedAt || undefined,
+    }));
+  } catch (err) {
+    console.error('[getGeneratedCodes] Exception:', err);
+    return [];
+  }
 }
 
+// ═══ SÉCURISÉ : création de code via API Route (vérifie token admin) ═══
 export async function saveGeneratedCode(gc: GeneratedCode): Promise<{ success: boolean; message: string }> {
-  const { data, error } = await supabase
-    .from("access_codes")
-    .insert({
-      code: gc.code,
-      duration_days: gc.durationDays,
-      used: false,
-    })
-    .select()
-    .single();
+  try {
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return { success: false, message: 'Non autorisé' };
+    const session = JSON.parse(raw);
+    if (!session?.token) return { success: false, message: 'Non autorisé' };
 
-  if (error) {
-    console.error("Erreur saveGeneratedCode:", error);
-    return { success: false, message: error.message };
+    const res = await fetch(config.api.adminCodes, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ code: gc.code, durationDays: gc.durationDays }),
+    });
+
+    if (!res.ok) {
+      return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
+    }
+
+    const data = await res.json();
+
+    if (!data.success) {
+      return { success: false, message: data.error || 'Erreur lors de la sauvegarde' };
+    }
+
+    return { success: true, message: "Code sauvegardé" };
+  } catch (err: any) {
+    console.error('[saveGeneratedCode] Exception:', err);
+    return { success: false, message: `Exception: ${err.message}` };
   }
-  return { success: true, message: "Code sauvegardé" };
 }
 
 export function generateRandomCode(): string {
@@ -423,11 +397,13 @@ export function generateRandomCode(): string {
   return code;
 }
 
+// ═══ validateCode — garde la logique directe (publique, pas admin) ═══
+// L'activation d'un code est une action utilisateur → reste via Supabase anon
+// La table access_codes DOIT avoir une RLS pour empêcher les INSERT non-autorisés
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
   try {
     const deviceId = getDeviceId();
 
-    // Mise à jour atomique : marquer comme utilisé UNIQUEMENT si non utilisé (race condition proof)
     const { data, error } = await supabase
       .from("access_codes")
       .update({
@@ -456,46 +432,31 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
   }
 }
 
-// Suppression d'un code premium
-// Web → API Route Vercel (vérifie le token HMAC + service_role)
-// APK → Supabase RPC admin_delete_access_code (CORS compatible)
+// ═══ SÉCURISÉ : suppression de code TOUJOURS via API Route ═══
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
   try {
-    if (isCapacitorApp()) {
-      // APK : Supabase RPC direct
-      const { data, error } = await supabase
-        .rpc("admin_delete_access_code", { p_code_id: codeId });
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) return false;
+    const session = JSON.parse(raw);
+    if (!session?.token) return false;
 
-      if (error) {
-        console.error("Erreur suppression code:", error);
-        return false;
-      }
-      return data === true;
-    } else {
-      // Web : API Route Vercel avec token HMAC
-      const raw = localStorage.getItem(ADMIN_SESSION_KEY);
-      if (!raw) return false;
-      const session = JSON.parse(raw);
-      const token = session?.token;
-      if (!token) return false;
+    // TOUJOURS via l'API Route Vercel (vérifie token HMAC + service_role)
+    const res = await fetch(config.api.adminDeleteCode, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: session.token, codeId }),
+    });
 
-      const res = await fetch(config.api.adminDeleteCode, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token, codeId }),
-      });
-
-      if (!res.ok) return false;
-      const data = await res.json();
-      return data.success === true;
-    }
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success === true;
   } catch (err: any) {
     console.error('[deleteCode] Exception:', err);
     return false;
   }
 }
 
-// --- Settings (localStorage) ---
+// ─── Settings (localStorage) ────────────────────────────────────────────────────
 export interface AppSettings {
   accentColor: "fire" | "ice" | "gold" | "custom";
   customColor?: string;
