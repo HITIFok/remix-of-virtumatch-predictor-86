@@ -10,49 +10,16 @@ import {
   saveGeneratedCode,
   getGeneratedCodes,
   deleteGeneratedCode,
+  verifyAdminSession,
   type GeneratedCode,
 } from "@/lib/storage";
-import { config } from "@/config/env";
 import { Shield, Plus, Copy, Check, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 // ─── Validation côté serveur ───────────────────────────────────────────────────
-// Vérifie le token admin via l'API Route Vercel /api/admin-verify
-// Fonctionne à la fois en web et en APK (Capacitor)
-async function verifyAdminServerSide(): Promise<boolean> {
-  try {
-    const raw = localStorage.getItem("virtuxxs_admin_session");
-    if (!raw) return false;
-
-    const session = JSON.parse(raw);
-    const token: string | undefined = session?.token;
-
-    // Vérifier via l'API Route Vercel
-    if (token) {
-      try {
-        const res = await fetch(config.api.adminVerify, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.valid) return true;
-        }
-        console.warn("[Admin] Token invalide côté serveur.");
-      } catch {
-        console.warn("[Admin] API indisponible, fallback local.");
-      }
-    }
-
-    // Fallback : vérifier l'expiration locale
-    if (!session?.expiresAt) return false;
-    return Date.now() <= session.expiresAt;
-  } catch (e) {
-    console.error("[Admin] Erreur verifyAdminServerSide :", e);
-    return false;
-  }
-}
+// Utilise verifyAdminSession() de storage.ts qui gère Web vs APK automatiquement
+// Web → vérifie le token HMAC via API Route Vercel
+// APK → vérifie l'expiration locale (pas de fetch cross-origin)
 
 // ─── Composant ────────────────────────────────────────────────────────────────
 export default function Admin() {
@@ -74,7 +41,7 @@ export default function Admin() {
     // Vérification serveur au montage
     let cancelled = false;
     (async () => {
-      const valid = await verifyAdminServerSide();
+      const valid = await verifyAdminSession();
       if (cancelled) return;
       if (!valid) {
         toast.error("Session admin invalide ou expirée. Reconnectez-vous.");
@@ -96,7 +63,7 @@ export default function Admin() {
   const handleGenerate = useCallback(async (days: number) => {
     setVerifying(true);
     try {
-      const valid = await verifyAdminServerSide();
+      const valid = await verifyAdminSession();
       if (!valid) {
         toast.error("Session expirée. Reconnectez-vous.");
         navigate("/settings");
@@ -136,7 +103,7 @@ export default function Admin() {
 
     setVerifying(true);
     try {
-      const valid = await verifyAdminServerSide();
+      const valid = await verifyAdminSession();
       if (!valid) {
         toast.error("Session expirée. Reconnectez-vous.");
         navigate("/settings");
