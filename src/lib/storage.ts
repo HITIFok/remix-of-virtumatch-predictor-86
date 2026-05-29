@@ -381,16 +381,10 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
   }
 }
 
-export async function deleteGeneratedCode(codeId: string, adminPassword?: string): Promise<boolean> {
-  if (!adminPassword) {
-    console.error("Mot de passe admin requis pour supprimer un code");
-    return false;
-  }
-
+export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
   const { data, error } = await supabase
     .rpc("admin_delete_access_code", {
       p_code_id: codeId,
-      p_admin_password: adminPassword,
     });
 
   if (error) {
