@@ -5,15 +5,56 @@ on:
     branches: [main]
 
 jobs:
-  guard:
+  security-scan:
     runs-on: ubuntu-latest
     if: github.event.head_commit.author.name != 'dependabot[bot]'
     steps:
-      - name: Check commit author
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Audit — check for leaked secrets
         run: |
+          echo "=== Security Audit for push to main ==="
           echo "Author: ${{ github.actor }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Head commit: ${{ github.sha }}"
-          echo "Main branch push detected."
-          echo "NOTE: Enable GitHub Pro for full branch protection (no force push, no delete)."
-          echo "This workflow serves as an audit trail for all main branch pushes."
+          echo "Commit: ${{ github.sha }}"
+          echo "Message: ${{ github.event.head_commit.message }}"
+          echo ""
+
+          # Check for common secret patterns
+          SECRETS_FOUND=0
+
+          # API URLs
+          if git diff HEAD~1 -- '*.ts' '*.js' '*.py' '*.json' | grep -iE 'sporty-tech\.net|bet261\.mg' | grep -v 'node_modules'; then
+            echo "WARNING: Potential API URL leak detected!"
+            SECRETS_FOUND=$((SECRETS_FOUND + 1))
+          fi
+
+          # Hardcoded keys
+          if git diff HEAD~1 -- '*.ts' '*.js' '*.py' '*.json' | grep -iE '(api[_-]?key|secret|password)\s*[:=]\s*["\x27][A-Za-z0-9_-]{16,}'; then
+            echo "WARNING: Potential hardcoded key detected!"
+            SECRETS_FOUND=$((SECRETS_FOUND + 1))
+          fi
+
+          # Check for .env files accidentally committed
+          if git ls-files | grep -E '\.env$|\.env\.local$|\.env\.production$'; then
+            echo "WARNING: .env file committed to repo!"
+            SECRETS_FOUND=$((SECRETS_FOUND + 1))
+          fi
+
+          echo ""
+          if [ $SECRETS_FOUND -gt 0 ]; then
+            echo "SECRETS_FOUND=$SECRETS_FOUND"
+            echo "Action required: Review the commit for leaked secrets."
+          else
+            echo "No secrets detected. Commit looks clean."
+          fi
+
+      - name: Audit — check CORS configuration
+        run: |
+          if grep -r 'Access-Control-Allow-Origin.*\*' api/ --include='*.js' 2>/dev/null; then
+            echo "WARNING: Wildcard CORS detected in Vercel API routes!"
+          else
+            echo "CORS: OK (no wildcard in API routes)"
+          fi

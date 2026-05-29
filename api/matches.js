@@ -22,23 +22,39 @@ const HEADERS = {
   "App-Version": process.env.API_APP_VERSION || "",
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://virtual-match-hitifproject.vercel.app";
 
 module.exports = async function handler(req, res) {
-  Object.entries(corsHeaders).forEach(([key, value]) => res.setHeader(key, value));
+  // Dynamic CORS: only allow configured origin
+  const origin = req.headers.origin || "";
+  if (origin === ALLOWED_ORIGIN) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
   }
 
+  if (req.method !== 'GET') {
+    return res.status(405).json({ success: false, error: "Method not allowed" });
+  }
+
   const leagueId = req.query.leagueId || "8035";
-  const leagueName = LEAGUES[leagueId] || "Unknown League";
+
+  // SSRF protection: only allow known league IDs (numeric only)
+  if (!LEAGUES[leagueId]) {
+    return res.status(400).json({ success: false, error: "Invalid leagueId" });
+  }
+  const leagueName = LEAGUES[leagueId];
 
   try {
+    // Early check for API_BASE
+    if (!API_BASE) {
+      return res.status(500).json({ success: false, error: "Server not configured" });
+    }
+
     // Fetch matches, ranking, results in parallel
     const [matchesRes, rankingRes, resultsRes] = await Promise.all([
       fetch(`${API_BASE}/${leagueId}/matches`, { headers: HEADERS }),
@@ -47,9 +63,6 @@ module.exports = async function handler(req, res) {
     ]);
 
     // Check for geo-blocking
-    if (!API_BASE) {
-      return res.status(500).json({ success: false, error: "Server not configured" });
-    }
 
     if (matchesRes.status === 403) {
       return res.status(200).json({ success: false, error: "Geo-blocked", geoBlocked: true });
