@@ -6,8 +6,12 @@ export const DATABASE_URL = import.meta.env.VITE_DATABASE_URL || '';
 export const DATABASE_ANON_KEY = import.meta.env.VITE_DATABASE_ANON_KEY || '';
 
 // Vérification de la configuration
-if (typeof window !== 'undefined' && (!DATABASE_URL || !DATABASE_ANON_KEY)) {
-  console.warn('⚠️ Configuration Supabase manquante. Vérifiez les variables d\'environnement.');
+if (typeof window !== 'undefined') {
+  console.log('[DEBUG] DATABASE_URL:', DATABASE_URL || '(VIDE)');
+  console.log('[DEBUG] ANON_KEY:', DATABASE_ANON_KEY ? DATABASE_ANON_KEY.substring(0, 10) + '...' : '(VIDE)');
+  if (!DATABASE_URL || !DATABASE_ANON_KEY) {
+    console.warn('⚠️ Configuration Supabase manquante. Vérifiez les variables d\'environnement.');
+  }
 }
 
 export const config = {
