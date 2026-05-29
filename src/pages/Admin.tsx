@@ -12,13 +12,13 @@ import {
   deleteGeneratedCode,
   type GeneratedCode,
 } from "@/lib/storage";
-import { supabase } from "@/integrations/supabase/client";
+import { config } from "@/config/env";
 import { Shield, Plus, Copy, Check, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 // ─── Validation côté serveur ───────────────────────────────────────────────────
-// Vérifie le token admin avant chaque mutation.
-// Tente d'abord la Edge Function (web), puis fallback RPC (Capacitor).
+// Vérifie le token admin via l'API Route Vercel /api/admin-verify
+// Fonctionne à la fois en web et en APK (Capacitor)
 async function verifyAdminServerSide(): Promise<boolean> {
   try {
     const raw = localStorage.getItem("virtuxxs_admin_session");
@@ -27,23 +27,25 @@ async function verifyAdminServerSide(): Promise<boolean> {
     const session = JSON.parse(raw);
     const token: string | undefined = session?.token;
 
-    // Nouveau format : token HMAC signé → vérifier via Edge Function
+    // Vérifier via l'API Route Vercel
     if (token) {
       try {
-        const { data, error } = await supabase.functions.invoke("verify-admin", {
-          body: { token },
+        const res = await fetch(config.api.adminVerify, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
         });
-        if (!error && data?.valid) return true;
-        // Edge Function indisponible (Capacitor CORS) → fallback RPC
-        console.warn("[Admin] Edge Function indisponible, fallback RPC.");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.valid) return true;
+        }
+        console.warn("[Admin] Token invalide côté serveur.");
       } catch {
-        // Edge Function indisponible → fallback RPC
+        console.warn("[Admin] API indisponible, fallback local.");
       }
     }
 
-    // Fallback RPC : vérifie directement via verify_admin_password
-    // Dans ce cas, on ne peut pas re-vérifier sans le mot de passe.
-    // On accepte la session locale si elle n'est pas expirée.
+    // Fallback : vérifier l'expiration locale
     if (!session?.expiresAt) return false;
     return Date.now() <= session.expiresAt;
   } catch (e) {

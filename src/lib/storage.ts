@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import { config } from "@/config/env";
 import type { MatchResult } from "./prediction-engine";
 
 const ACCESS_KEY = "virtuxxs_access";
@@ -191,22 +192,30 @@ export function isPremium(): boolean {
 }
 
 // Server-side premium validation (tamper-proof)
-// Uses REST API (RPC) instead of Edge Functions for Capacitor compatibility
+// Appelle l'API Route Vercel /api/check-premium qui utilise service_role
 export async function verifyPremium(): Promise<boolean> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    const { data, error } = await supabase.rpc('check_premium_status', {
-      p_device_id: deviceId,
+    const res = await fetch(config.api.checkPremium, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId }),
     });
 
-    if (error || !data) {
+    if (!res.ok) {
       clearAccess();
       return false;
     }
 
-    return data === true;
+    const data = await res.json();
+    if (!data.premium) {
+      clearAccess();
+      return false;
+    }
+
+    return true;
   } catch {
     return false;
   }
@@ -247,78 +256,64 @@ export function isAdmin(): boolean {
 
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // Tenter d'abord la Edge Function admin-login (web)
-    // - vérifie le mot de passe via RPC SECURITY DEFINER (bcrypt côté serveur)
-    // - retourne un token HMAC-SHA256 signé valable 24h
-    let usedEdgeFunction = false;
-    try {
-      const { data, error } = await supabase.functions.invoke('admin-login', {
-        body: { password },
-      });
+    // Appeler l'API Route Vercel /api/admin-login
+    // Le serveur vérifie le mot de passe via RPC verify_admin_password avec service_role
+    // et retourne un token HMAC-SHA256 signé valable 24h
+    const res = await fetch(config.api.adminLogin, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
 
-      if (!error && data?.success && data.token) {
-        // Stocker le token HMAC signé + expiration en localStorage
-        const session = {
-          token: data.token,
-          expiresAt: Date.now() + (data.expiresIn ?? ADMIN_SESSION_DURATION),
-          verifiedAt: new Date().toISOString(),
-        };
-        localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
-        usedEdgeFunction = true;
-        return { success: true, message: 'Connexion admin réussie' };
-      }
-
-      if (!error && data?.success === false) {
-        return { success: false, message: data?.error ?? 'Mot de passe incorrect' };
-      }
-      // Edge Function indisponible → fallback RPC
-      console.warn('[loginAdmin] Edge Function indisponible, fallback RPC.');
-    } catch {
-      // Edge Function indisponible (Capacitor CORS) → fallback RPC
+    if (!res.ok) {
+      return { success: false, message: `Erreur serveur (HTTP ${res.status})` };
     }
 
-    // Fallback RPC : vérification directe via verify_admin_password
-    const { data, error } = await supabase
-      .rpc('verify_admin_password', { input_password: password });
+    const data = await res.json();
 
-    if (error) {
-      console.error('RPC error:', error);
-      return { success: false, message: `Erreur: ${error.message}` };
+    if (!data.success) {
+      return { success: false, message: data.error || 'Mot de passe incorrect' };
     }
 
-    if (data === true) {
-      // Stocker session locale (sans token HMAC — format legacy compatible)
+    if (data.token) {
       const session = {
-        expiresAt: Date.now() + ADMIN_SESSION_DURATION,
+        token: data.token,
+        expiresAt: Date.now() + (data.expiresIn || ADMIN_SESSION_DURATION),
         verifiedAt: new Date().toISOString(),
       };
       localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
       return { success: true, message: 'Connexion admin réussie' };
     }
 
-    return { success: false, message: 'Mot de passe incorrect' };
+    return { success: false, message: 'Réponse serveur invalide' };
   } catch (err: any) {
     console.error('[loginAdmin] Exception:', err);
-    return { success: false, message: `Exception: ${err.message}` };
+    return { success: false, message: `Erreur de connexion: ${err.message}` };
   }
 }
 
-// Validate admin session (tries Edge Function, falls back to local check)
+// Validate admin session via API Route Vercel /api/admin-verify
 export async function verifyAdminSession(): Promise<boolean> {
   try {
     const raw = localStorage.getItem(ADMIN_SESSION_KEY);
     if (!raw) return false;
     const session = JSON.parse(raw);
 
-    // Si un token HMAC est présent, tenter la vérification serveur
+    // Si un token HMAC est présent, vérifier via l'API Route
     if (session?.token) {
       try {
-        const { data, error } = await supabase.functions.invoke('verify-admin', {
-          body: { token: session.token },
+        const res = await fetch(config.api.adminVerify, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: session.token }),
         });
-        if (!error && data?.valid) return true;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.valid) return true;
+        }
       } catch {
-        // Edge Function indisponible → fallback local
+        // API indisponible → fallback local
+        console.warn('[verifyAdminSession] API indisponible, fallback local.');
       }
     }
 
@@ -432,17 +427,36 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
 }
 
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .rpc("admin_delete_access_code", {
-      p_code_id: codeId,
+  try {
+    // Récupérer le token admin depuis localStorage
+    const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+    if (!raw) {
+      console.error('[deleteCode] Session admin introuvable');
+      return false;
+    }
+    const session = JSON.parse(raw);
+    const token = session?.token;
+
+    if (!token) {
+      console.error('[deleteCode] Token admin manquant');
+      return false;
+    }
+
+    // Appeler l'API Route Vercel /api/admin-delete-code
+    const res = await fetch(config.api.adminDeleteCode, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, codeId }),
     });
 
-  if (error) {
-    console.error("Erreur suppression code:", error);
+    if (!res.ok) return false;
+
+    const data = await res.json();
+    return data.success === true;
+  } catch (err: any) {
+    console.error('[deleteCode] Exception:', err);
     return false;
   }
-
-  return data === true;
 }
 
 // --- Settings (localStorage) ---
