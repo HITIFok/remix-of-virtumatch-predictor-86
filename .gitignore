@@ -26,5 +26,20 @@ dist-ssr
 # Environment variables
 .env
 .env.local
+.env.production
 .env.*.local
 scripts/.env
+env.sh
+
+# Debug files
+debug.html
+debug_bet261.html
+
+# Keystore
+*.jks
+*.keystore
+keystore.properties
+
+# APK build outputs
+android/app/build/
+
