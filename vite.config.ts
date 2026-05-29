@@ -100,20 +100,7 @@ export default defineConfig(({ mode }) => ({
               }
             }
           },
-          {
-            urlPattern: /^https:\/\/.*\.sporty-tech\.net\/.*/i,
-            handler: "NetworkFirst",
-            options: {
-              cacheName: "api-cache",
-              expiration: {
-                maxEntries: 50,
-                maxAgeSeconds: 60 * 5 // 5 minutes
-              },
-              cacheableResponse: {
-                statuses: [0, 200]
-              }
-            }
-          }
+
         ]
       },
       devOptions: {
