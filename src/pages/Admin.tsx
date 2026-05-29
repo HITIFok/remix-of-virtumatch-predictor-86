@@ -55,15 +55,17 @@ const handleGenerate = async (days: number) => {
       toast.error("ID du code introuvable");
       return;
     }
-    
-    if (confirm(`Supprimer le code ${code} ?`)) {
-      const success = await deleteGeneratedCode(codeId);
-      if (success) {
-        setCodes(prev => prev.filter(c => c.id !== codeId));
-        toast.success("Code supprimé");
-      } else {
-        toast.error("Erreur lors de la suppression");
-      }
+
+    // Demander le mot de passe admin pour confirmation sécurisée
+    const adminPwd = prompt(`Supprimer le code ${code}\n\nMot de passe admin :`);
+    if (!adminPwd) return; // Annulé par l'utilisateur
+
+    const success = await deleteGeneratedCode(codeId, adminPwd);
+    if (success) {
+      setCodes(prev => prev.filter(c => c.id !== codeId));
+      toast.success("Code supprimé");
+    } else {
+      toast.error("Mot de passe incorrect ou erreur");
     }
   };
 
