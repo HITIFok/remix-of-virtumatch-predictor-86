@@ -33,11 +33,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
 
-  let body;
-  try {
-    body = JSON.parse(req.body || '{}');
-  } catch {
-    return res.status(400).json({ success: false, error: 'Invalid JSON body' });
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (typeof req.body === 'string' && req.body.length > 0) {
+    try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
   }
 
   const { deviceId } = body;
