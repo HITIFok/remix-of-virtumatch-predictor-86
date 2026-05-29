@@ -1,16 +1,16 @@
 version: 2
 updates:
-  # npm dependencies - only patch and minor updates (no breaking changes)
+  # npm dependencies — only patch/minor, NO major bumps, NO grouping
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
     allow:
       - dependency-type: "direct"
       - dependency-type: "indirect"
-    # Block major version bumps that cause breaking changes
+    # Block ALL major version bumps that cause breaking peer dependency conflicts
     ignore:
       - dependency-name: "eslint"
         versions: [">=10.0.0"]
@@ -20,29 +20,46 @@ updates:
         versions: [">=3.0.0"]
       - dependency-name: "react-day-picker"
         versions: [">=9.0.0"]
+      - dependency-name: "date-fns"
+        versions: [">=4.0.0"]
       - dependency-name: "typescript-eslint"
         versions: [">=9.0.0"]
       - dependency-name: "eslint-plugin-react-hooks"
         versions: [">=6.0.0"]
-    # Group minor/patch updates together
-    groups:
-      production-dependencies:
-        dependency-type: "production"
-      development-dependencies:
-        dependency-type: "development"
+      - dependency-name: "react"
+        versions: [">=19.0.0"]
+      - dependency-name: "react-dom"
+        versions: [">=19.0.0"]
+      - dependency-name: "react-router-dom"
+        versions: [">=7.0.0"]
+      - dependency-name: "recharts"
+        versions: [">=3.0.0"]
+      - dependency-name: "sonner"
+        versions: [">=2.0.0"]
+      - dependency-name: "zod"
+        versions: [">=4.0.0"]
+      - dependency-name: "@hookform/resolvers"
+        versions: [">=4.0.0"]
+      - dependency-name: "react-resizable-panels"
+        versions: [">=3.0.0"]
+      - dependency-name: "lucide-react"
+        versions: [">=1.0.0"]
+      - dependency-name: "vaul"
+        versions: [">=1.1.0"]
+    # NO grouping — one PR per dependency for easier review
     commit-message:
       prefix: "deps"
       prefix-development: "deps-dev"
     labels:
       - "dependencies"
 
-  # GitHub Actions - only patch and minor updates
+  # GitHub Actions — only patch/minor updates
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 2
     commit-message:
       prefix: "ci"
     labels:
