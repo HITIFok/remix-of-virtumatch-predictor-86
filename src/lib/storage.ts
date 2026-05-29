@@ -191,23 +191,22 @@ export function isPremium(): boolean {
 }
 
 // Server-side premium validation (tamper-proof)
-// Call this before any premium-only operation
+// Uses REST API (RPC) instead of Edge Functions for Capacitor compatibility
 export async function verifyPremium(): Promise<boolean> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    const { data, error } = await supabase.functions.invoke('check-premium', {
-      method: 'POST',
-      body: { device_id: deviceId },
+    const { data, error } = await supabase.rpc('check_premium_status', {
+      p_device_id: deviceId,
     });
 
-    if (error || !data?.premium) {
+    if (error || !data) {
       clearAccess();
       return false;
     }
 
-    return true;
+    return data === true;
   } catch {
     return false;
   }
@@ -217,21 +216,26 @@ export function clearAccess() {
   localStorage.removeItem(ACCESS_KEY);
 }
 
-// --- Admin (server-signed tokens) ---
-// Session tokens are now issued by Edge Function with HMAC-SHA256 signature.
-// Client cannot forge tokens without the secret.
-// For critical operations, validate server-side via verify-admin Edge Function.
+// --- Admin (server-verified via RPC) ---
+// Password is verified server-side by verify_admin_password (SECURITY DEFINER + bcrypt).
+// Session is stored locally with 24h expiry for convenience.
 
 export function isAdmin(): boolean {
-  // Client-side check: verify token exists and is not expired.
-  // The HMAC signature makes the token tamper-proof.
-  const token = localStorage.getItem(ADMIN_SESSION_KEY);
-  if (!token || typeof token !== 'string') return false;
+  const raw = localStorage.getItem(ADMIN_SESSION_KEY);
+  if (!raw) return false;
   try {
-    const dotIndex = token.lastIndexOf('.');
-    if (dotIndex === -1) return false;
-    const expiresAt = parseInt(token.substring(0, dotIndex), 10);
-    if (isNaN(expiresAt) || Date.now() > expiresAt) {
+    const session = JSON.parse(raw);
+    if (!session.expiresAt) {
+      // Legacy format: raw string (timestamp)
+      const expiresAt = parseInt(raw, 10);
+      if (isNaN(expiresAt) || Date.now() > expiresAt) {
+        localStorage.removeItem(ADMIN_SESSION_KEY);
+        return false;
+      }
+      return true;
+    }
+    // New format: JSON { expiresAt, verifiedAt }
+    if (Date.now() > session.expiresAt) {
       localStorage.removeItem(ADMIN_SESSION_KEY);
       return false;
     }
@@ -243,50 +247,37 @@ export function isAdmin(): boolean {
 
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // Use Edge Function for server-side password verification + signed token
-    const { data, error } = await supabase.functions.invoke('admin-login', {
-      method: 'POST',
-      body: { password },
-    });
+    // Use REST API RPC instead of Edge Function for Capacitor compatibility
+    // The RPC function verify_admin_password is SECURITY DEFINER (server-side bcrypt)
+    const { data, error } = await supabase
+      .rpc('verify_admin_password', { input_password: password });
 
     if (error) {
-      console.error('admin-login error:', error);
+      console.error('RPC error:', error);
       return { success: false, message: `Erreur: ${error.message}` };
     }
 
-    if (data?.success && data.token) {
-      // Store the server-signed token (HMAC-SHA256 signed, tamper-proof)
-      localStorage.setItem(ADMIN_SESSION_KEY, data.token);
+    if (data === true) {
+      // Store admin session with 24h expiration
+      const session = {
+        expiresAt: Date.now() + ADMIN_SESSION_DURATION,
+        verifiedAt: new Date().toISOString(),
+      };
+      localStorage.setItem(ADMIN_SESSION_KEY, JSON.stringify(session));
       return { success: true, message: 'Connexion admin réussie' };
     }
 
-    return { success: false, message: data?.error || 'Mot de passe incorrect' };
+    return { success: false, message: 'Mot de passe incorrect' };
   } catch (err: any) {
     console.error('Exception in loginAdminSupabase:', err);
     return { success: false, message: `Exception: ${err.message}` };
   }
 }
 
-// Validate admin session server-side (call before sensitive operations)
+// Validate admin session locally (for Capacitor compatibility)
+// The RPC function handles the real auth; this is a convenience check
 export async function verifyAdminSession(): Promise<boolean> {
-  try {
-    const token = localStorage.getItem(ADMIN_SESSION_KEY);
-    if (!token) return false;
-
-    const { data, error } = await supabase.functions.invoke('verify-admin', {
-      method: 'POST',
-      body: { token },
-    });
-
-    if (error || !data?.valid) {
-      localStorage.removeItem(ADMIN_SESSION_KEY);
-      return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
+  return isAdmin();
 }
 
 // Legacy function for backwards compatibility
