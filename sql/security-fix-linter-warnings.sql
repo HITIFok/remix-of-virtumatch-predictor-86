@@ -17,7 +17,8 @@
 DO $$ BEGIN
   REVOKE EXECUTE ON FUNCTION public.log_user_login(p_pseudo text) FROM anon;
   REVOKE EXECUTE ON FUNCTION public.log_user_login(p_pseudo text) FROM authenticated;
-  RAISE NOTICE '✅ log_user_login(): EXECUTE révoqué pour anon + authenticated';
+  REVOKE EXECUTE ON FUNCTION public.log_user_login(p_pseudo text) FROM PUBLIC;
+  RAISE NOTICE '✅ log_user_login(): EXECUTE révoqué pour anon + authenticated + PUBLIC';
 EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE '⚠️ log_user_login(): %', SQLERRM;
 END $$;
@@ -31,7 +32,8 @@ END $$;
 DO $$ BEGIN
   REVOKE EXECUTE ON FUNCTION public.use_user_code(p_code text, p_pseudo text) FROM anon;
   REVOKE EXECUTE ON FUNCTION public.use_user_code(p_code text, p_pseudo text) FROM authenticated;
-  RAISE NOTICE '✅ use_user_code(): EXECUTE révoqué pour anon + authenticated';
+  REVOKE EXECUTE ON FUNCTION public.use_user_code(p_code text, p_pseudo text) FROM PUBLIC;
+  RAISE NOTICE '✅ use_user_code(): EXECUTE révoqué pour anon + authenticated + PUBLIC';
 EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE '⚠️ use_user_code(): %', SQLERRM;
 END $$;
