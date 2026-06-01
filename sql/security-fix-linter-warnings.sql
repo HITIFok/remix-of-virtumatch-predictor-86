@@ -1,6 +1,6 @@
 -- ============================================================================
--- SUPABASE SECURITY HARDENING
--- Corrige TOUT les warnings du Database Linter Supabase
+-- SUPABASE SECURITY HARDENING — Vrai projet VirtuMatch
+-- Corrige les warnings du Database Linter Supabase
 -- Date: 2026-06-01
 -- ============================================================================
 --
@@ -9,171 +9,74 @@
 -- ============================================================================
 
 -- ============================================================================
--- 1. FIX : access_codes — Politique UPDATE trop permissive (CRITIQUE)
---    Actuellement: USING (true), WITH CHECK (true) → n'importe qui peut UPDATE
---    Correction: Supprimer la politique permissive, les opérations admin passent
---    par Vercel API Routes (service_role) qui contourne RLS
--- ============================================================================
-DO $$ BEGIN
-  -- Supprimer la politique UPDATE permissive sur access_codes
-  DROP POLICY IF EXISTS "Allow public update on access_codes" ON public.access_codes;
-  RAISE NOTICE '✅ access_codes: politique UPDATE permissive supprimée';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ access_codes UPDATE: %', SQLERRM;
-END $$;
-
--- ============================================================================
--- 2. FIX : predictions — Politique INSERT trop permissive (HAUT)
---    Actuellement: WITH CHECK (true) → n'importe qui peut insérer des prédictions
---    Correction: Limiter l'INSERT pour que device_id soit obligatoire
---    (les opérations passent par Vercel API Routes, mais on sécurise aussi côté DB)
--- ============================================================================
-DO $$ BEGIN
-  -- Supprimer la politique INSERT permissive sur predictions
-  DROP POLICY IF EXISTS "Allow public insert on predictions" ON public.predictions;
-
-  -- Recréer avec CHECK: le device_id doit être présent et non vide
-  CREATE POLICY "Allow insert predictions with device_id"
-    ON public.predictions
-    FOR INSERT
-    TO anon, authenticated
-    WITH CHECK (device_id IS NOT NULL AND device_id != '');
-
-  RAISE NOTICE '✅ predictions: politique INSERT corrigée (device_id requis)';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ predictions INSERT: %', SQLERRM;
-END $$;
-
--- ============================================================================
--- 3. FIX : GraphQL — Révoquer l'accès anon aux tables sensibles
---    7 tables visibles dans le schéma GraphQL public via l'anon key
---    Correction: Révoquer SELECT anon sur les tables qui ne doivent pas
---    être découvertes sans connexion
---    Note: scraped_data doit rester lisible (utilisé par l'app web/APK)
--- ============================================================================
-
--- 3a. admin_codes — TOTALEMENT caché (admin uniquement via service_role)
-DO $$ BEGIN
-  REVOKE SELECT ON public.admin_codes FROM anon;
-  REVOKE SELECT ON public.admin_codes FROM authenticated;
-  RAISE NOTICE '✅ admin_codes: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ admin_codes: %', SQLERRM;
-END $$;
-
--- 3b. access_codes — HIDDEN du GraphQL (validation via Vercel API Route)
-DO $$ BEGIN
-  REVOKE SELECT ON public.access_codes FROM anon;
-  REVOKE SELECT ON public.access_codes FROM authenticated;
-  RAISE NOTICE '✅ access_codes: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ access_codes: %', SQLERRM;
-END $$;
-
--- 3c. predictions — HIDDEN du GraphQL (lecture via Vercel API Route)
-DO $$ BEGIN
-  REVOKE SELECT ON public.predictions FROM anon;
-  REVOKE SELECT ON public.predictions FROM authenticated;
-  RAISE NOTICE '✅ predictions: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ predictions: %', SQLERRM;
-END $$;
-
--- 3d. User — HIDDEN (pas d'auth Supabase utilisée dans l'app)
-DO $$ BEGIN
-  REVOKE SELECT ON public."User" FROM anon;
-  REVOKE SELECT ON public."User" FROM authenticated;
-  RAISE NOTICE '✅ User: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ User: %', SQLERRM;
-END $$;
-
--- 3e. Session — HIDDEN
-DO $$ BEGIN
-  REVOKE SELECT ON public."Session" FROM anon;
-  REVOKE SELECT ON public."Session" FROM authenticated;
-  RAISE NOTICE '✅ Session: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ Session: %', SQLERRM;
-END $$;
-
--- 3f. Notification — HIDDEN
-DO $$ BEGIN
-  REVOKE SELECT ON public."Notification" FROM anon;
-  REVOKE SELECT ON public."Notification" FROM authenticated;
-  RAISE NOTICE '✅ Notification: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ Notification: %', SQLERRM;
-END $$;
-
--- 3g. History — HIDDEN
-DO $$ BEGIN
-  REVOKE SELECT ON public."History" FROM anon;
-  REVOKE SELECT ON public."History" FROM authenticated;
-  RAISE NOTICE '✅ History: SELECT révoqué pour anon + authenticated';
-EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ History: %', SQLERRM;
-END $$;
-
--- 3h. scraped_data — Garder SELECT pour anon + authenticated
---     (utilisé par l'app web/APK pour le cache des matchs)
---     → NE PAS révoquer
-
--- ============================================================================
--- 4. FIX : rls_auto_enable() — SECURITY DEFINER accessible publiquement
---    C'est une fonction Supabase built-in mais elle peut être appelée par anon
+-- 1. FIX : log_user_login() — SECURITY DEFINER accessible publiquement (HAUT)
+--    Risque: N'importe qui peut appeler cette fonction pour injecter des logs
+--    Contexte: L'app appelle cette fonction via Vercel API Route (service_role)
 --    Correction: Révoquer EXECUTE pour anon et authenticated
 -- ============================================================================
 DO $$ BEGIN
-  REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM anon;
-  REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM authenticated;
-  RAISE NOTICE '✅ rls_auto_enable(): EXECUTE révoqué pour anon + authenticated';
+  REVOKE EXECUTE ON FUNCTION public.log_user_login(p_pseudo text) FROM anon;
+  REVOKE EXECUTE ON FUNCTION public.log_user_login(p_pseudo text) FROM authenticated;
+  RAISE NOTICE '✅ log_user_login(): EXECUTE révoqué pour anon + authenticated';
 EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ rls_auto_enable(): %', SQLERRM;
+  RAISE NOTICE '⚠️ log_user_login(): %', SQLERRM;
 END $$;
 
 -- ============================================================================
--- 5. FIX : update_updated_at_column() — Search path mutable
---    Correction: Attribuer un search_path fixe à la fonction
+-- 2. FIX : use_user_code() — SECURITY DEFINER accessible publiquement (CRITIQUE)
+--    Risque: N'importe qui peut activer des codes d'accès sans passer par l'app
+--    Contexte: L'app utilise /api/admin-codes (Vercel + service_role)
+--    Correction: Révoquer EXECUTE pour anon et authenticated
 -- ============================================================================
 DO $$ BEGIN
-  CREATE OR REPLACE FUNCTION public.update_updated_at_column()
-  RETURNS TRIGGER
-  LANGUAGE plpgsql
-  SECURITY DEFINER
-  SET search_path = ''  -- Search path fixe, pas mutable
-  AS $$
-  BEGIN
-    NEW.updated_at = now();
-    RETURN NEW;
-  END;
-  $$;
-  RAISE NOTICE '✅ update_updated_at_column(): search_path fixé';
+  REVOKE EXECUTE ON FUNCTION public.use_user_code(p_code text, p_pseudo text) FROM anon;
+  REVOKE EXECUTE ON FUNCTION public.use_user_code(p_code text, p_pseudo text) FROM authenticated;
+  RAISE NOTICE '✅ use_user_code(): EXECUTE révoqué pour anon + authenticated';
 EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ update_updated_at_column(): %', SQLERRM;
+  RAISE NOTICE '⚠️ use_user_code(): %', SQLERRM;
 END $$;
 
 -- ============================================================================
--- 6. FIX : Tables avec RLS activé mais SANS politique (INFO)
---    History, Notification, Session, User
---    RLS activé + aucune politique = ACCÈS BLOQUÉ pour tout le monde
---    → C'est sécuritaire par défaut, mais si ces tables sont inutilisées,
---      on peut désactiver RLS pour nettoyer les warnings.
---    Si elles sont utilisées, il faut ajouter des politiques appropriées.
---    → On désactive RLS sur ces tables (elles ne sont pas utilisées par l'app)
+-- 3. FIX : verify_credentials() — SECURITY DEFINER accessible (CRITIQUE)
+--    Risque: N'importe qui connecté peut vérifier des mots de passe
+--    Contexte: L'app utilise /api/admin-login (Vercel + service_role)
+--    Correction: Révoquer EXECUTE pour authenticated
 -- ============================================================================
 DO $$ BEGIN
-  ALTER TABLE public."History" DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE public."Notification" DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE public."Session" DISABLE ROW LEVEL SECURITY;
-  ALTER TABLE public."User" DISABLE ROW LEVEL SECURITY;
-  RAISE NOTICE '✅ RLS désactivé sur History, Notification, Session, User (tables inutilisées)';
+  REVOKE EXECUTE ON FUNCTION public.verify_credentials(p_pseudo text, p_password text) FROM anon;
+  REVOKE EXECUTE ON FUNCTION public.verify_credentials(p_pseudo text, p_password text) FROM authenticated;
+  RAISE NOTICE '✅ verify_credentials(): EXECUTE révoqué pour anon + authenticated';
 EXCEPTION WHEN OTHERS THEN
-  RAISE NOTICE '⚠️ RLS disable: %', SQLERRM;
+  RAISE NOTICE '⚠️ verify_credentials(): %', SQLERRM;
 END $$;
 
 -- ============================================================================
--- VÉRIFICATION : Lister les politiques RLS restantes sur predictions
+-- 4. FIX : check_premium_status() — SECURITY DEFINER accessible (MOYEN)
+--    Risque: Un utilisateur connecté peut vérifier le premium de n'importe quel device
+--    Contexte: L'app utilise /api/check-premium (Vercel + service_role)
+--    Correction: Révoquer EXECUTE pour authenticated (déjà révoqué pour anon normalement)
 -- ============================================================================
--- Pour vérifier que les corrections sont bien appliquées :
--- SELECT policyname, tablename, cmd, qual, with_check FROM pg_policies WHERE schemaname = 'public';
+DO $$ BEGIN
+  REVOKE EXECUTE ON FUNCTION public.check_premium_status(p_device_id text) FROM anon;
+  REVOKE EXECUTE ON FUNCTION public.check_premium_status(p_device_id text) FROM authenticated;
+  RAISE NOTICE '✅ check_premium_status(): EXECUTE révoqué pour anon + authenticated';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE '⚠️ check_premium_status(): %', SQLERRM;
+END $$;
+
+-- ============================================================================
+-- 5. INFO : pg_net dans le schéma public
+--    C'est l'extension utilisée par net.http_post() pour le cron auto-scrape
+--    ⚠️ NE PAS déplacer ! La laisser dans public.schema pour que pg_cron
+--    puisse utiliser net.http_post(). C'est un warning cosmétique sans risque.
+--    Si on la déplace vers extensions, les jobs pg_cron cesseront de fonctionner.
+-- ============================================================================
+
+-- ============================================================================
+-- VÉRIFICATION : Confirmer les révocations
+-- ============================================================================
+-- SELECT proname, proargtypes::regtype[], grantee::regrole, privilege_type
+-- FROM pg_proc p
+-- JOIN information_schema.role_routines r ON r.specific_name = p.proname
+-- WHERE p.pronamespace = 'public'::regnamespace
+-- AND p.prosecdef = true;
