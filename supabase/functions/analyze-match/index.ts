@@ -22,47 +22,69 @@ const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring
 // ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
 
 const SYSTEM_PROMPT = `Tu es un expert en prédiction de matchs de football virtuels.
-Tu analyses les cotes 1X2 fournies et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
+Tu analyses les données fournies (cotes, classement, résultats récents, confrontations directes) et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
+
+## DONNÉES À TA DISPOSITION
+
+Pour chaque match, tu reçois :
+1. **Cotes 1X2** — pour calculer les probabilités implicites
+2. **Classement** — position, points, buts marqués/encaissés de chaque équipe
+3. **Résultats récents** — les 5 derniers matchs de chaque équipe (V=Victoire, D=Défaite, N=Nul)
+4. **Confrontations directes (H2H)** — les résultats historiques entre les deux équipes
 
 ## MÉTHODE D'ANALYSE — Algorithme de Précision
 
 ### Étape 1 : Probabilités implicites normalisées
 P(résultat) = (1/cote) / Σ(1/cote_i)
 
-### Étape 2 : Analyse du système tactique
-À partir des cotes et probabilités, détermine :
-- Le SYSTÈME DE JEU probable de chaque équipe (offensif/défensif/équilibré)
-- Si une cote dom très basse (<1.40) → système offensif dominant
-- Si cotes serrées → systèmes défensifs/prudents
-- Si cote nul basse (<3.0) → deux équipes défensives
+### Étape 2 : Analyse contextuelle AVANCÉE
+Utilise TOUTES les données fournies :
+- **Classement** : Écart de points, différence de buts, position
+- **Forme récente** : Série en cours (VVV = très bon, DDD = crise), buts marqués/encaissés
+- **Attaque/Défense** : Buts marqués par match = puissance offensive; buts encaissés = solidité défensive
+- **Confrontations directes** : Tendance historique entre les deux équipes (domination, équilibre)
+- **Momentum** : Équipe en hausse ou en baisse basé sur les derniers résultats
 
-### Étape 3 : Détection de piège (Anti-Trap)
-Si la probabilité du score favori > 15% ET (prob_outsider + prob_nul) > 35% → bascule sur alternative.
+### Étape 3 : Analyse du système tactique
+À partir des données complètes, détermine :
+- Le SYSTÈME DE JEU probable de chaque équipe (offensif/défensif/équilibré)
+- Si une équipe marque beaucoup mais encaisse peu → système complet
+- Si les deux équipes encaissent beaucoup → match ouvert
+- Si le classement montre un grand écart → favori logique
+
+### Étape 4 : Détection de piège (Anti-Trap)
+ALERTES de piège quand :
+- Le favori au classement a une cote élevée (bookmaker doute)
+- La forme récente contredit le classement (ex: leader sur 3 défaites)
+- Les confrontations directes montrent un outsider qui domine
+- Les stats de buts suggèrent un score différent des cotes
+
+Si plusieurs alertes → bascule sur l'alternative.
 Sinon → GARDE LE FAVORI.
 
-### Étape 4 : Score exact basé sur les tendances
+### Étape 5 : Score exact basé sur les tendances
+- Analyse les buts marqués/encaissés récents pour estimer le total de buts
+- Utilise les confrontations directes pour le score exact
 - Scores fréquents en virtuel : 1-0, 0-1, 1-1, 2-1, 1-2, 2-0, 0-2, 0-0, 2-2, 3-1, 3-0, 3-2
-- Le score DOIT être cohérent avec le système tactique identifié
-- Système offensif → plus de buts attendus
-- Système défensif → moins de buts, scores serrés
+- Le score DOIT être cohérent avec toutes les données analysées
 
-### Étape 5 : Analyse complète des tendances
+### Étape 6 : Analyse complète des tendances
 Pour chaque match, évalue :
-- Dynamique offensive/défensive de chaque équipe
+- Dynamique offensive/défensive basée sur les RÉSULTATS (pas juste les cotes)
 - Probabilité de but en 1ère mi-temps
 - Probabilité que les deux marquent
-- Tendance Over/Under
-- Risque de piège
+- Tendance Over/Under basée sur les buts récents
+- Risque de piège basé sur les données contextuelles
 
 ## FORMAT DE RÉPONSE JSON (pour CHAQUE match)
 {
   "scoreHome": integer,
   "scoreAway": integer,
   "confidence": number 0-1,
-  "reasoning": string (4-5 phrases détaillées: système tactique, piège ou non, dynamique, justification du score),
+  "reasoning": string (5-7 phrases DÉTAILLÉES utilisant les données: classement, forme récente, H2H, pourquoi ce score, piège ou non),
   "isAntiTrap": boolean,
   "firstHalfGoal": boolean,
-  "tendency": string (ex: "Système offensif domicile, défense fragile extérieur — match ouvert"),
+  "tendency": string (ex: "1er au classement, 4V en forme, attaque forte — mais H2H défavorable"),
   "dangerLevel": "safe" | "moderate" | "trap",
   "topScores": [{"score": "2-1", "probability": 0.18}, ...] (3 scores les plus probables),
   "bttsProb": number 0-1,
@@ -264,12 +286,50 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[analyze-match] Processing ${matches.length} match(es)...`);
 
-    // --- Build user prompt ---
+    // --- Build enriched user prompt with ranking, results, H2H ---
     const userPrompt = matches
-      .map((m: any, i: number) =>
-        `Match ${i + 1}: ${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away} | Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}`
-      )
-      .join("\n");
+      .map((m: any, i: number) => {
+        let block = `--- MATCH ${i + 1} ---\n`;
+        block += `${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away}\n`;
+        block += `Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}\n`;
+
+        // Classement
+        if (m.rankingHome) {
+          const r = m.rankingHome;
+          block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        }
+        if (m.rankingAway) {
+          const r = m.rankingAway;
+          block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        }
+
+        // Résultats récents domicile
+        if (m.recentHome?.length > 0) {
+          block += `\nForme récente ${m.home}:\n`;
+          for (const res of m.recentHome) {
+            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+          }
+        }
+
+        // Résultats récents extérieur
+        if (m.recentAway?.length > 0) {
+          block += `\nForme récente ${m.away}:\n`;
+          for (const res of m.recentAway) {
+            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+          }
+        }
+
+        // Confrontations directes
+        if (m.headToHead?.length > 0) {
+          block += `\nConfrontations directes:\n`;
+          for (const h of m.headToHead) {
+            block += `  ${h.home} ${h.scoreHome}-${h.scoreAway} ${h.away}\n`;
+          }
+        }
+
+        return block;
+      })
+      .join("\n\n");
 
     // --- Provider keys ---
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");

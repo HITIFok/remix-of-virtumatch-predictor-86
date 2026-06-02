@@ -25,8 +25,122 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ScrapedMatch } from "@/lib/types";
+import type { ScrapedMatch, MatchResult as ApiMatchResult, RankingEntry } from "@/lib/types";
 import FlagIcon from "@/components/FlagIcon";
+
+// ─── Enrich match data with ranking, results, head-to-head for AI ──────────────
+interface EnrichedMatchInput {
+  home: string;
+  away: string;
+  league: string;
+  oddHome: number;
+  oddDraw: number;
+  oddAway: number;
+  rankingHome?: { position: number; played: number; won: number; drawn: number; lost: number; goalsFor: number; goalsAgainst: number; goalDifference: number; points: number };
+  rankingAway?: { position: number; played: number; won: number; drawn: number; lost: number; goalsFor: number; goalsAgainst: number; goalDifference: number; points: number };
+  recentHome: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
+  recentAway: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
+  headToHead: { home: string; away: string; scoreHome: number; scoreAway: number }[];
+}
+
+function enrichMatchesForAI(
+  matches: ScrapedMatch[],
+  results: ApiMatchResult[],
+  ranking: RankingEntry[]
+): EnrichedMatchInput[] {
+  // Build ranking map
+  const rankingMap = new Map<string, RankingEntry>();
+  for (const r of ranking) {
+    rankingMap.set(r.team.toLowerCase().trim(), r);
+  }
+
+  return matches.map(m => {
+    const homeKey = m.home.toLowerCase().trim();
+    const awayKey = m.away.toLowerCase().trim();
+
+    // Ranking data
+    const homeRank = rankingMap.get(homeKey);
+    const awayRank = rankingMap.get(awayKey);
+
+    // Recent results: last 5 for each team
+    const recentHome: EnrichedMatchInput["recentHome"] = [];
+    const recentAway: EnrichedMatchInput["recentAway"] = [];
+    const h2h: EnrichedMatchInput["headToHead"] = [];
+
+    for (const r of results) {
+      const rHome = r.home.toLowerCase().trim();
+      const rAway = r.away.toLowerCase().trim();
+
+      // Home team's recent matches
+      if (rHome === homeKey && recentHome.length < 5) {
+        recentHome.push({
+          opponent: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+          result: r.scoreHome > r.scoreAway ? "V" : r.scoreHome < r.scoreAway ? "D" : "N",
+        });
+      }
+      if (rAway === homeKey && recentHome.length < 5) {
+        recentHome.push({
+          opponent: r.home,
+          scoreHome: r.scoreAway,
+          scoreAway: r.scoreHome,
+          result: r.scoreAway > r.scoreHome ? "V" : r.scoreAway < r.scoreHome ? "D" : "N",
+        });
+      }
+
+      // Away team's recent matches
+      if (rHome === awayKey && recentAway.length < 5) {
+        recentAway.push({
+          opponent: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+          result: r.scoreHome > r.scoreAway ? "V" : r.scoreHome < r.scoreAway ? "D" : "N",
+        });
+      }
+      if (rAway === awayKey && recentAway.length < 5) {
+        recentAway.push({
+          opponent: r.home,
+          scoreHome: r.scoreAway,
+          scoreAway: r.scoreHome,
+          result: r.scoreAway > r.scoreHome ? "V" : r.scoreAway < r.scoreHome ? "D" : "N",
+        });
+      }
+
+      // Head-to-head
+      if ((rHome === homeKey && rAway === awayKey) || (rHome === awayKey && rAway === homeKey)) {
+        h2h.push({
+          home: r.home,
+          away: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+        });
+      }
+    }
+
+    return {
+      home: m.home,
+      away: m.away,
+      league: m.league,
+      oddHome: m.oddHome,
+      oddDraw: m.oddDraw,
+      oddAway: m.oddAway,
+      rankingHome: homeRank ? {
+        position: homeRank.position, played: homeRank.played, won: homeRank.won,
+        drawn: homeRank.drawn, lost: homeRank.lost, goalsFor: homeRank.goalsFor,
+        goalsAgainst: homeRank.goalsAgainst, goalDifference: homeRank.goalDifference, points: homeRank.points,
+      } : undefined,
+      rankingAway: awayRank ? {
+        position: awayRank.position, played: awayRank.played, won: awayRank.won,
+        drawn: awayRank.drawn, lost: awayRank.lost, goalsFor: awayRank.goalsFor,
+        goalsAgainst: awayRank.goalsAgainst, goalDifference: awayRank.goalDifference, points: awayRank.points,
+      } : undefined,
+      recentHome,
+      recentAway,
+      headToHead: h2h,
+    };
+  });
+}
 
 function MatchCard({
   match,
@@ -247,15 +361,16 @@ export default function LiveMatches() {
         console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
       } else {
         try {
+          // Enrichir avec classement + résultats + face-à-face
+          const enriched = enrichMatchesForAI([match], results, ranking);
           const { data, error } = await supabase.functions.invoke("analyze-match", {
-            body: { matches: [{ home: match.home, away: match.away, league: match.league, oddHome: match.oddHome, oddDraw: match.oddDraw, oddAway: match.oddAway }] },
+            body: { matches: enriched },
           });
           if (!error && data?.predictions?.length > 0) {
             aiPrediction = data.predictions[0] as AIPrediction;
             aiCache.current.set(cacheKey, aiPrediction);
-            console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away);
+            console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away, "(enriched)");
           } else {
-            // Log detailed Google error if present
             const googleError = error as any;
             if (googleError?.googleError) {
               console.error("[LiveMatches] Google AI 429 details:", googleError.googleError);
@@ -284,7 +399,7 @@ export default function LiveMatches() {
   const handleBatchPredict = async () => {
     // Collecter tous les matchs visibles (avec cotes > 0) qui n'ont pas encore été prédits
     const allMatches: ScrapedMatch[] = [];
-    const uncachedMatches: { match: ScrapedMatch; input: MatchInput; cacheKey: string }[] = [];
+    const uncachedMatches: { match: ScrapedMatch; cacheKey: string }[] = [];
 
     for (const league of Object.keys(matchesByLeague)) {
       for (const match of matchesByLeague[league]) {
@@ -293,11 +408,7 @@ export default function LiveMatches() {
           const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
           allMatches.push(match);
           if (!aiCache.current.has(cacheKey) && !predictions[matchKey]) {
-            uncachedMatches.push({
-              match,
-              input: { home: match.home, away: match.away, league: match.league, oddHome: match.oddHome, oddDraw: match.oddDraw, oddAway: match.oddAway },
-              cacheKey,
-            });
+            uncachedMatches.push({ match, cacheKey });
           }
         }
       }
@@ -315,8 +426,11 @@ export default function LiveMatches() {
 
       if (uncachedMatches.length > 0) {
         try {
+          // Enrichir avec classement + résultats + face-à-face
+          const uncachedMatchObjects = uncachedMatches.map(m => m.match);
+          const enriched = enrichMatchesForAI(uncachedMatchObjects, results, ranking);
           const { data, error } = await supabase.functions.invoke("analyze-match", {
-            body: { matches: uncachedMatches.map(m => m.input) },
+            body: { matches: enriched },
           });
 
           if (!error && data?.predictions?.length > 0) {
