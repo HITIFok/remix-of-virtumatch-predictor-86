@@ -1,5 +1,5 @@
 // analyze-match/index.ts — Supabase Edge Function
-// AI-powered match analysis using Lovable AI gateway
+// AI-powered match analysis using Google Gemini API (direct)
 // NO imports — uses Deno.serve() + native fetch
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
@@ -23,8 +23,13 @@ Deno.serve(async (req: Request) => {
     }
 
     const { matches } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+
+    // --- Google AI Key (set in Supabase Edge Function Secrets) ---
+    const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_KEY");
+    if (!GOOGLE_AI_KEY) throw new Error("GOOGLE_AI_KEY is not configured");
+
+    const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GOOGLE_AI_KEY}`;
 
     const systemPrompt = `Tu es un expert en prédiction de matchs de football virtuels.
 Tu analyses les cotes 1X2 fournies et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
@@ -87,41 +92,49 @@ Retourne un tableau JSON. RIEN D'AUTRE que le JSON.`;
       )
       .join("\n");
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // --- Appel direct à Google Gemini API ---
+    const response = await fetch(GEMINI_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
+        system_instruction: {
+          parts: [{ text: systemPrompt }],
+        },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: userPrompt }],
+          },
         ],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 8192,
+          responseMimeType: "application/json",
+        },
       }),
     });
 
     if (!response.ok) {
       if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Trop de requêtes, réessayez dans quelques secondes." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({ error: "Trop de requêtes Google AI. Réessayez dans quelques secondes." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Crédits épuisés. Rechargez votre compte." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      return new Response(JSON.stringify({ error: "Erreur du service IA" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      const errorBody = await response.text();
+      console.error("Google AI API error:", response.status, errorBody);
+      return new Response(
+        JSON.stringify({ error: "Erreur du service Google AI", details: errorBody }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "[]";
+
+    // Gemini format: data.candidates[0].content.parts[0].text
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
 
     let jsonStr = content;
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -133,7 +146,7 @@ Retourne un tableau JSON. RIEN D'AUTRE que le JSON.`;
       predictions = JSON.parse(jsonStr);
       if (!Array.isArray(predictions)) predictions = [predictions];
     } catch {
-      console.error("Failed to parse AI response:", jsonStr);
+      console.error("Failed to parse Gemini response:", jsonStr);
       predictions = [];
     }
 
