@@ -4,7 +4,14 @@
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Origin": "*",
+};
+
+// Si ALLOWED_ORIGIN est défini, restreindre CORS (sécurité)
+if (Deno.env.get("ALLOWED_ORIGIN")) {
+  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
+  corsHeaders["Vary"] = "Origin";
+}
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };

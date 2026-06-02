@@ -4,10 +4,18 @@
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
+// Si ALLOWED_ORIGIN est défini, le restreindre (sécurité)
+if (Deno.env.get("ALLOWED_ORIGIN")) {
+  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
+  corsHeaders["Vary"] = "Origin";
+  console.log(`[fetch-live] CORS restreint à: ${ALLOWED_ORIGIN}`);
+} else {
+  console.log(`[fetch-live] CORS ouvert (pas de ALLOWED_ORIGIN configuré)`);
+}
 
 const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
