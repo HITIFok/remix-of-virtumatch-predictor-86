@@ -12,7 +12,7 @@ const ALLOWED_ORIGIN = env("ALLOWED_ORIGIN", "https://virtual-match-hitifproject
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 // Si ALLOWED_ORIGIN est défini, le restreindre (sécurité)
 if (ALLOWED_ORIGIN) {
@@ -147,7 +147,14 @@ Deno.serve(async (req: Request) => {
 
   try {
     const url = new URL(req.url);
-    const leagueId = url.searchParams.get("leagueId") || "8035";
+    // Support both GET query param AND POST body (for supabase.functions.invoke)
+    let leagueId = url.searchParams.get("leagueId") || "8035";
+    if (req.method === "POST") {
+      try {
+        const body = await req.json();
+        if (body?.leagueId) leagueId = body.leagueId;
+      } catch { /* no body */ }
+    }
     const leagueName = LEAGUES[leagueId] || "Unknown League";
     console.log(`=== fetch-live: ${leagueName} (${leagueId}) ===`);
 
