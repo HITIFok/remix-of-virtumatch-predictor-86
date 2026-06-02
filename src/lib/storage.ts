@@ -1,6 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { config } from "@/config/env";
 import type { MatchResult } from "./prediction-engine";
+import { getDeviceId } from "@/hooks/use-predictions";
 
 const ACCESS_KEY = "virtuxxs_access";
 const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
