@@ -5,7 +5,8 @@ import AnimatedBackground from "@/components/AnimatedBackground";
 import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
-import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult } from "@/lib/prediction-engine";
+import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
+import { supabase } from "@/integrations/supabase/client";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
 import { RankingTable, ResultsList } from "@/components/LeagueData";
@@ -181,9 +182,26 @@ export default function LiveMatches() {
         oddAway: match.oddAway,
       };
 
+      // --- Appel IA via Edge Function analyze-match ---
+      let aiPrediction: AIPrediction | undefined;
+      try {
+        const { data, error } = await supabase.functions.invoke("analyze-match", {
+          body: { matches: [matchInput] },
+        });
+        if (!error && data?.predictions?.length > 0) {
+          aiPrediction = data.predictions[0] as AIPrediction;
+          console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away);
+        } else {
+          console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+        }
+      } catch (aiErr) {
+        console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
+      }
+
+      // --- Analyse : IA si disponible, sinon math ---
       const teamStatsMap = buildTeamStatsMap(ranking);
       const historicalResults = prepareHistoricalResults(results);
-      const result = analyzeMatch(matchInput, undefined, teamStatsMap, historicalResults);
+      const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
 
       setPredictions(prev => ({ ...prev, [matchKey]: result }));
 
