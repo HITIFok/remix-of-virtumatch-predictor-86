@@ -72,7 +72,7 @@ jobs:
           name: virutel-apk
           path: android/app/build/outputs/**/*.apk
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
       - name: Clean up keystore
         if: always()

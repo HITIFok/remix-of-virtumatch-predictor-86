@@ -56,5 +56,11 @@ jobs:
           if grep -r 'Access-Control-Allow-Origin.*\*' api/ --include='*.js' 2>/dev/null; then
             echo "WARNING: Wildcard CORS detected in Vercel API routes!"
           else
-            echo "CORS: OK (no wildcard in API routes)"
+            echo "CORS API: OK (no wildcard in Vercel API routes)"
+          fi
+
+          if grep -r 'Access-Control-Allow-Origin.*\*' supabase/functions/ --include='*.ts' 2>/dev/null; then
+            echo "WARNING: Wildcard CORS detected in Supabase Edge Functions!"
+          else
+            echo "CORS Edge Functions: OK (no wildcard)"
           fi
