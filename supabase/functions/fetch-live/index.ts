@@ -2,14 +2,20 @@
 // Fetches live match data, ranking, results
 // NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
+/** Helper: read env var and strip accidental surrounding quotes */
+function env(key: string, fallback = ""): string {
+  const raw = Deno.env.get(key) || fallback;
+  return raw.replace(/^["']|["']$/g, "");
+}
+
+const ALLOWED_ORIGIN = env("ALLOWED_ORIGIN", "https://virtual-match-hitifproject.vercel.app");
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
 // Si ALLOWED_ORIGIN est défini, le restreindre (sécurité)
-if (Deno.env.get("ALLOWED_ORIGIN")) {
+if (ALLOWED_ORIGIN) {
   corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
   corsHeaders["Vary"] = "Origin";
   console.log(`[fetch-live] CORS restreint à: ${ALLOWED_ORIGIN}`);
@@ -17,7 +23,9 @@ if (Deno.env.get("ALLOWED_ORIGIN")) {
   console.log(`[fetch-live] CORS ouvert (pas de ALLOWED_ORIGIN configuré)`);
 }
 
-const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+const API_BASE = env("SPORTY_API_BASE", "https://hg-event-api-prod.sporty-tech.net/api/instantleagues");
+
+console.log(`[DIAG] API_BASE=${API_BASE}`);
 
 const LEAGUES: Record<string, string> = {
   "8035": "English League",
@@ -31,25 +39,65 @@ const LEAGUES: Record<string, string> = {
   "8065": "Coupe du monde",
 };
 
+const API_ORIGIN_VAL = env("API_ORIGIN", "https://www.sportybet.com");
+const API_REFERER_VAL = env("API_REFERER", "https://www.sportybet.com/");
+const API_APP_VERSION_VAL = env("API_APP_VERSION", "13.0.0");
+console.log(`[DIAG] Origin=${API_ORIGIN_VAL}, Referer=${API_REFERER_VAL}, App-Version=${API_APP_VERSION_VAL}`);
+
 const HEADERS: Record<string, string> = {
-  "Origin": Deno.env.get("API_ORIGIN") || "https://bet261.mg",
-  "Referer": Deno.env.get("API_REFERER") || "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+  "Origin": API_ORIGIN_VAL,
+  "Referer": API_REFERER_VAL,
+  "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.113 Mobile Safari/537.36",
   "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": Deno.env.get("API_APP_VERSION") || "33335",
+  "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Accept-Encoding": "gzip, deflate, br",
+  "App-Version": API_APP_VERSION_VAL,
+  "X-Requested-With": "com.sportybet.android",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
 };
+
+const HEADERS_FALLBACK: Record<string, string> = {
+  "Origin": "https://www.sportybet.com",
+  "Referer": "https://www.sportybet.com/ng/",
+  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-NG,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "App-Version": "12.8.0",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "cross-site",
+};
+
+let diagLogged = false;
 
 async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(`${API_BASE}${path}`, {
+    let res = await fetch(`${API_BASE}${path}`, {
       headers: HEADERS,
       signal: controller.signal,
+      redirect: "follow",
     });
+    // If 403, try with fallback headers
+    if (res.status === 403) {
+      console.log(`API 403 for ${path}, trying fallback headers...`);
+      res = await fetch(`${API_BASE}${path}`, {
+        headers: HEADERS_FALLBACK,
+        signal: controller.signal,
+        redirect: "follow",
+      });
+    }
     clearTimeout(timeoutId);
     if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      if (!diagLogged) {
+        console.log(`[DIAG] ${res.status} body: ${body.substring(0, 300)}`);
+        diagLogged = true;
+      }
       console.log(`API ${res.status} for ${path}`);
       return null;
     }

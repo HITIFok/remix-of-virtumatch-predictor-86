@@ -2,24 +2,28 @@
 // Scrape Instant League data and store in scraped_data table
 // NO imports — uses Deno.serve() + native fetch
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
+/** Helper: read env var and strip accidental surrounding quotes */
+function env(key: string, fallback = ""): string {
+  const raw = Deno.env.get(key) || fallback;
+  return raw.replace(/^["']|["']$/g, "");
+}
+
+const ALLOWED_ORIGIN = env("ALLOWED_ORIGIN", "https://virtual-match-hitifproject.vercel.app");
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-};
-
-// Si ALLOWED_ORIGIN est défini, restreindre CORS (sécurité)
-if (Deno.env.get("ALLOWED_ORIGIN")) {
-  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
-  corsHeaders["Vary"] = "Origin";
-}
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key, x-device-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+// Si ALLOWED_ORIGIN est défini, restreindre CORS (sécurité)
+if (ALLOWED_ORIGIN) {
+  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
+  corsHeaders["Vary"] = "Origin";
+}
 
-const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
-const DATABASE_SERVICE_KEY = Deno.env.get("DATABASE_SERVICE_KEY") || "";
+const API_BASE = env("SPORTY_API_BASE", "https://hg-event-api-prod.sporty-tech.net/api/instantleagues");
+const DATABASE_URL = env("DATABASE_URL");
+const DATABASE_SERVICE_KEY = env("DATABASE_SERVICE_KEY");
 
 // Timing-safe comparison to prevent timing attacks
 function timingSafeEqual(a: string, b: string): boolean {
@@ -47,12 +51,17 @@ const LEAGUES: Record<string, { id: string; name: string }> = {
 };
 
 const HEADERS: Record<string, string> = {
-  "Origin": Deno.env.get("API_ORIGIN") || "https://bet261.mg",
-  "Referer": Deno.env.get("API_REFERER") || "https://bet261.mg",
-  "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+  "Origin": env("API_ORIGIN", "https://www.sportybet.com"),
+  "Referer": env("API_REFERER", "https://www.sportybet.com/"),
+  "User-Agent": "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.6422.113 Mobile Safari/537.36",
   "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": Deno.env.get("API_APP_VERSION") || "33335",
+  "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Accept-Encoding": "gzip, deflate, br",
+  "App-Version": env("API_APP_VERSION", "13.0.0"),
+  "X-Requested-With": "com.sportybet.android",
+  "Sec-Fetch-Dest": "empty",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Site": "same-origin",
 };
 
 // --- Native fetch helpers for Supabase REST API ---
