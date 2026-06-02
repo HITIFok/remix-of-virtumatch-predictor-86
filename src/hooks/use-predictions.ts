@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/integrations/supabase/client'
 
 // Device ID for tracking predictions per device
-function getDeviceId(): string {
+export function getDeviceId(): string {
   let id = localStorage.getItem("virtuxxs_device_id");
   if (!id) {
     id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
