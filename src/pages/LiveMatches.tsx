@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
@@ -164,12 +164,23 @@ export default function LiveMatches() {
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
 
+  // Cache IA : éviter d'appeler Google AI pour le même match (cotes identiques)
+  const aiCache = useRef<Map<string, AIPrediction>>(new Map());
+  // Debounce : empêcher les clics multiples rapides
+  const predictingRef = useRef<string | null>(null);
+
   useEffect(() => {
     fetchMatches();
   }, []);
 
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
+    // Cache key basé sur les cotes (même match, mêmes cotes = même résultat IA)
+    const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+
+    // Anti-double-clic : si déjà en cours, ignorer
+    if (predictingRef.current === matchKey) return;
+    predictingRef.current = matchKey;
     setPredictingId(matchKey);
 
     try {
@@ -182,20 +193,27 @@ export default function LiveMatches() {
         oddAway: match.oddAway,
       };
 
-      // --- Appel IA via Edge Function analyze-match ---
+      // --- Appel IA via Edge Function analyze-match (avec cache) ---
       let aiPrediction: AIPrediction | undefined;
-      try {
-        const { data, error } = await supabase.functions.invoke("analyze-match", {
-          body: { matches: [matchInput] },
-        });
-        if (!error && data?.predictions?.length > 0) {
-          aiPrediction = data.predictions[0] as AIPrediction;
-          console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away);
-        } else {
-          console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+      const cached = aiCache.current.get(cacheKey);
+      if (cached) {
+        aiPrediction = cached;
+        console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
+      } else {
+        try {
+          const { data, error } = await supabase.functions.invoke("analyze-match", {
+            body: { matches: [matchInput] },
+          });
+          if (!error && data?.predictions?.length > 0) {
+            aiPrediction = data.predictions[0] as AIPrediction;
+            aiCache.current.set(cacheKey, aiPrediction);
+            console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away);
+          } else {
+            console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+          }
+        } catch (aiErr) {
+          console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
         }
-      } catch (aiErr) {
-        console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
       }
 
       // --- Analyse : IA si disponible, sinon math ---
@@ -246,6 +264,7 @@ export default function LiveMatches() {
       toast.error("Erreur lors de la prédiction");
     } finally {
       setPredictingId(null);
+      predictingRef.current = null;
     }
   };
 
