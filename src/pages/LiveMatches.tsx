@@ -255,7 +255,14 @@ export default function LiveMatches() {
             aiCache.current.set(cacheKey, aiPrediction);
             console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away);
           } else {
-            console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+            // Log detailed Google error if present
+            const googleError = error as any;
+            if (googleError?.googleError) {
+              console.error("[LiveMatches] Google AI 429 details:", googleError.googleError);
+              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
+            } else {
+              console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+            }
           }
         } catch (aiErr) {
           console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
@@ -322,8 +329,15 @@ export default function LiveMatches() {
             }
             console.log(`[LiveMatches] Batch AI: ${aiPreds.length}/${uncachedMatches.length} predictions received`);
           } else {
-            console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
-            toast.error("IA indisponible, analyse mathématique utilisée");
+            // Log detailed Google error if present
+            const googleError = error as any;
+            if (googleError?.googleError) {
+              console.error("[LiveMatches] Batch Google AI 429 details:", googleError.googleError);
+              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
+            } else {
+              console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
+              toast.error("IA indisponible, analyse mathématique utilisée");
+            }
           }
         } catch (aiErr) {
           console.warn("[LiveMatches] Batch AI call failed:", aiErr);
