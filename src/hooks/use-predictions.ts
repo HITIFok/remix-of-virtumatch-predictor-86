@@ -65,25 +65,27 @@ export function usePredictions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Vérifier automatiquement les prédictions en attente
+  // Vérifier automatiquement les prédictions en attente (device-scoped)
   const autoVerifyPredictions = useCallback(async () => {
     try {
       const supabaseUrl = import.meta.env.VITE_DATABASE_URL
       const anonKey = import.meta.env.VITE_DATABASE_ANON_KEY
-      
-      // Vérifier silencieusement en arrière-plan
+      const deviceId = getDeviceId()
+
+      // Vérifier silencieusement en arrière-plan — envoie device_id pour filtrer
       const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': anonKey,
           'Authorization': `Bearer ${anonKey}`
-        }
+        },
+        body: JSON.stringify({ deviceId })
       })
-      
+
       if (response.ok) {
         const data = await response.json()
-
+        console.log('[autoVerify]', data.verified || 0, 'prediction(s) vérifiée(s)')
         return data
       }
     } catch (err) {

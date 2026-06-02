@@ -1,6 +1,11 @@
 // verify-predictions/index.ts — Supabase Edge Function
 // Verifies pending predictions by comparing with API results
 // NO imports — uses Deno.serve() + native fetch
+//
+// v15: Two modes:
+//   - CRON (x-cron-key): verifies ALL pending predictions (up to 200)
+//   - CLIENT (apikey + device_id body): verifies only this device's pending predictions
+// Both modes fetch results from all 9 leagues in parallel.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
@@ -51,6 +56,7 @@ const HEADERS: Record<string, string> = {
   "App-Version": Deno.env.get("API_APP_VERSION") || "",
 };
 
+/** Fetch results from one league and return a Map keyed by "homeTeam|awayTeam" */
 async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
   const resultsMap = new Map();
   try {
@@ -89,115 +95,156 @@ async function fetchResults(leagueId: string): Promise<Map<string, { homeScore: 
   return resultsMap;
 }
 
+/** Fetch results from ALL leagues in parallel */
+async function fetchAllResults(): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
+  const allResults = await Promise.all(LEAGUES.map(l => fetchResults(l.id)));
+  const resultsMap = new Map();
+  for (const leagueResults of allResults) {
+    for (const [key, value] of leagueResults) {
+      resultsMap.set(key, value);
+    }
+  }
+  console.log(`Total results across all leagues: ${resultsMap.size}`);
+  return resultsMap;
+}
+
+/** Fetch pending predictions with optional device_id filter */
+async function fetchPendingPredictions(deviceId?: string): Promise<any[]> {
+  let url = `${DATABASE_URL}/rest/v1/predictions?status=eq.pending&order=created_at.asc&limit=200`;
+  if (deviceId) {
+    url += `&device_id=eq.${encodeURIComponent(deviceId)}`;
+  }
+
+  const dbRes = await fetch(url, {
+    headers: {
+      "apikey": DATABASE_SERVICE_KEY,
+      "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!dbRes.ok) {
+    console.error(`Failed to fetch predictions: ${dbRes.status}`);
+    return [];
+  }
+  return await dbRes.json();
+}
+
+/** Compare predictions against results and update verified ones */
+async function verifyPredictions(pendingPredictions: any[], resultsMap: Map<string, any>): Promise<{ correct: number; incorrect: number; failed: number }> {
+  let correct = 0, incorrect = 0;
+  const updates: Promise<any>[] = [];
+
+  for (const pred of pendingPredictions) {
+    const key = `${pred.home_team}|${pred.away_team}`;
+    const result = resultsMap.get(key);
+    if (result) {
+      const isCorrect = pred.prediction === result.outcome;
+      const status = isCorrect ? "correct" : "incorrect";
+      if (isCorrect) correct++; else incorrect++;
+
+      updates.push(
+        fetch(`${DATABASE_URL}/rest/v1/predictions?id=eq.${pred.id}`, {
+          method: "PATCH",
+          headers: {
+            "apikey": DATABASE_SERVICE_KEY,
+            "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+          },
+          body: JSON.stringify({
+            actual_home_score: result.homeScore,
+            actual_away_score: result.awayScore,
+            actual_outcome: result.outcome,
+            actual_score: `${result.homeScore}:${result.awayScore}`,
+            status: status,
+            verified_at: new Date().toISOString(),
+          }),
+        })
+      );
+      console.log(`${isCorrect ? "✅" : "❌"} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome} (${result.homeScore}-${result.awayScore})`);
+    }
+  }
+
+  const settledResults = await Promise.allSettled(updates);
+  const failed = settledResults.filter(r => r.status === "rejected").length;
+  console.log(`Verification: ${correct} correct, ${incorrect} incorrect, ${failed} failed`);
+
+  return { correct, incorrect, failed };
+}
+
+// ─── MAIN HANDLER ────────────────────────────────────────────────────────────
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  const startTime = Date.now();
   console.log("=== verify-predictions called ===");
 
   try {
-    // --- Authorization: only via x-cron-key (same as auto-scrape) ---
+    // ── Mode detection: CRON vs CLIENT ──
     const cronKey = req.headers.get("x-cron-key");
     const expectedCronKey = Deno.env.get("CRON_SECRET");
+    const isCron = cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey);
 
-    if (!expectedCronKey) {
-      return new Response(
-        JSON.stringify({ error: "Server not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const apiKeyHeader = req.headers.get("apikey");
+    let deviceId: string | undefined;
+    let callerMode: string;
 
-    if (!cronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
+    if (isCron) {
+      // CRON mode: verify ALL pending predictions
+      callerMode = "cron";
+      console.log("[verify-predictions] Mode: CRON (full scan)");
+    } else if (apiKeyHeader) {
+      // CLIENT mode: verify only this device's predictions
+      callerMode = "client";
+      try {
+        const body = await req.json();
+        deviceId = body?.deviceId;
+      } catch {
+        // Empty body — no device filter
+      }
+      console.log(`[verify-predictions] Mode: CLIENT (device: ${deviceId || "all"})`);
+    } else {
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: "Unauthorized: provide apikey or x-cron-key" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 1. Fetch pending predictions from DB
-    const dbRes = await fetch(
-      `${DATABASE_URL}/rest/v1/predictions?status=eq.pending&order=created_at.asc&limit=100`,
-      {
-        headers: {
-          "apikey": DATABASE_SERVICE_KEY,
-          "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-    if (!dbRes.ok) {
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch predictions" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    const pendingPredictions = await dbRes.json();
-    console.log(`Found ${pendingPredictions?.length || 0} pending predictions`);
+    // 1. Fetch pending predictions
+    const pendingPredictions = await fetchPendingPredictions(deviceId);
+    console.log(`Found ${pendingPredictions.length} pending predictions`);
 
-    if (!pendingPredictions || pendingPredictions.length === 0) {
+    if (pendingPredictions.length === 0) {
+      const elapsed = Date.now() - startTime;
       return new Response(
-        JSON.stringify({ success: true, message: "Aucune prédiction à vérifier", verified: 0 }),
+        JSON.stringify({ success: true, message: "Aucune prédiction en attente", verified: 0, elapsed }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // 2. Fetch results from ALL leagues in parallel
-    const allResults = await Promise.all(LEAGUES.map(l => fetchResults(l.id)));
-    const resultsMap = new Map();
-    for (const leagueResults of allResults) {
-      for (const [key, value] of leagueResults) {
-        resultsMap.set(key, value);
-      }
-    }
-    console.log(`Total results: ${resultsMap.size}`);
+    const resultsMap = await fetchAllResults();
 
     // 3. Compare and update predictions
-    let correct = 0, incorrect = 0;
-    const updates: Promise<any>[] = [];
+    const { correct, incorrect, failed } = await verifyPredictions(pendingPredictions, resultsMap);
 
-    for (const pred of pendingPredictions) {
-      const key = `${pred.home_team}|${pred.away_team}`;
-      const result = resultsMap.get(key);
-      if (result) {
-        const isCorrect = pred.prediction === result.outcome;
-        const status = isCorrect ? "correct" : "incorrect";
-        if (isCorrect) correct++; else incorrect++;
-
-        updates.push(
-          fetch(`${DATABASE_URL}/rest/v1/predictions?id=eq.${pred.id}`, {
-            method: "PATCH",
-            headers: {
-              "apikey": DATABASE_SERVICE_KEY,
-              "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
-              "Content-Type": "application/json",
-              "Prefer": "return=minimal",
-            },
-            body: JSON.stringify({
-              actual_home_score: result.homeScore,
-              actual_away_score: result.awayScore,
-              actual_outcome: result.outcome,
-              actual_score: `${result.homeScore}:${result.awayScore}`,
-              status: status,
-              verified_at: new Date().toISOString(),
-            }),
-          })
-        );
-        console.log(`${isCorrect ? "✅" : "❌"} ${pred.home_team} vs ${pred.away_team}: predicted ${pred.prediction}, actual ${result.outcome}`);
-      }
-    }
-
-    const settledResults = await Promise.allSettled(updates);
-    const failedUpdates = settledResults.filter(r => r.status === "rejected").length;
-    console.log(`Verification: ${correct} correct, ${incorrect} incorrect, ${failedUpdates} failed`);
+    const elapsed = Date.now() - startTime;
+    console.log(`Done in ${elapsed}ms | Mode: ${callerMode}`);
 
     return new Response(
       JSON.stringify({
         success: true,
-        verified: updates.length,
-        correct, incorrect, failedUpdates,
-        stillPending: pendingPredictions.length - updates.length,
+        mode: callerMode,
+        verified: correct + incorrect,
+        correct,
+        incorrect,
+        failedUpdates: failed,
+        stillPending: pendingPredictions.length - correct - incorrect,
         totalResults: resultsMap.size,
+        elapsed,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
