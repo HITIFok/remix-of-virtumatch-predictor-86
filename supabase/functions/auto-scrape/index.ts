@@ -9,10 +9,7 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const API_BASE = Deno.env.get("SPORTY_API_BASE") || "";
-if (!API_BASE) {
-  console.error("SPORTY_API_BASE not configured");
-}
+const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -43,12 +40,12 @@ const LEAGUES: Record<string, { id: string; name: string }> = {
 };
 
 const HEADERS: Record<string, string> = {
-  "Origin": Deno.env.get("API_ORIGIN") || "",
-  "Referer": Deno.env.get("API_REFERER") || "",
+  "Origin": Deno.env.get("API_ORIGIN") || "https://bet261.mg",
+  "Referer": Deno.env.get("API_REFERER") || "https://bet261.mg",
   "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
   "Accept": "application/json, text/plain, */*",
   "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": Deno.env.get("API_APP_VERSION") || "",
+  "App-Version": Deno.env.get("API_APP_VERSION") || "33335",
 };
 
 // --- Native fetch helpers for Supabase REST API ---
