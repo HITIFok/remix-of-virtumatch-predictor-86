@@ -1,6 +1,9 @@
 // analyze-match/index.ts — Supabase Edge Function
 // AI-powered match analysis using Google Gemini API (direct)
 // NO imports — uses Deno.serve() + native fetch
+//
+// v13: Added Google error body logging on 429, retry with exponential backoff,
+//      and detailed error info returned to client for diagnosis.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
@@ -9,8 +12,78 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+/** Sleep helper */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Call Google Gemini API with retry on 429 */
+async function callGemini(url: string, body: Record<string, unknown>, maxRetries = 2): Promise<Response> {
+  let lastErrorBody = "";
+  let lastStatus = 0;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      // Exponential backoff: 3s, 8s
+      const delay = attempt === 1 ? 3000 : 8000;
+      console.log(`[analyze-match] Retry ${attempt}/${maxRetries} after ${delay}ms...`);
+      await sleep(delay);
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (response.ok) return response;
+
+    lastStatus = response.status;
+    lastErrorBody = await response.text();
+
+    if (response.status === 429) {
+      // Check Retry-After header from Google
+      const retryAfter = response.headers.get("Retry-After");
+      console.error(`[analyze-match] Google 429 (attempt ${attempt + 1}/${maxRetries + 1}) | Retry-After: ${retryAfter || "none"} | Body: ${lastErrorBody}`);
+
+      // If this was the last attempt, break and return the error
+      if (attempt === maxRetries) {
+        return new Response(
+          JSON.stringify({
+            error: "Trop de requêtes Google AI. Réessayez dans quelques secondes.",
+            googleStatus: 429,
+            googleError: lastErrorBody,
+            retryAfter: retryAfter,
+            attempts: attempt + 1,
+          }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      // Otherwise continue to next retry
+      continue;
+    }
+
+    // Non-429 error — don't retry, return immediately
+    console.error(`[analyze-match] Google API error ${lastStatus}: ${lastErrorBody}`);
+    return new Response(
+      JSON.stringify({
+        error: "Erreur du service Google AI",
+        googleStatus: lastStatus,
+        googleError: lastErrorBody,
+      }),
+      { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+
+  // Should not reach here, but just in case
+  return new Response(
+    JSON.stringify({ error: "Échec après retries", googleError: lastErrorBody }),
+    { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+  );
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+
+  const startTime = Date.now();
 
   try {
     // --- Authorization: require valid apikey header ---
@@ -23,13 +96,32 @@ Deno.serve(async (req: Request) => {
     }
 
     const { matches } = await req.json();
+    if (!matches || !Array.isArray(matches) || matches.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "matches array required and non-empty" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[analyze-match] Processing ${matches.length} match(es)...`);
 
     // --- Google AI Key (set in Supabase Edge Function Secrets) ---
     const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_KEY");
-    if (!GOOGLE_AI_KEY) throw new Error("GOOGLE_AI_KEY is not configured");
+    if (!GOOGLE_AI_KEY) {
+      console.error("[analyze-match] GOOGLE_AI_KEY is not configured in Edge Function secrets!");
+      return new Response(
+        JSON.stringify({ error: "GOOGLE_AI_KEY is not configured in Supabase secrets" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
     const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GOOGLE_AI_KEY}`;
+
+    // Log key info for debugging (masked)
+    const keyPrefix = GOOGLE_AI_KEY.substring(0, 6);
+    const keySuffix = GOOGLE_AI_KEY.substring(GOOGLE_AI_KEY.length - 4);
+    console.log(`[analyze-match] Using key: ${keyPrefix}...${keySuffix} | Model: ${GEMINI_MODEL}`);
 
     const systemPrompt = `Tu es un expert en prédiction de matchs de football virtuels.
 Tu analyses les cotes 1X2 fournies et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
@@ -92,43 +184,29 @@ Retourne un tableau JSON. RIEN D'AUTRE que le JSON.`;
       )
       .join("\n");
 
-    // --- Appel direct à Google Gemini API ---
-    const response = await fetch(GEMINI_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    // --- Appel Google Gemini avec retry automatique ---
+    const geminiBody: Record<string, unknown> = {
+      system_instruction: {
+        parts: [{ text: systemPrompt }],
       },
-      body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: systemPrompt }],
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: userPrompt }],
         },
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: userPrompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-        },
-      }),
-    });
+      ],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 8192,
+        responseMimeType: "application/json",
+      },
+    };
 
+    const response = await callGemini(GEMINI_URL, geminiBody);
+
+    // If callGemini returned an error response (429, 502, etc.), propagate it
     if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Trop de requêtes Google AI. Réessayez dans quelques secondes." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorBody = await response.text();
-      console.error("Google AI API error:", response.status, errorBody);
-      return new Response(
-        JSON.stringify({ error: "Erreur du service Google AI", details: errorBody }),
-        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return response;
     }
 
     const data = await response.json();
@@ -146,15 +224,18 @@ Retourne un tableau JSON. RIEN D'AUTRE que le JSON.`;
       predictions = JSON.parse(jsonStr);
       if (!Array.isArray(predictions)) predictions = [predictions];
     } catch {
-      console.error("Failed to parse Gemini response:", jsonStr);
+      console.error("[analyze-match] Failed to parse Gemini response:", jsonStr.substring(0, 200));
       predictions = [];
     }
 
-    return new Response(JSON.stringify({ predictions }), {
+    const elapsed = Date.now() - startTime;
+    console.log(`[analyze-match] Success: ${predictions.length} prediction(s) in ${elapsed}ms`);
+
+    return new Response(JSON.stringify({ predictions, elapsed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e: any) {
-    console.error("analyze-match error:", e);
+    console.error("[analyze-match] Unhandled error:", e.message, e.stack);
     return new Response(
       JSON.stringify({ error: e.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
