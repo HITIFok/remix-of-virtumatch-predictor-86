@@ -78,9 +78,12 @@ export default async function handler(req, res) {
     try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
   }
 
-  const { token, codeId } = body;
+  const { token: tokenFromBody, codeId } = body;
 
-  // 1. Vérifier le token admin
+  // 1. Vérifier le token admin (Authorization header prioritaire, fallback body)
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : tokenFromBody;
+
   if (!verifyToken(token).valid) {
     return res.status(401).json({ success: false, error: 'Session admin invalide ou expirée' });
   }

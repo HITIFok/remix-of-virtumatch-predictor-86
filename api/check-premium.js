@@ -52,6 +52,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'deviceId manquant ou invalide' });
   }
 
+  // Validate device_id format (must match dev-timestamp-random pattern)
+  if (!/^dev-\d+-[a-z0-9]+$/.test(deviceId)) {
+    return res.status(400).json({ success: false, error: 'Format deviceId invalide' });
+  }
+
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 

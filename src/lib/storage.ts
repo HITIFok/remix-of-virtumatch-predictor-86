@@ -15,18 +15,19 @@ export async function getHistory(): Promise<MatchResult[]> {
   const deviceId = getDeviceId();
 
   // ═══ SÉCURISÉ : filtrer device_id côté serveur (pas côté client) ═══
+  // Si pas de deviceId, ne rien retourner (protection vie privée)
+  if (!deviceId) {
+    return [];
+  }
+
   const query = supabase
     .from("predictions")
     .select("*")
+    .eq("device_id", deviceId)
     .order("created_at", { ascending: false })
     .limit(200);
 
-  // Appliquer le filtre device_id dans la requête Supabase (côté DB)
-  // Si RLS est activé, seuls les rows du device sont retournés
-  // Si RLS n'est pas activé, on filtre manuellement dans la query
-  const { data, error } = deviceId
-    ? await query.eq("device_id", deviceId)
-    : await query;
+  const { data, error } = await query;
 
   if (error || !data) return [];
 
@@ -443,8 +444,11 @@ export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
     // TOUJOURS via l'API Route Vercel (vérifie token HMAC + service_role)
     const res = await fetch(config.api.adminDeleteCode, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: session.token, codeId }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.token}`,
+      },
+      body: JSON.stringify({ codeId }),
     });
 
     if (!res.ok) return false;

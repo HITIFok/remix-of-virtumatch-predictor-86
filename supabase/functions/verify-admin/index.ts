@@ -11,6 +11,19 @@ const corsHeaders: Record<string, string> = {
 
 const ADMIN_TOKEN_SECRET = Deno.env.get("ADMIN_TOKEN_SECRET") || "";
 
+// Timing-safe comparison to prevent timing attacks
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+  const result = new Uint8Array(aBytes.length);
+  for (let i = 0; i < aBytes.length; i++) {
+    result[i] = aBytes[i] ^ bBytes[i];
+  }
+  return result.every(byte => byte === 0);
+}
+
 // HMAC-SHA256 verification
 async function hmacSign(data: string, secret: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -76,9 +89,9 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Verify HMAC signature
+    // Verify HMAC signature (timing-safe comparison)
     const expectedSig = await hmacSign(expiresAtStr, ADMIN_TOKEN_SECRET);
-    if (signature !== expectedSig) {
+    if (signature.length !== expectedSig.length || !timingSafeEqual(signature, expectedSig)) {
       return new Response(JSON.stringify({ valid: false, error: "Invalid signature" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

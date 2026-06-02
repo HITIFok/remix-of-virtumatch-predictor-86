@@ -19,10 +19,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     // Verification : requete doit provenir du frontend (apikey header)
+    // Validate that the apikey matches the anon key (not just presence)
     const apiKey = req.headers.get("apikey");
-    if (!apiKey) {
+    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+    if (!apiKey || (ANON_KEY && apiKey !== ANON_KEY)) {
       return new Response(
-        JSON.stringify({ success: false, error: "apikey header required" }),
+        JSON.stringify({ success: false, error: "Invalid or missing apikey" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
