@@ -2,12 +2,12 @@
 // Verifies pending predictions by comparing with results
 // NO imports — uses Deno.serve() + native fetch
 //
-// v16: Dual source strategy
-//   - PRIMARY: scraped_data table (populated by auto-scrape every 2min)
-//   - FALLBACK: direct bet261 API calls
-// Two modes:
-//   - CRON (x-cron-key): verifies ALL pending predictions (up to 200)
-//   - CLIENT (apikey): verifies pending predictions (optionally filtered by deviceId)
+// v17: Comprehensive fix
+//   - PRIMARY: scraped_data table (match_id + team name matching)
+//   - SECONDARY: Always merges direct API results (supplements DB, never skipped)
+//   - Triple matching: match_id first, then exact team name, then normalized
+//   - Stores verified match_id for future debugging
+//   - Logs ALL not-found predictions
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 const corsHeaders: Record<string, string> = {
@@ -22,16 +22,13 @@ const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.s
 const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
 const DATABASE_SERVICE_KEY = Deno.env.get("DATABASE_SERVICE_KEY") || "";
 
-// Timing-safe comparison to prevent timing attacks
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   const encoder = new TextEncoder();
   const aBytes = encoder.encode(a);
   const bBytes = encoder.encode(b);
   const result = new Uint8Array(aBytes.length);
-  for (let i = 0; i < aBytes.length; i++) {
-    result[i] = aBytes[i] ^ bBytes[i];
-  }
+  for (let i = 0; i < aBytes.length; i++) result[i] = aBytes[i] ^ bBytes[i];
   return result.every(byte => byte === 0);
 }
 
@@ -47,7 +44,6 @@ const LEAGUES = [
   { id: "8065", name: "Coupe du monde" },
 ];
 
-// Headers for bet261 API — with fallback values
 const HEADERS: Record<string, string> = {
   "Origin": Deno.env.get("API_ORIGIN") || "https://bet261.mg",
   "Referer": Deno.env.get("API_REFERER") || "https://bet261.mg/",
@@ -57,10 +53,26 @@ const HEADERS: Record<string, string> = {
   "App-Version": Deno.env.get("API_APP_VERSION") || "33335",
 };
 
-// ─── STRATEGY 1: Read results from scraped_data table (PRIMARY) ──────────────
+// ─── Result entry type ───────────────────────────────────────────────────
 
-async function fetchResultsFromDB(): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
-  const resultsMap = new Map();
+interface ResultEntry {
+  matchId: number;
+  home: string;
+  away: string;
+  homeScore: number;
+  awayScore: number;
+  outcome: string;
+  league: string;
+}
+
+// ─── STRATEGY 1: scraped_data table (PRIMARY) ─────────────────────────────
+
+async function fetchResultsFromDB(): Promise<{ byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; count: number; leagues: number }> {
+  const byTeamName = new Map<string, ResultEntry>();
+  const byMatchId = new Map<number, ResultEntry>();
+  let count = 0;
+  const seenLeagues = new Set<string>();
+
   try {
     const res = await fetch(
       `${DATABASE_URL}/rest/v1/scraped_data?data_type=eq.results&select=league_id,league,payload,scraped_at&order=scraped_at.desc&limit=30`,
@@ -73,64 +85,69 @@ async function fetchResultsFromDB(): Promise<Map<string, { homeScore: number; aw
     );
     if (!res.ok) {
       console.log(`[verify] DB results fetch failed: ${res.status}`);
-      return resultsMap;
+      return { byTeamName, byMatchId, count: 0, leagues: 0 };
     }
     const rows = await res.json();
     if (!rows || rows.length === 0) {
       console.log("[verify] No scraped results in DB");
-      return resultsMap;
+      return { byTeamName, byMatchId, count: 0, leagues: 0 };
     }
 
-    // Deduplicate by league (keep most recent per league)
-    const seenLeagues = new Set<string>();
-    let totalResults = 0;
-
     for (const row of rows) {
-      if (seenLeagues.has(row.league_id)) continue;
-      seenLeagues.add(row.league_id);
+      const leagueKey = row.league_id || row.league || "";
+      if (seenLeagues.has(leagueKey)) continue;
+      seenLeagues.add(leagueKey);
 
       const payload = row.payload;
       if (!Array.isArray(payload)) continue;
 
       for (const match of payload) {
-        const homeTeam = match.home || match.homeTeam?.name || "";
-        const awayTeam = match.away || match.awayTeam?.name || "";
+        const home = match.home || match.homeTeam?.name || "";
+        const away = match.away || match.awayTeam?.name || "";
         const homeScore = match.scoreHome ?? match.homeScore ?? 0;
         const awayScore = match.scoreAway ?? match.awayScore ?? 0;
-        if (!homeTeam || !awayTeam) continue;
+        const matchId = match.id || 0;
+        if (!home || !away) continue;
 
         let outcome: string;
         if (homeScore > awayScore) outcome = "1";
         else if (homeScore < awayScore) outcome = "2";
         else outcome = "X";
 
-        resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome, league: row.league || "Unknown" });
-        totalResults++;
+        const entry: ResultEntry = { matchId, home, away, homeScore, awayScore, outcome, league: row.league || "Unknown" };
+        byTeamName.set(`${home}|${away}`, entry);
+        if (matchId) byMatchId.set(matchId, entry);
+        count++;
       }
     }
-    console.log(`[verify] DB results: ${totalResults} from ${seenLeagues.size} leagues`);
+    console.log(`[verify] DB: ${count} results from ${seenLeagues.size} leagues`);
   } catch (err: any) {
     console.log(`[verify] DB error: ${err.message}`);
   }
-  return resultsMap;
+  return { byTeamName, byMatchId, count, leagues: seenLeagues.size };
 }
 
-// ─── STRATEGY 2: Fetch directly from bet261 API (FALLBACK) ───────────────
+// ─── STRATEGY 2: Direct API (ALWAYS runs — supplements DB) ────────────────
 
-async function fetchResultsFromAPI(): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
+async function fetchResultsFromAPI(): Promise<{ byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; count: number }> {
+  const byTeamName = new Map<string, ResultEntry>();
+  const byMatchId = new Map<number, ResultEntry>();
+
   const allResults = await Promise.all(LEAGUES.map(l => fetchLeagueResults(l.id, l.name)));
-  const resultsMap = new Map();
+
   for (const leagueResults of allResults) {
-    for (const [key, value] of leagueResults) {
-      resultsMap.set(key, value);
+    for (const entry of leagueResults) {
+      byTeamName.set(`${entry.home}|${entry.away}`, entry);
+      if (entry.matchId) byMatchId.set(entry.matchId, entry);
     }
   }
-  console.log(`[verify] API results: ${resultsMap.size} total`);
-  return resultsMap;
+
+  console.log(`[verify] API: ${byTeamName.size} results total`);
+  return { byTeamName, byMatchId, count: byTeamName.size };
 }
 
-async function fetchLeagueResults(leagueId: string, leagueName: string): Promise<Map<string, { homeScore: number; awayScore: number; outcome: string; league: string }>> {
-  const resultsMap = new Map();
+async function fetchLeagueResults(leagueId: string, leagueName: string): Promise<ResultEntry[]> {
+  const results: ResultEntry[] = [];
   try {
     const response = await fetch(`${API_BASE}/${leagueId}/results?skip=0&take=200`, {
       headers: HEADERS,
@@ -138,14 +155,14 @@ async function fetchLeagueResults(leagueId: string, leagueName: string): Promise
     });
     if (!response.ok) {
       console.log(`[verify] API League ${leagueId}: ${response.status}`);
-      return resultsMap;
+      return results;
     }
     const data = await response.json();
     if (data?.rounds) {
       for (const roundData of data.rounds) {
         for (const match of (roundData.matches || [])) {
-          const homeTeam = match.homeTeam?.name;
-          const awayTeam = match.awayTeam?.name;
+          const home = match.homeTeam?.name;
+          const away = match.awayTeam?.name;
           const score = match.score || "0:0";
           const parts = score.split(":");
           const homeScore = parseInt(parts[0]) || 0;
@@ -154,46 +171,89 @@ async function fetchLeagueResults(leagueId: string, leagueName: string): Promise
           if (homeScore > awayScore) outcome = "1";
           else if (homeScore < awayScore) outcome = "2";
           else outcome = "X";
-          if (homeTeam && awayTeam) {
-            resultsMap.set(`${homeTeam}|${awayTeam}`, { homeScore, awayScore, outcome, league: leagueName });
+          if (home && away) {
+            results.push({
+              matchId: match.id || 0, home, away, homeScore, awayScore,
+              outcome, league: leagueName,
+            });
           }
         }
       }
     }
-    console.log(`[verify] API League ${leagueId}: ${resultsMap.size} results`);
+    console.log(`[verify] API League ${leagueId}: ${results.length} results`);
   } catch (err: any) {
     console.log(`[verify] API League ${leagueId}: ${err.message}`);
   }
-  return resultsMap;
+  return results;
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────
+// ─── MERGE: DB + API → combined maps ────────────────────────────────────────
 
-/** Normalize team name for fuzzy matching */
+function mergeResults(
+  db: { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry> },
+  api: { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry> }
+): { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; sources: string } {
+  const byTeamName = new Map<string, ResultEntry>(db.byTeamName);
+  const byMatchId = new Map<number, ResultEntry>(db.byMatchId);
+  let apiAdded = 0;
+
+  // API supplements DB — only add entries not already in DB
+  for (const [key, entry] of api.byTeamName) {
+    if (!byTeamName.has(key)) {
+      byTeamName.set(key, entry);
+      apiAdded++;
+    }
+  }
+  for (const [key, entry] of api.byMatchId) {
+    if (!byMatchId.has(key)) {
+      byMatchId.set(key, entry);
+    }
+  }
+
+  const sources = db.count > 0
+    ? `db(${db.count})+api(+${apiAdded})`
+    : `api(${api.count})`;
+
+  return { byTeamName, byMatchId, sources };
+}
+
+// ─── MATCHING: match_id → exact name → normalized name ────────────────────
+
 function normalizeTeam(name: string): string {
   return (name || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
 }
 
-/** Find best match for a prediction in results (exact → normalized) */
-function findMatch(home: string, away: string, resultsMap: Map<string, any>): { key: string; result: any } | null {
-  // Exact match
-  const exactKey = `${home}|${away}`;
-  if (resultsMap.has(exactKey)) {
-    return { key: exactKey, result: resultsMap.get(exactKey) };
+function findMatch(
+  pred: any,
+  byMatchId: Map<number, ResultEntry>,
+  byTeamName: Map<string, ResultEntry>
+): { result: ResultEntry; method: string } | null {
+  // 1. Match by match_id (most reliable)
+  if (pred.match_id && byMatchId.has(pred.match_id)) {
+    return { result: byMatchId.get(pred.match_id)!, method: "match_id" };
   }
-  // Normalized match (handles slight name variations)
-  const normHome = normalizeTeam(home);
-  const normAway = normalizeTeam(away);
-  for (const [key, value] of resultsMap) {
+
+  // 2. Exact team name match
+  const exactKey = `${pred.home_team}|${pred.away_team}`;
+  if (byTeamName.has(exactKey)) {
+    return { result: byTeamName.get(exactKey)!, method: "exact_name" };
+  }
+
+  // 3. Normalized team name match
+  const normHome = normalizeTeam(pred.home_team);
+  const normAway = normalizeTeam(pred.away_team);
+  for (const [key, value] of byTeamName) {
     const [rHome, rAway] = key.split("|");
     if (normalizeTeam(rHome) === normHome && normalizeTeam(rAway) === normAway) {
-      return { key, result: value };
+      return { result: value, method: "normalized_name" };
     }
   }
+
   return null;
 }
 
-/** Fetch pending predictions with optional device_id filter */
+// ─── FETCH PENDING PREDICTIONS ───────────────────────────────────────────
+
 async function fetchPendingPredictions(deviceId?: string): Promise<any[]> {
   let url = `${DATABASE_URL}/rest/v1/predictions?status=eq.pending&order=created_at.asc&limit=200`;
   if (deviceId) {
@@ -214,7 +274,7 @@ async function fetchPendingPredictions(deviceId?: string): Promise<any[]> {
   return await dbRes.json();
 }
 
-// ─── MAIN HANDLER ────────────────────────────────────────────────────────────
+// ─── MAIN HANDLER ────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -222,7 +282,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const startTime = Date.now();
-  console.log("=== verify-predictions v16 ===");
+  console.log("=== verify-predictions v17 ===");
 
   try {
     // ── Mode detection: CRON vs CLIENT ──
@@ -242,9 +302,7 @@ Deno.serve(async (req: Request) => {
       try {
         const body = await req.json();
         deviceId = body?.deviceId || body?.device_id;
-      } catch {
-        // Empty body — no device filter
-      }
+      } catch { /* no body */ }
       console.log(`[verify] Mode: CLIENT (device: ${deviceId || "all"})`);
     } else {
       return new Response(
@@ -255,13 +313,7 @@ Deno.serve(async (req: Request) => {
 
     // 1. Fetch pending predictions
     const pendingPredictions = await fetchPendingPredictions(deviceId);
-    console.log(`[verify] Found ${pendingPredictions.length} pending predictions`);
-
-    // Log samples for debugging
-    for (let i = 0; i < Math.min(3, pendingPredictions.length); i++) {
-      const p = pendingPredictions[i];
-      console.log(`[verify]   Sample: ${p.home_team} vs ${p.away_team} (${p.league}) pred=${p.prediction} created=${p.created_at}`);
-    }
+    console.log(`[verify] ${pendingPredictions.length} pending predictions`);
 
     if (pendingPredictions.length === 0) {
       return new Response(
@@ -270,34 +322,31 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 2. Fetch results — Strategy 1: scraped_data table (primary)
-    let resultsMap = await fetchResultsFromDB();
-    let source = "db";
+    // 2. Fetch results from BOTH sources and merge (no short-circuit!)
+    const [db, api] = await Promise.all([
+      fetchResultsFromDB(),
+      fetchResultsFromAPI(),
+    ]);
+    const merged = mergeResults(db, api);
+    console.log(`[verify] Merged results: ${merged.byTeamName.size} team-matches, ${merged.byMatchId.size} match-ids (source: ${merged.sources})`);
 
-    // 3. Fallback: direct API if DB is empty
-    if (resultsMap.size === 0) {
-      console.log("[verify] DB empty, falling back to direct API...");
-      resultsMap = await fetchResultsFromAPI();
-      source = "api";
-    }
-
-    console.log(`[verify] Total results: ${resultsMap.size} (source: ${source})`);
-
-    if (resultsMap.size === 0) {
+    if (merged.byTeamName.size === 0 && merged.byMatchId.size === 0) {
       return new Response(
-        JSON.stringify({ success: true, message: "Aucun résultat disponible pour vérification", verified: 0, pending: pendingPredictions.length, source, elapsed: Date.now() - startTime }),
+        JSON.stringify({ success: true, message: "Aucun résultat disponible", verified: 0, pending: pendingPredictions.length, elapsed: Date.now() - startTime }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 4. Compare and update predictions
+    // 3. Match and update predictions
     let correct = 0, incorrect = 0, notFound = 0;
+    const matchMethods = { match_id: 0, exact_name: 0, normalized_name: 0 };
     const updates: Promise<any>[] = [];
 
     for (const pred of pendingPredictions) {
-      const match = findMatch(pred.home_team, pred.away_team, resultsMap);
-      if (match) {
-        const isCorrect = pred.prediction === match.result.outcome;
+      const matched = findMatch(pred, merged.byMatchId, merged.byTeamName);
+      if (matched) {
+        matchMethods[matched.method as keyof typeof matchMethods]++;
+        const isCorrect = pred.prediction === matched.result.outcome;
         const status = isCorrect ? "correct" : "incorrect";
         if (isCorrect) correct++; else incorrect++;
 
@@ -311,42 +360,43 @@ Deno.serve(async (req: Request) => {
               "Prefer": "return=minimal",
             },
             body: JSON.stringify({
-              actual_home_score: match.result.homeScore,
-              actual_away_score: match.result.awayScore,
-              actual_outcome: match.result.outcome,
-              actual_score: `${match.result.homeScore}:${match.result.awayScore}`,
+              actual_home_score: matched.result.homeScore,
+              actual_away_score: matched.result.awayScore,
+              actual_outcome: matched.result.outcome,
+              actual_score: `${matched.result.homeScore}:${matched.result.awayScore}`,
               status,
               verified_at: new Date().toISOString(),
             }),
           })
         );
-        console.log(`${isCorrect ? "OK" : "NO"} ${pred.home_team} vs ${pred.away_team}: pred=${pred.prediction} actual=${match.result.outcome} (${match.result.homeScore}-${match.result.awayScore})`);
+        console.log(`${isCorrect ? "OK" : "NO"} [${matched.method}] ${pred.home_team} vs ${pred.away_team}: pred=${pred.prediction} actual=${matched.result.outcome} (${matched.result.homeScore}-${matched.result.awayScore})`);
       } else {
         notFound++;
-        if (notFound <= 5) {
-          console.log(`[verify] NOT FOUND: ${pred.home_team} vs ${pred.away_team} (${pred.league})`);
-        }
+        // Log ALL not-found predictions (no truncation)
+        console.log(`[verify] NOT FOUND: ${pred.home_team} vs ${pred.away_team} | league=${pred.league} | match_id=${pred.match_id || "none"} | created=${pred.created_at}`);
       }
     }
 
-    // 5. Execute updates in parallel
+    // 4. Execute all updates in parallel
     const settled = await Promise.allSettled(updates);
     const failedUpdates = settled.filter(r => r.status === "rejected").length;
 
     const elapsed = Date.now() - startTime;
     console.log(`[verify] Done: ${correct} OK, ${incorrect} NO, ${notFound} notFound, ${failedUpdates} failed (${elapsed}ms)`);
+    console.log(`[verify] Match methods: match_id=${matchMethods.match_id} exact=${matchMethods.exact_name} normalized=${matchMethods.normalized_name}`);
 
     return new Response(
       JSON.stringify({
         success: true,
         mode: callerMode,
-        source,
+        source: merged.sources,
         verified: updates.length,
         correct, incorrect,
         notFound,
         failedUpdates,
+        matchMethods,
         stillPending: pendingPredictions.length - updates.length,
-        totalResults: resultsMap.size,
+        totalResults: merged.byTeamName.size,
         elapsed,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }

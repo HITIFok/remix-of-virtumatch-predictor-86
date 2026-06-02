@@ -167,6 +167,7 @@ function scrapeResults(leagueId: string, leagueName: string, data: any): any[] {
           const score = m.score || "0:0";
           const parts = score.split(":");
           results.push({
+            id: m.id || 0,
             home: m.homeTeam?.name || "", away: m.awayTeam?.name || "",
             scoreHome: parts.length === 2 ? parseInt(parts[0]) : 0,
             scoreAway: parts.length === 2 ? parseInt(parts[1]) : 0,
@@ -228,7 +229,7 @@ Deno.serve(async (req: Request) => {
       const [matchesData, rankingData, resultsData] = await Promise.all([
         fetchAPI(`${API_BASE}/${leagueId}/matches`, `${leagueName}-matches`),
         fetchAPI(`${API_BASE}/${leagueId}/ranking`, `${leagueName}-ranking`),
-        fetchAPI(`${API_BASE}/${leagueId}/results?skip=0&take=100`, `${leagueName}-results`),
+        fetchAPI(`${API_BASE}/${leagueId}/results?skip=0&take=200`, `${leagueName}-results`),
       ]);
 
       const matches = scrapeMatches(leagueId, leagueName, matchesData);
