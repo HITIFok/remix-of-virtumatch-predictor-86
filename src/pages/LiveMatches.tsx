@@ -161,6 +161,7 @@ export default function LiveMatches() {
   const { savePrediction } = usePredictions();
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
+  const [batchPredicting, setBatchPredicting] = useState(false);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
 
@@ -173,27 +174,72 @@ export default function LiveMatches() {
     fetchMatches();
   }, []);
 
+  // Helper: sauvegarder une prédiction en BDD
+  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult) => {
+    try {
+      await savePrediction({
+        match_id: match.id,
+        home_team: match.home,
+        away_team: match.away,
+        league: match.league,
+        odd_home: match.oddHome,
+        odd_draw: match.oddDraw,
+        odd_away: match.oddAway,
+        prob_home: result.probHome,
+        prob_draw: result.probDraw,
+        prob_away: result.probAway,
+        prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
+        confidence: result.aiConfidence,
+        predicted_home_score: result.scoreHome,
+        predicted_away_score: result.scoreAway,
+        predicted_score: result.exactScore,
+        winner_1x2: result.winner1X2,
+        gg_result: result.ggResult,
+        total_goals: result.totalGoals,
+        parity: result.parity,
+        over_under_15: result.overUnder15,
+        over_under_25: result.overUnder25,
+        over_under_35: result.overUnder35,
+        prob_gg: result.probGG,
+        prob_gn: result.probGN,
+        btts_prob: result.bttsProb,
+        over25_prob: result.over25Prob,
+        first_half_goal_prob: result.firstHalfGoalProb,
+        expected_goals: result.expectedGoals,
+      });
+    } catch (e) {
+      console.log('Prediction already saved or error:', e);
+    }
+  };
+
+  // Helper: analyser + sauvegarder un match (réutilisé par predict et batch)
+  const processMatch = (match: ScrapedMatch, aiPrediction: AIPrediction | undefined) => {
+    const matchKey = `${match.home}-${match.away}`;
+    const matchInput: MatchInput = {
+      home: match.home,
+      away: match.away,
+      league: match.league,
+      oddHome: match.oddHome,
+      oddDraw: match.oddDraw,
+      oddAway: match.oddAway,
+    };
+    const teamStatsMap = buildTeamStatsMap(ranking);
+    const historicalResults = prepareHistoricalResults(results);
+    const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
+    setPredictions(prev => ({ ...prev, [matchKey]: result }));
+    return result;
+  };
+
+  // Prédiction individuelle (utilise le cache, fallback math)
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
-    // Cache key basé sur les cotes (même match, mêmes cotes = même résultat IA)
     const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
 
-    // Anti-double-clic : si déjà en cours, ignorer
     if (predictingRef.current === matchKey) return;
     predictingRef.current = matchKey;
     setPredictingId(matchKey);
 
     try {
-      const matchInput: MatchInput = {
-        home: match.home,
-        away: match.away,
-        league: match.league,
-        oddHome: match.oddHome,
-        oddDraw: match.oddDraw,
-        oddAway: match.oddAway,
-      };
-
-      // --- Appel IA via Edge Function analyze-match (avec cache) ---
       let aiPrediction: AIPrediction | undefined;
       const cached = aiCache.current.get(cacheKey);
       if (cached) {
@@ -202,7 +248,7 @@ export default function LiveMatches() {
       } else {
         try {
           const { data, error } = await supabase.functions.invoke("analyze-match", {
-            body: { matches: [matchInput] },
+            body: { matches: [{ home: match.home, away: match.away, league: match.league, oddHome: match.oddHome, oddDraw: match.oddDraw, oddAway: match.oddAway }] },
           });
           if (!error && data?.predictions?.length > 0) {
             aiPrediction = data.predictions[0] as AIPrediction;
@@ -216,55 +262,90 @@ export default function LiveMatches() {
         }
       }
 
-      // --- Analyse : IA si disponible, sinon math ---
-      const teamStatsMap = buildTeamStatsMap(ranking);
-      const historicalResults = prepareHistoricalResults(results);
-      const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
-
-      setPredictions(prev => ({ ...prev, [matchKey]: result }));
-
-      // Save prediction to database (single save)
-      try {
-        await savePrediction({
-          match_id: match.id,
-          home_team: match.home,
-          away_team: match.away,
-          league: match.league,
-          odd_home: match.oddHome,
-          odd_draw: match.oddDraw,
-          odd_away: match.oddAway,
-          prob_home: result.probHome,
-          prob_draw: result.probDraw,
-          prob_away: result.probAway,
-          prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
-          confidence: result.aiConfidence, // Already a percentage (0-100)
-          predicted_home_score: result.scoreHome,
-          predicted_away_score: result.scoreAway,
-          predicted_score: result.exactScore,
-          winner_1x2: result.winner1X2,
-          gg_result: result.ggResult,
-          total_goals: result.totalGoals,
-          parity: result.parity,
-          over_under_15: result.overUnder15,
-          over_under_25: result.overUnder25,
-          over_under_35: result.overUnder35,
-          prob_gg: result.probGG,
-          prob_gn: result.probGN,
-          btts_prob: result.bttsProb,
-          over25_prob: result.over25Prob,
-          first_half_goal_prob: result.firstHalfGoalProb,
-          expected_goals: result.expectedGoals,
-        });
-      } catch (e) {
-        console.log('Prediction already saved or error:', e);
-      }
-
+      const result = processMatch(match, aiPrediction);
+      await savePredictionToDb(match, result);
       toast.success("Prédiction générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
       setPredictingId(null);
       predictingRef.current = null;
+    }
+  };
+
+  // Prédiction groupée : 1 seul appel IA pour tous les matchs
+  const handleBatchPredict = async () => {
+    // Collecter tous les matchs visibles (avec cotes > 0) qui n'ont pas encore été prédits
+    const allMatches: ScrapedMatch[] = [];
+    const uncachedMatches: { match: ScrapedMatch; input: MatchInput; cacheKey: string }[] = [];
+
+    for (const league of Object.keys(matchesByLeague)) {
+      for (const match of matchesByLeague[league]) {
+        if (match.oddHome > 0) {
+          const matchKey = `${match.home}-${match.away}`;
+          const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+          allMatches.push(match);
+          if (!aiCache.current.has(cacheKey) && !predictions[matchKey]) {
+            uncachedMatches.push({
+              match,
+              input: { home: match.home, away: match.away, league: match.league, oddHome: match.oddHome, oddDraw: match.oddDraw, oddAway: match.oddAway },
+              cacheKey,
+            });
+          }
+        }
+      }
+    }
+
+    if (allMatches.length === 0) {
+      toast.error("Aucun match avec cotes disponibles");
+      return;
+    }
+
+    setBatchPredicting(true);
+    try {
+      // Appel IA groupé — 1 seul appel pour tous les matchs non cachés
+      let newAiPredictions: Map<string, AIPrediction> = new Map();
+
+      if (uncachedMatches.length > 0) {
+        try {
+          const { data, error } = await supabase.functions.invoke("analyze-match", {
+            body: { matches: uncachedMatches.map(m => m.input) },
+          });
+
+          if (!error && data?.predictions?.length > 0) {
+            const aiPreds = data.predictions as AIPrediction[];
+            for (let i = 0; i < uncachedMatches.length; i++) {
+              if (aiPreds[i]) {
+                newAiPredictions.set(uncachedMatches[i].cacheKey, aiPreds[i]);
+                aiCache.current.set(uncachedMatches[i].cacheKey, aiPreds[i]);
+              }
+            }
+            console.log(`[LiveMatches] Batch AI: ${aiPreds.length}/${uncachedMatches.length} predictions received`);
+          } else {
+            console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
+            toast.error("IA indisponible, analyse mathématique utilisée");
+          }
+        } catch (aiErr) {
+          console.warn("[LiveMatches] Batch AI call failed:", aiErr);
+          toast.error("IA indisponible, analyse mathématique utilisée");
+        }
+      } else {
+        console.log("[LiveMatches] All matches already cached");
+      }
+
+      // Traiter et sauvegarder chaque match
+      for (const match of allMatches) {
+        const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+        const aiPrediction = aiCache.current.get(cacheKey) || newAiPredictions.get(cacheKey) || undefined;
+        const result = processMatch(match, aiPrediction);
+        await savePredictionToDb(match, result);
+      }
+
+      toast.success(`${allMatches.length} match(s) analysé(s) avec l'IA 🔥`);
+    } catch {
+      toast.error("Erreur lors de la prédiction groupée");
+    } finally {
+      setBatchPredicting(false);
     }
   };
 
@@ -357,6 +438,25 @@ export default function LiveMatches() {
                 📦 Cache
               </Badge>
             )}
+          </div>
+        )}
+
+        {/* Bouton PRÉDIRE TOUS LES MATCHS */}
+        {totalMatches > 0 && isPremium() && (
+          <div className="mb-4">
+            <Button
+              size="sm"
+              variant="fire"
+              className="w-full"
+              disabled={batchPredicting || loading}
+              onClick={handleBatchPredict}
+            >
+              {batchPredicting ? (
+                <><Loader2 size={14} className="mr-1 animate-spin" /> ANALYSE IA EN COURS...</>
+              ) : (
+                <><Zap size={14} className="mr-1" /> PRÉDIRE TOUS LES MATCHS ({totalMatches})</>
+              )}
+            </Button>
           </div>
         )}
 
