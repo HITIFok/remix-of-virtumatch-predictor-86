@@ -4,9 +4,7 @@
 -- verify-predictions (toutes les 5 min)
 -- ===========================================
 -- Exécutez ce SQL dans l'éditeur SQL de Supabase
--- ⚠️ La clé secrète doit être définie via Supabase Secrets (Dashboard → Settings → Secrets)
---    Nom : CRON_SECRET
---    Valeur : votre clé secrète personnalisée
+-- ⚠️ CRON_SECRET doit être configuré via Supabase Secrets (Dashboard → Settings → Secrets)
 -- ===========================================
 
 -- 1. Activer l'extension pg_cron (si pas déjà activée)
@@ -44,7 +42,7 @@ BEGIN
   END IF;
 
   SELECT net.http_post(
-    url := 'REDACTED_SUPABASE_URL/functions/v1/auto-scrape',
+    url := 'https://gxmmeemzkixinsxglfaq.supabase.co/functions/v1/auto-scrape',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-key', v_secret
@@ -57,7 +55,8 @@ BEGIN
 END;
 $$;
 
--- 3. Programmer auto-scrape (toutes les 2 minutes)
+-- Programmer auto-scrape (toutes les 2 minutes)
+SELECT cron.unschedule('auto-scrape-instant-league');
 SELECT cron.schedule(
   'auto-scrape-instant-league',
   '*/2 * * * *',
@@ -88,7 +87,7 @@ BEGIN
   END IF;
 
   SELECT net.http_post(
-    url := 'REDACTED_SUPABASE_URL/functions/v1/verify-predictions',
+    url := 'https://gxmmeemzkixinsxglfaq.supabase.co/functions/v1/verify-predictions',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-key', v_secret
@@ -101,7 +100,8 @@ BEGIN
 END;
 $$;
 
--- 4. Programmer verify-predictions (toutes les 5 minutes)
+-- Programmer verify-predictions (toutes les 5 minutes)
+SELECT cron.unschedule('verify-predictions-auto');
 SELECT cron.schedule(
   'verify-predictions-auto',
   '*/5 * * * *',
@@ -113,11 +113,10 @@ SELECT cron.schedule(
 -- ═══════════════════════════════════════════
 
 -- Voir tous les jobs cron actifs :
--- SELECT * FROM cron.job;
+-- SELECT jobid, schedule, command, active FROM cron.job;
 
 -- Voir les logs récents :
--- SELECT created_at, job_name, response->>'message' as msg FROM cron_logs ORDER BY created_at DESC LIMIT 20;
+-- SELECT created_at, job_name, response->>'message' as msg, response->>'verified' as verified FROM cron_logs ORDER BY created_at DESC LIMIT 20;
 
--- Supprimer un job :
--- SELECT cron.unschedule('auto-scrape-instant-league');
--- SELECT cron.unschedule('verify-predictions-auto');
+-- Nettoyer les logs (garder 24h) :
+-- DELETE FROM cron_logs WHERE created_at < now() - interval '24 hours';
