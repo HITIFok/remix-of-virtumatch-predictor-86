@@ -105,9 +105,11 @@ export function usePredictions() {
       }
 
       // Ensuite charger les prédictions (maintenant à jour)
+      const deviceId = getDeviceId()
       const { data: predData, error: predError } = await supabase
         .from('predictions')
         .select('*')
+        .eq('device_id', deviceId)
         .order('created_at', { ascending: false })
         .limit(200)
 
