@@ -229,6 +229,8 @@ export function usePredictions() {
     home_team: string
     away_team: string
     league?: string
+    league_id?: string
+    round?: number
     odd_home: number
     odd_draw: number
     odd_away: number
@@ -267,7 +269,10 @@ export function usePredictions() {
         score_home: pred.predicted_home_score,
         score_away: pred.predicted_away_score,
         exact_score: pred.predicted_score,
-        winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)')
+        winner_1x2: pred.winner_1x2 || (pred.prediction === '1' ? `1 — ${pred.home_team}` : pred.prediction === '2' ? `2 — ${pred.away_team}` : 'X (Nul)'),
+        // Round-aware: store round + league_id for precise verification
+        round: pred.round || null,
+        league_id: pred.league_id || null,
       }
 
 

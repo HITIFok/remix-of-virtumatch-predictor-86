@@ -1,6 +1,7 @@
 export interface ScrapedMatch {
   id?: number;
   league: string;
+  leagueId?: string;
   home: string;
   away: string;
   kickoff?: string;

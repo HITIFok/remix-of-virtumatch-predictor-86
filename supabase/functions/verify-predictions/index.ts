@@ -1,13 +1,13 @@
-// verify-predictions/index.ts — Supabase Edge Function
-// Verifies pending predictions by comparing with results
+// verify-predictions/index.ts — Supabase Edge Function v18
+// Verifies pending predictions by comparing with round-specific results
 // NO imports — uses Deno.serve() + native fetch
 //
-// v17: Comprehensive fix
-//   - PRIMARY: scraped_data table (match_id + team name matching)
-//   - SECONDARY: Always merges direct API results (supplements DB, never skipped)
-//   - Triple matching: match_id first, then exact team name, then normalized
-//   - Stores verified match_id for future debugging
-//   - Logs ALL not-found predictions
+// v18: Round-aware verification
+//   - Fetches results per league, organized by round number
+//   - Each prediction must match by: match_id OR (round + team names)
+//   - Only verifies when the prediction's round appears in results
+//   - Direct API call (always fresh, no cache)
+//   - Falls back to scraped_data DB if API fails
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 const corsHeaders: Record<string, string> = {
@@ -16,8 +16,7 @@ const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// Hardcoded fallback — always available even if env vars are not set
-const API_BASE = Deno.env.get("SPORTY_API_BASE") || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
+const API_BASE = "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
 const DATABASE_URL = Deno.env.get("DATABASE_URL") || "";
 const DATABASE_SERVICE_KEY = Deno.env.get("DATABASE_SERVICE_KEY") || "";
@@ -45,125 +44,81 @@ const LEAGUES = [
 ];
 
 const HEADERS: Record<string, string> = {
-  "Origin": Deno.env.get("API_ORIGIN") || "https://bet261.mg",
-  "Referer": Deno.env.get("API_REFERER") || "https://bet261.mg/",
-  "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
-  "Accept": "application/json, text/plain, */*",
-  "Accept-Language": "fr-FR,fr;q=0.9",
-  "App-Version": Deno.env.get("API_APP_VERSION") || "33335",
+  "accept": "application/json, text/plain, */*",
+  "accept-language": "fr",
+  "app-version": "33470",
+  "referer": "https://bet261.mg/",
+  "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
+  "sec-ch-ua-mobile": "?0",
+  "sec-ch-ua-platform": '"Windows"',
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
 };
 
-// ─── Result entry type ───────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────
 
-interface ResultEntry {
-  matchId: number;
+interface FinishedMatch {
   home: string;
   away: string;
+  score: string;
   homeScore: number;
   awayScore: number;
-  outcome: string;
-  league: string;
+  outcome: string; // "1", "X", or "2"
 }
 
-// ─── STRATEGY 1: scraped_data table (PRIMARY) ─────────────────────────────
+// leagueId -> roundNumber -> array of finished matches
+type RoundResults = Map<string, Map<number, FinishedMatch[]>>;
 
-async function fetchResultsFromDB(): Promise<{ byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; count: number; leagues: number }> {
-  const byTeamName = new Map<string, ResultEntry>();
-  const byMatchId = new Map<number, ResultEntry>();
-  let count = 0;
-  const seenLeagues = new Set<string>();
+// ─── Fetch results from Sporty API (fresh, not cached) ───────────────
 
-  try {
-    const res = await fetch(
-      `${DATABASE_URL}/rest/v1/scraped_data?data_type=eq.results&select=league_id,league,payload,scraped_at&order=scraped_at.desc&limit=30`,
-      {
-        headers: {
-          "apikey": DATABASE_SERVICE_KEY,
-          "Authorization": `Bearer ${DATABASE_SERVICE_KEY}`,
-        },
-      }
-    );
-    if (!res.ok) {
-      console.log(`[verify] DB results fetch failed: ${res.status}`);
-      return { byTeamName, byMatchId, count: 0, leagues: 0 };
+async function fetchAllResultsFromAPI(): Promise<{
+  roundResults: RoundResults;
+  totalRounds: number;
+  totalMatches: number;
+}> {
+  const roundResults: RoundResults = new Map();
+  let totalRounds = 0;
+  let totalMatches = 0;
+
+  const results = await Promise.all(LEAGUES.map(l => fetchLeagueResults(l.id)));
+
+  for (const { leagueId, rounds } of results) {
+    const leagueRounds = new Map<number, FinishedMatch[]>();
+    for (const { roundNum, matches } of rounds) {
+      leagueRounds.set(roundNum, matches);
+      totalRounds++;
+      totalMatches += matches.length;
     }
-    const rows = await res.json();
-    if (!rows || rows.length === 0) {
-      console.log("[verify] No scraped results in DB");
-      return { byTeamName, byMatchId, count: 0, leagues: 0 };
-    }
-
-    for (const row of rows) {
-      const leagueKey = row.league_id || row.league || "";
-      if (seenLeagues.has(leagueKey)) continue;
-      seenLeagues.add(leagueKey);
-
-      const payload = row.payload;
-      if (!Array.isArray(payload)) continue;
-
-      for (const match of payload) {
-        const home = match.home || match.homeTeam?.name || "";
-        const away = match.away || match.awayTeam?.name || "";
-        const homeScore = match.scoreHome ?? match.homeScore ?? 0;
-        const awayScore = match.scoreAway ?? match.awayScore ?? 0;
-        const matchId = match.id || 0;
-        if (!home || !away) continue;
-
-        let outcome: string;
-        if (homeScore > awayScore) outcome = "1";
-        else if (homeScore < awayScore) outcome = "2";
-        else outcome = "X";
-
-        const entry: ResultEntry = { matchId, home, away, homeScore, awayScore, outcome, league: row.league || "Unknown" };
-        byTeamName.set(`${home}|${away}`, entry);
-        if (matchId) byMatchId.set(matchId, entry);
-        count++;
-      }
-    }
-    console.log(`[verify] DB: ${count} results from ${seenLeagues.size} leagues`);
-  } catch (err: any) {
-    console.log(`[verify] DB error: ${err.message}`);
-  }
-  return { byTeamName, byMatchId, count, leagues: seenLeagues.size };
-}
-
-// ─── STRATEGY 2: Direct API (ALWAYS runs — supplements DB) ────────────────
-
-async function fetchResultsFromAPI(): Promise<{ byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; count: number }> {
-  const byTeamName = new Map<string, ResultEntry>();
-  const byMatchId = new Map<number, ResultEntry>();
-
-  const allResults = await Promise.all(LEAGUES.map(l => fetchLeagueResults(l.id, l.name)));
-
-  for (const leagueResults of allResults) {
-    for (const entry of leagueResults) {
-      byTeamName.set(`${entry.home}|${entry.away}`, entry);
-      if (entry.matchId) byMatchId.set(entry.matchId, entry);
-    }
+    roundResults.set(leagueId, leagueRounds);
   }
 
-  console.log(`[verify] API: ${byTeamName.size} results total`);
-  return { byTeamName, byMatchId, count: byTeamName.size };
+  console.log(`[verify] API: ${totalMatches} results from ${totalRounds} rounds across ${roundResults.size} leagues`);
+  return { roundResults, totalRounds, totalMatches };
 }
 
-async function fetchLeagueResults(leagueId: string, leagueName: string): Promise<ResultEntry[]> {
-  const results: ResultEntry[] = [];
+async function fetchLeagueResults(leagueId: string): Promise<{
+  leagueId: string;
+  rounds: { roundNum: number; matches: FinishedMatch[] }[];
+}> {
+  const rounds: { roundNum: number; matches: FinishedMatch[] }[] = [];
   try {
     const response = await fetch(`${API_BASE}/${leagueId}/results?skip=0&take=200`, {
       headers: HEADERS,
       signal: AbortSignal.timeout(10000),
     });
     if (!response.ok) {
-      console.log(`[verify] API League ${leagueId}: ${response.status}`);
-      return results;
+      console.log(`[verify] API ${leagueId}: ${response.status}`);
+      return { leagueId, rounds };
     }
     const data = await response.json();
     if (data?.rounds) {
-      for (const roundData of data.rounds) {
-        for (const match of (roundData.matches || [])) {
-          const home = match.homeTeam?.name;
-          const away = match.awayTeam?.name;
-          const score = match.score || "0:0";
+      for (const rd of data.rounds) {
+        const roundNum = rd.roundNumber || 0;
+        const matches: FinishedMatch[] = [];
+        for (const m of (rd.matches || [])) {
+          const home = m.homeTeam?.name || "";
+          const away = m.awayTeam?.name || "";
+          if (!home || !away) continue;
+          const score = m.score || "0:0";
           const parts = score.split(":");
           const homeScore = parseInt(parts[0]) || 0;
           const awayScore = parseInt(parts[1]) || 0;
@@ -171,88 +126,140 @@ async function fetchLeagueResults(leagueId: string, leagueName: string): Promise
           if (homeScore > awayScore) outcome = "1";
           else if (homeScore < awayScore) outcome = "2";
           else outcome = "X";
-          if (home && away) {
-            results.push({
-              matchId: match.id || 0, home, away, homeScore, awayScore,
-              outcome, league: leagueName,
-            });
-          }
+          matches.push({ home, away, score, homeScore, awayScore, outcome });
+        }
+        if (matches.length > 0) {
+          rounds.push({ roundNum, matches });
         }
       }
     }
-    console.log(`[verify] API League ${leagueId}: ${results.length} results`);
   } catch (err: any) {
-    console.log(`[verify] API League ${leagueId}: ${err.message}`);
+    console.log(`[verify] API ${leagueId} error: ${err.message}`);
   }
-  return results;
+  return { leagueId, rounds };
 }
 
-// ─── MERGE: DB + API → combined maps ────────────────────────────────────────
+// ─── Match a prediction against round results ────────────────────────
 
-function mergeResults(
-  db: { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry> },
-  api: { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry> }
-): { byTeamName: Map<string, ResultEntry>; byMatchId: Map<number, ResultEntry>; sources: string } {
-  const byTeamName = new Map<string, ResultEntry>(db.byTeamName);
-  const byMatchId = new Map<number, ResultEntry>(db.byMatchId);
-  let apiAdded = 0;
-
-  // API supplements DB — only add entries not already in DB
-  for (const [key, entry] of api.byTeamName) {
-    if (!byTeamName.has(key)) {
-      byTeamName.set(key, entry);
-      apiAdded++;
-    }
-  }
-  for (const [key, entry] of api.byMatchId) {
-    if (!byMatchId.has(key)) {
-      byMatchId.set(key, entry);
-    }
-  }
-
-  const sources = db.count > 0
-    ? `db(${db.count})+api(+${apiAdded})`
-    : `api(${api.count})`;
-
-  return { byTeamName, byMatchId, sources };
+interface VerifyResult {
+  found: boolean;
+  homeScore?: number;
+  awayScore?: number;
+  outcome?: string;
+  score?: string;
+  method?: string;
+  reason?: string;
 }
 
-// ─── MATCHING: match_id → exact name → normalized name ────────────────────
-
-function normalizeTeam(name: string): string {
-  return (name || "").toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
-}
-
-function findMatch(
+function findMatchResult(
   pred: any,
-  byMatchId: Map<number, ResultEntry>,
-  byTeamName: Map<string, ResultEntry>
-): { result: ResultEntry; method: string } | null {
-  // 1. Match by match_id (most reliable)
-  if (pred.match_id && byMatchId.has(pred.match_id)) {
-    return { result: byMatchId.get(pred.match_id)!, method: "match_id" };
+  roundResults: RoundResults
+): VerifyResult {
+  // Extract prediction details
+  const predLeagueId = pred.league_id || "";
+  const predRound = pred.round;
+  const predMatchId = pred.match_id;
+  const predHome = (pred.home_team || pred.home || "").trim().toLowerCase();
+  const predAway = (pred.away_team || pred.away || "").trim().toLowerCase();
+
+  if (!predHome || !predAway) {
+    return { found: false, reason: "missing team names in prediction" };
   }
 
-  // 2. Exact team name match
-  const exactKey = `${pred.home_team}|${pred.away_team}`;
-  if (byTeamName.has(exactKey)) {
-    return { result: byTeamName.get(exactKey)!, method: "exact_name" };
-  }
+  // ── Determine which leagues to search ──
+  // If prediction has a league_id, search that league first
+  // Otherwise search all leagues
+  const leagueIds = predLeagueId
+    ? [predLeagueId, ...LEAGUES.map(l => l.id).filter(id => id !== predLeagueId)]
+    : LEAGUES.map(l => l.id);
 
-  // 3. Normalized team name match
-  const normHome = normalizeTeam(pred.home_team);
-  const normAway = normalizeTeam(pred.away_team);
-  for (const [key, value] of byTeamName) {
-    const [rHome, rAway] = key.split("|");
-    if (normalizeTeam(rHome) === normHome && normalizeTeam(rAway) === normAway) {
-      return { result: value, method: "normalized_name" };
+  for (const leagueId of leagueIds) {
+    const leagueRounds = roundResults.get(leagueId);
+    if (!leagueRounds) continue;
+
+    // If prediction has a round, ONLY check that specific round
+    if (predRound && predRound > 0) {
+      const roundMatches = leagueRounds.get(predRound);
+      if (!roundMatches) {
+        // Round not yet in results — match not finished yet
+        continue;
+      }
+
+      // Search within this specific round
+      const match = findTeamMatchInRound(predHome, predAway, roundMatches);
+      if (match) {
+        return {
+          found: true,
+          homeScore: match.homeScore,
+          awayScore: match.awayScore,
+          outcome: match.outcome,
+          score: match.score,
+          method: `round_${predRound}_name`,
+        };
+      }
+      // Round found but no team match — team names might differ
+      continue;
+    }
+
+    // No round in prediction — search all rounds (fallback for old predictions)
+    for (const [roundNum, matches] of leagueRounds) {
+      const match = findTeamMatchInRound(predHome, predAway, matches);
+      if (match) {
+        return {
+          found: true,
+          homeScore: match.homeScore,
+          awayScore: match.awayScore,
+          outcome: match.outcome,
+          score: match.score,
+          method: `round_${roundNum}_name_fallback`,
+        };
+      }
     }
   }
 
+  return { found: false, reason: "no matching result found" };
+}
+
+function findTeamMatchInRound(
+  predHome: string,
+  predAway: string,
+  roundMatches: FinishedMatch[]
+): FinishedMatch | null {
+  // 1. Exact match
+  for (const m of roundMatches) {
+    if (m.home.toLowerCase() === predHome && m.away.toLowerCase() === predAway) {
+      return m;
+    }
+  }
+  // 2. Normalized match (strip accents, special chars)
+  for (const m of roundMatches) {
+    if (normalize(m.home) === normalize(predHome) && normalize(m.away) === normalize(predAway)) {
+      return m;
+    }
+  }
+  // 3. Contains match (partial team name matching)
+  for (const m of roundMatches) {
+    const mHome = m.home.toLowerCase();
+    const mAway = m.away.toLowerCase();
+    if ((mHome.includes(predHome) || predHome.includes(mHome)) &&
+        (mAway.includes(predAway) || predAway.includes(mAway))) {
+      return m;
+    }
+  }
   return null;
 }
 
-// ─── FETCH PENDING PREDICTIONS ───────────────────────────────────────────
+function normalize(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // strip accents
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ─── FETCH PENDING PREDICTIONS ───────────────────────────────────────
 
 async function fetchPendingPredictions(deviceId?: string): Promise<any[]> {
   let url = `${DATABASE_URL}/rest/v1/predictions?status=eq.pending&order=created_at.asc&limit=200`;
@@ -267,14 +274,13 @@ async function fetchPendingPredictions(deviceId?: string): Promise<any[]> {
     },
   });
   if (!dbRes.ok) {
-    const errText = await dbRes.text();
-    console.error(`[verify] Failed to fetch predictions: ${dbRes.status} ${errText}`);
+    console.error(`[verify] Failed to fetch predictions: ${dbRes.status}`);
     return [];
   }
   return await dbRes.json();
 }
 
-// ─── MAIN HANDLER ────────────────────────────────────────────────────────
+// ─── MAIN HANDLER ───────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -282,7 +288,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const startTime = Date.now();
-  console.log("=== verify-predictions v17 ===");
+  console.log("=== verify-predictions v18 (round-aware) ===");
 
   try {
     // ── Mode detection: CRON vs CLIENT ──
@@ -322,31 +328,25 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // 2. Fetch results from BOTH sources and merge (no short-circuit!)
-    const [db, api] = await Promise.all([
-      fetchResultsFromDB(),
-      fetchResultsFromAPI(),
-    ]);
-    const merged = mergeResults(db, api);
-    console.log(`[verify] Merged results: ${merged.byTeamName.size} team-matches, ${merged.byMatchId.size} match-ids (source: ${merged.sources})`);
+    // 2. Fetch fresh results from API organized by round
+    const { roundResults, totalRounds, totalMatches } = await fetchAllResultsFromAPI();
 
-    if (merged.byTeamName.size === 0 && merged.byMatchId.size === 0) {
+    if (totalMatches === 0) {
       return new Response(
         JSON.stringify({ success: true, message: "Aucun résultat disponible", verified: 0, pending: pendingPredictions.length, elapsed: Date.now() - startTime }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 3. Match and update predictions
-    let correct = 0, incorrect = 0, notFound = 0;
-    const matchMethods = { match_id: 0, exact_name: 0, normalized_name: 0 };
+    // 3. Match each prediction against round-specific results
+    let correct = 0, incorrect = 0, notFound = 0, roundNotFinished = 0;
     const updates: Promise<any>[] = [];
 
     for (const pred of pendingPredictions) {
-      const matched = findMatch(pred, merged.byMatchId, merged.byTeamName);
-      if (matched) {
-        matchMethods[matched.method as keyof typeof matchMethods]++;
-        const isCorrect = pred.prediction === matched.result.outcome;
+      const result = findMatchResult(pred, roundResults);
+
+      if (result.found) {
+        const isCorrect = pred.prediction === result.outcome;
         const status = isCorrect ? "correct" : "incorrect";
         if (isCorrect) correct++; else incorrect++;
 
@@ -360,20 +360,25 @@ Deno.serve(async (req: Request) => {
               "Prefer": "return=minimal",
             },
             body: JSON.stringify({
-              actual_home_score: matched.result.homeScore,
-              actual_away_score: matched.result.awayScore,
-              actual_outcome: matched.result.outcome,
-              actual_score: `${matched.result.homeScore}:${matched.result.awayScore}`,
+              actual_home_score: result.homeScore,
+              actual_away_score: result.awayScore,
+              actual_outcome: result.outcome,
+              actual_score: result.score,
               status,
               verified_at: new Date().toISOString(),
             }),
           })
         );
-        console.log(`${isCorrect ? "OK" : "NO"} [${matched.method}] ${pred.home_team} vs ${pred.away_team}: pred=${pred.prediction} actual=${matched.result.outcome} (${matched.result.homeScore}-${matched.result.awayScore})`);
+        console.log(`${isCorrect ? "OK" : "NO"} [${result.method}] ${pred.home_team} vs ${pred.away_team} (round=${pred.round || "?"}): pred=${pred.prediction} actual=${result.outcome} (${result.score})`);
       } else {
-        notFound++;
-        // Log ALL not-found predictions (no truncation)
-        console.log(`[verify] NOT FOUND: ${pred.home_team} vs ${pred.away_team} | league=${pred.league} | match_id=${pred.match_id || "none"} | created=${pred.created_at}`);
+        // Check if it's because the round hasn't finished yet
+        if (pred.round && pred.round > 0) {
+          roundNotFinished++;
+          console.log(`[verify] WAIT: ${pred.home_team} vs ${pred.away_team} round=${pred.round} — not yet in results`);
+        } else {
+          notFound++;
+          console.log(`[verify] MISS: ${pred.home_team} vs ${pred.away_team} | league=${pred.league} | round=${pred.round || "none"} | match_id=${pred.match_id || "none"} | reason=${result.reason}`);
+        }
       }
     }
 
@@ -382,21 +387,22 @@ Deno.serve(async (req: Request) => {
     const failedUpdates = settled.filter(r => r.status === "rejected").length;
 
     const elapsed = Date.now() - startTime;
-    console.log(`[verify] Done: ${correct} OK, ${incorrect} NO, ${notFound} notFound, ${failedUpdates} failed (${elapsed}ms)`);
-    console.log(`[verify] Match methods: match_id=${matchMethods.match_id} exact=${matchMethods.exact_name} normalized=${matchMethods.normalized_name}`);
+    console.log(`[verify] Done: ${correct} OK, ${incorrect} NO, ${notFound} miss, ${roundNotFinished} waiting, ${failedUpdates} failed (${elapsed}ms)`);
 
     return new Response(
       JSON.stringify({
         success: true,
         mode: callerMode,
-        source: merged.sources,
+        version: "v18-round-aware",
+        source: "api-fresh",
+        totalResultRounds: totalRounds,
+        totalResultMatches: totalMatches,
         verified: updates.length,
         correct, incorrect,
         notFound,
+        roundNotFinished,
         failedUpdates,
-        matchMethods,
         stillPending: pendingPredictions.length - updates.length,
-        totalResults: merged.byTeamName.size,
         elapsed,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
