@@ -4,8 +4,15 @@
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Origin": "*",
+};
+
+// Si ALLOWED_ORIGIN est défini, restreindre CORS (sécurité)
+if (Deno.env.get("ALLOWED_ORIGIN")) {
+  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
+  corsHeaders["Vary"] = "Origin";
+}
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
 };
 
@@ -19,10 +26,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     // Verification : requete doit provenir du frontend (apikey header)
+    // Validate that the apikey matches the anon key (not just presence)
     const apiKey = req.headers.get("apikey");
-    if (!apiKey) {
+    const ANON_KEY = Deno.env.get("DATABASE_ANON_KEY") || "";
+    if (!apiKey || (ANON_KEY && apiKey !== ANON_KEY)) {
       return new Response(
-        JSON.stringify({ success: false, error: "apikey header required" }),
+        JSON.stringify({ success: false, error: "Invalid or missing apikey" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

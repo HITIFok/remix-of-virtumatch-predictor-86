@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/integrations/supabase/client'
 
 // Device ID for tracking predictions per device
-function getDeviceId(): string {
+export function getDeviceId(): string {
   let id = localStorage.getItem("virtuxxs_device_id");
   if (!id) {
     id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -65,25 +65,27 @@ export function usePredictions() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Vérifier automatiquement les prédictions en attente
+  // Vérifier automatiquement les prédictions en attente (device-scoped)
   const autoVerifyPredictions = useCallback(async () => {
     try {
       const supabaseUrl = import.meta.env.VITE_DATABASE_URL
       const anonKey = import.meta.env.VITE_DATABASE_ANON_KEY
-      
-      // Vérifier silencieusement en arrière-plan
+      const deviceId = getDeviceId()
+
+      // Vérifier silencieusement en arrière-plan — envoie device_id pour filtrer
       const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'apikey': anonKey,
           'Authorization': `Bearer ${anonKey}`
-        }
+        },
+        body: JSON.stringify({ deviceId })
       })
-      
+
       if (response.ok) {
         const data = await response.json()
-
+        console.log('[autoVerify]', data.verified || 0, 'prediction(s) vérifiée(s)')
         return data
       }
     } catch (err) {
@@ -103,9 +105,11 @@ export function usePredictions() {
       }
 
       // Ensuite charger les prédictions (maintenant à jour)
+      const deviceId = getDeviceId()
       const { data: predData, error: predError } = await supabase
         .from('predictions')
         .select('*')
+        .eq('device_id', deviceId)
         .order('created_at', { ascending: false })
         .limit(200)
 

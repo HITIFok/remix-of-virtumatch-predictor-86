@@ -1,7 +1,7 @@
 // Client-side scraper for Instant League
-// Calls Supabase Edge Function which scrapes the API
-
-import { supabase } from "@/integrations/supabase/client";
+// ⚠️ SÉCURITÉ : Le scraping est désormais côté serveur uniquement
+// Le cron auto-scrape s'exécute toutes les 2 minutes via pg_cron
+// L'appel client-side est désactivé (auto-scrape requiert x-cron-key)
 
 export interface ScraperResult {
   success: boolean;
@@ -14,57 +14,15 @@ export interface ScraperResult {
 }
 
 export async function scrapeInstantLeague(): Promise<ScraperResult> {
-  try {
-    console.log('Calling Supabase Edge Function auto-scrape...');
-
-    // Call the Supabase Edge Function
-    // Note: The x-cron-key is no longer sent from the client for security.
-    // The Edge Function validates the request using Supabase auth or server-side secrets.
-    const { data, error } = await supabase.functions.invoke('auto-scrape', {
-      method: 'POST',
-      body: {},
-    });
-
-    if (error) {
-      console.error('Edge Function error:', error);
-      return {
-        success: false,
-        matches: 0,
-        results: 0,
-        ranking: 0,
-        error: `Erreur: ${error.message}`,
-      };
-    }
-
-    if (data?.success) {
-      console.log('Scrape successful:', data);
-      return {
-        success: true,
-        matches: data.saved?.matches || 0,
-        results: data.saved?.results || 0,
-        ranking: data.saved?.ranking || 0,
-      };
-    }
-
-    // API returned an error
-    return {
-      success: false,
-      matches: 0,
-      results: 0,
-      ranking: 0,
-      error: data?.error || "Échec du scraping",
-      geoBlocked: data?.hint?.includes('geo-blocked'),
-      needPython: data?.hint?.includes('Python'),
-    };
-
-  } catch (err) {
-    console.error('Scrape error:', err);
-    return {
-      success: false,
-      matches: 0,
-      results: 0,
-      ranking: 0,
-      error: err instanceof Error ? err.message : "Erreur inconnue",
-    };
-  }
+  // Client-side scraping is disabled for security.
+  // The auto-scrape Edge Function runs via cron every 2 minutes
+  // with x-cron-key authentication (not available client-side).
+  return {
+    success: false,
+    matches: 0,
+    results: 0,
+    ranking: 0,
+    error: "Le scraping automatique est géré par le serveur (cron toutes les 2 min).",
+    needPython: false,
+  };
 }

@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
 import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
-import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult } from "@/lib/prediction-engine";
+import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
+import { supabase } from "@/integrations/supabase/client";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
 import { RankingTable, ResultsList } from "@/components/LeagueData";
@@ -24,8 +25,122 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ScrapedMatch } from "@/lib/types";
+import type { ScrapedMatch, MatchResult as ApiMatchResult, RankingEntry } from "@/lib/types";
 import FlagIcon from "@/components/FlagIcon";
+
+// ─── Enrich match data with ranking, results, head-to-head for AI ──────────────
+interface EnrichedMatchInput {
+  home: string;
+  away: string;
+  league: string;
+  oddHome: number;
+  oddDraw: number;
+  oddAway: number;
+  rankingHome?: { position: number; played: number; won: number; drawn: number; lost: number; goalsFor: number; goalsAgainst: number; goalDifference: number; points: number };
+  rankingAway?: { position: number; played: number; won: number; drawn: number; lost: number; goalsFor: number; goalsAgainst: number; goalDifference: number; points: number };
+  recentHome: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
+  recentAway: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
+  headToHead: { home: string; away: string; scoreHome: number; scoreAway: number }[];
+}
+
+function enrichMatchesForAI(
+  matches: ScrapedMatch[],
+  results: ApiMatchResult[],
+  ranking: RankingEntry[]
+): EnrichedMatchInput[] {
+  // Build ranking map
+  const rankingMap = new Map<string, RankingEntry>();
+  for (const r of ranking) {
+    rankingMap.set(r.team.toLowerCase().trim(), r);
+  }
+
+  return matches.map(m => {
+    const homeKey = m.home.toLowerCase().trim();
+    const awayKey = m.away.toLowerCase().trim();
+
+    // Ranking data
+    const homeRank = rankingMap.get(homeKey);
+    const awayRank = rankingMap.get(awayKey);
+
+    // Recent results: last 5 for each team
+    const recentHome: EnrichedMatchInput["recentHome"] = [];
+    const recentAway: EnrichedMatchInput["recentAway"] = [];
+    const h2h: EnrichedMatchInput["headToHead"] = [];
+
+    for (const r of results) {
+      const rHome = r.home.toLowerCase().trim();
+      const rAway = r.away.toLowerCase().trim();
+
+      // Home team's recent matches
+      if (rHome === homeKey && recentHome.length < 5) {
+        recentHome.push({
+          opponent: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+          result: r.scoreHome > r.scoreAway ? "V" : r.scoreHome < r.scoreAway ? "D" : "N",
+        });
+      }
+      if (rAway === homeKey && recentHome.length < 5) {
+        recentHome.push({
+          opponent: r.home,
+          scoreHome: r.scoreAway,
+          scoreAway: r.scoreHome,
+          result: r.scoreAway > r.scoreHome ? "V" : r.scoreAway < r.scoreHome ? "D" : "N",
+        });
+      }
+
+      // Away team's recent matches
+      if (rHome === awayKey && recentAway.length < 5) {
+        recentAway.push({
+          opponent: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+          result: r.scoreHome > r.scoreAway ? "V" : r.scoreHome < r.scoreAway ? "D" : "N",
+        });
+      }
+      if (rAway === awayKey && recentAway.length < 5) {
+        recentAway.push({
+          opponent: r.home,
+          scoreHome: r.scoreAway,
+          scoreAway: r.scoreHome,
+          result: r.scoreAway > r.scoreHome ? "V" : r.scoreAway < r.scoreHome ? "D" : "N",
+        });
+      }
+
+      // Head-to-head
+      if ((rHome === homeKey && rAway === awayKey) || (rHome === awayKey && rAway === homeKey)) {
+        h2h.push({
+          home: r.home,
+          away: r.away,
+          scoreHome: r.scoreHome,
+          scoreAway: r.scoreAway,
+        });
+      }
+    }
+
+    return {
+      home: m.home,
+      away: m.away,
+      league: m.league,
+      oddHome: m.oddHome,
+      oddDraw: m.oddDraw,
+      oddAway: m.oddAway,
+      rankingHome: homeRank ? {
+        position: homeRank.position, played: homeRank.played, won: homeRank.won,
+        drawn: homeRank.drawn, lost: homeRank.lost, goalsFor: homeRank.goalsFor,
+        goalsAgainst: homeRank.goalsAgainst, goalDifference: homeRank.goalDifference, points: homeRank.points,
+      } : undefined,
+      rankingAway: awayRank ? {
+        position: awayRank.position, played: awayRank.played, won: awayRank.won,
+        drawn: awayRank.drawn, lost: awayRank.lost, goalsFor: awayRank.goalsFor,
+        goalsAgainst: awayRank.goalsAgainst, goalDifference: awayRank.goalDifference, points: awayRank.points,
+      } : undefined,
+      recentHome,
+      recentAway,
+      headToHead: h2h,
+    };
+  });
+}
 
 function MatchCard({
   match,
@@ -160,74 +275,205 @@ export default function LiveMatches() {
   const { savePrediction } = usePredictions();
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
+  const [batchPredicting, setBatchPredicting] = useState(false);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
+
+  // Cache IA : éviter d'appeler Google AI pour le même match (cotes identiques)
+  const aiCache = useRef<Map<string, AIPrediction>>(new Map());
+  // Debounce : empêcher les clics multiples rapides
+  const predictingRef = useRef<string | null>(null);
 
   useEffect(() => {
     fetchMatches();
   }, []);
 
+  // Helper: sauvegarder une prédiction en BDD
+  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult) => {
+    try {
+      await savePrediction({
+        match_id: match.id,
+        home_team: match.home,
+        away_team: match.away,
+        league: match.league,
+        odd_home: match.oddHome,
+        odd_draw: match.oddDraw,
+        odd_away: match.oddAway,
+        prob_home: result.probHome,
+        prob_draw: result.probDraw,
+        prob_away: result.probAway,
+        prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
+        confidence: result.aiConfidence,
+        predicted_home_score: result.scoreHome,
+        predicted_away_score: result.scoreAway,
+        predicted_score: result.exactScore,
+        winner_1x2: result.winner1X2,
+        gg_result: result.ggResult,
+        total_goals: result.totalGoals,
+        parity: result.parity,
+        over_under_15: result.overUnder15,
+        over_under_25: result.overUnder25,
+        over_under_35: result.overUnder35,
+        prob_gg: result.probGG,
+        prob_gn: result.probGN,
+        btts_prob: result.bttsProb,
+        over25_prob: result.over25Prob,
+        first_half_goal_prob: result.firstHalfGoalProb,
+        expected_goals: result.expectedGoals,
+      });
+    } catch (e) {
+      console.log('Prediction already saved or error:', e);
+    }
+  };
+
+  // Helper: analyser + sauvegarder un match (réutilisé par predict et batch)
+  const processMatch = (match: ScrapedMatch, aiPrediction: AIPrediction | undefined) => {
+    const matchKey = `${match.home}-${match.away}`;
+    const matchInput: MatchInput = {
+      home: match.home,
+      away: match.away,
+      league: match.league,
+      oddHome: match.oddHome,
+      oddDraw: match.oddDraw,
+      oddAway: match.oddAway,
+    };
+    const teamStatsMap = buildTeamStatsMap(ranking);
+    const historicalResults = prepareHistoricalResults(results);
+    const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
+    setPredictions(prev => ({ ...prev, [matchKey]: result }));
+    return result;
+  };
+
+  // Prédiction individuelle (utilise le cache, fallback math)
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
+    const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+
+    if (predictingRef.current === matchKey) return;
+    predictingRef.current = matchKey;
     setPredictingId(matchKey);
 
     try {
-      const matchInput: MatchInput = {
-        home: match.home,
-        away: match.away,
-        league: match.league,
-        oddHome: match.oddHome,
-        oddDraw: match.oddDraw,
-        oddAway: match.oddAway,
-      };
-
-      const teamStatsMap = buildTeamStatsMap(ranking);
-      const historicalResults = prepareHistoricalResults(results);
-      const result = analyzeMatch(matchInput, undefined, teamStatsMap, historicalResults);
-
-      setPredictions(prev => ({ ...prev, [matchKey]: result }));
-
-      // Save prediction to database (single save)
-      try {
-        await savePrediction({
-          match_id: match.id,
-          home_team: match.home,
-          away_team: match.away,
-          league: match.league,
-          odd_home: match.oddHome,
-          odd_draw: match.oddDraw,
-          odd_away: match.oddAway,
-          prob_home: result.probHome,
-          prob_draw: result.probDraw,
-          prob_away: result.probAway,
-          prediction: result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X',
-          confidence: result.aiConfidence, // Already a percentage (0-100)
-          predicted_home_score: result.scoreHome,
-          predicted_away_score: result.scoreAway,
-          predicted_score: result.exactScore,
-          winner_1x2: result.winner1X2,
-          gg_result: result.ggResult,
-          total_goals: result.totalGoals,
-          parity: result.parity,
-          over_under_15: result.overUnder15,
-          over_under_25: result.overUnder25,
-          over_under_35: result.overUnder35,
-          prob_gg: result.probGG,
-          prob_gn: result.probGN,
-          btts_prob: result.bttsProb,
-          over25_prob: result.over25Prob,
-          first_half_goal_prob: result.firstHalfGoalProb,
-          expected_goals: result.expectedGoals,
-        });
-      } catch (e) {
-        console.log('Prediction already saved or error:', e);
+      let aiPrediction: AIPrediction | undefined;
+      const cached = aiCache.current.get(cacheKey);
+      if (cached) {
+        aiPrediction = cached;
+        console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
+      } else {
+        try {
+          // Enrichir avec classement + résultats + face-à-face
+          const enriched = enrichMatchesForAI([match], results, ranking);
+          const { data, error } = await supabase.functions.invoke("analyze-match", {
+            body: { matches: enriched },
+          });
+          if (!error && data?.predictions?.length > 0) {
+            aiPrediction = data.predictions[0] as AIPrediction;
+            aiCache.current.set(cacheKey, aiPrediction);
+            console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away, "(enriched)");
+          } else {
+            const googleError = error as any;
+            if (googleError?.googleError) {
+              console.error("[LiveMatches] Google AI 429 details:", googleError.googleError);
+              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
+            } else {
+              console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
+            }
+          }
+        } catch (aiErr) {
+          console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
+        }
       }
 
+      const result = processMatch(match, aiPrediction);
+      await savePredictionToDb(match, result);
       toast.success("Prédiction générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
       setPredictingId(null);
+      predictingRef.current = null;
+    }
+  };
+
+  // Prédiction groupée : 1 seul appel IA pour tous les matchs
+  const handleBatchPredict = async () => {
+    // Collecter tous les matchs visibles (avec cotes > 0) qui n'ont pas encore été prédits
+    const allMatches: ScrapedMatch[] = [];
+    const uncachedMatches: { match: ScrapedMatch; cacheKey: string }[] = [];
+
+    for (const league of Object.keys(matchesByLeague)) {
+      for (const match of matchesByLeague[league]) {
+        if (match.oddHome > 0) {
+          const matchKey = `${match.home}-${match.away}`;
+          const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+          allMatches.push(match);
+          if (!aiCache.current.has(cacheKey) && !predictions[matchKey]) {
+            uncachedMatches.push({ match, cacheKey });
+          }
+        }
+      }
+    }
+
+    if (allMatches.length === 0) {
+      toast.error("Aucun match avec cotes disponibles");
+      return;
+    }
+
+    setBatchPredicting(true);
+    try {
+      // Appel IA groupé — 1 seul appel pour tous les matchs non cachés
+      let newAiPredictions: Map<string, AIPrediction> = new Map();
+
+      if (uncachedMatches.length > 0) {
+        try {
+          // Enrichir avec classement + résultats + face-à-face
+          const uncachedMatchObjects = uncachedMatches.map(m => m.match);
+          const enriched = enrichMatchesForAI(uncachedMatchObjects, results, ranking);
+          const { data, error } = await supabase.functions.invoke("analyze-match", {
+            body: { matches: enriched },
+          });
+
+          if (!error && data?.predictions?.length > 0) {
+            const aiPreds = data.predictions as AIPrediction[];
+            for (let i = 0; i < uncachedMatches.length; i++) {
+              if (aiPreds[i]) {
+                newAiPredictions.set(uncachedMatches[i].cacheKey, aiPreds[i]);
+                aiCache.current.set(uncachedMatches[i].cacheKey, aiPreds[i]);
+              }
+            }
+            console.log(`[LiveMatches] Batch AI: ${aiPreds.length}/${uncachedMatches.length} predictions received`);
+          } else {
+            // Log detailed Google error if present
+            const googleError = error as any;
+            if (googleError?.googleError) {
+              console.error("[LiveMatches] Batch Google AI 429 details:", googleError.googleError);
+              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
+            } else {
+              console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
+              toast.error("IA indisponible, analyse mathématique utilisée");
+            }
+          }
+        } catch (aiErr) {
+          console.warn("[LiveMatches] Batch AI call failed:", aiErr);
+          toast.error("IA indisponible, analyse mathématique utilisée");
+        }
+      } else {
+        console.log("[LiveMatches] All matches already cached");
+      }
+
+      // Traiter et sauvegarder chaque match
+      for (const match of allMatches) {
+        const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+        const aiPrediction = aiCache.current.get(cacheKey) || newAiPredictions.get(cacheKey) || undefined;
+        const result = processMatch(match, aiPrediction);
+        await savePredictionToDb(match, result);
+      }
+
+      toast.success(`${allMatches.length} match(s) analysé(s) avec l'IA 🔥`);
+    } catch {
+      toast.error("Erreur lors de la prédiction groupée");
+    } finally {
+      setBatchPredicting(false);
     }
   };
 
@@ -320,6 +566,25 @@ export default function LiveMatches() {
                 📦 Cache
               </Badge>
             )}
+          </div>
+        )}
+
+        {/* Bouton PRÉDIRE TOUS LES MATCHS */}
+        {totalMatches > 0 && isPremium() && (
+          <div className="mb-4">
+            <Button
+              size="sm"
+              variant="fire"
+              className="w-full"
+              disabled={batchPredicting || loading}
+              onClick={handleBatchPredict}
+            >
+              {batchPredicting ? (
+                <><Loader2 size={14} className="mr-1 animate-spin" /> ANALYSE IA EN COURS...</>
+              ) : (
+                <><Zap size={14} className="mr-1" /> PRÉDIRE TOUS LES MATCHS ({totalMatches})</>
+              )}
+            </Button>
           </div>
         )}
 
