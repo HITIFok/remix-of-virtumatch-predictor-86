@@ -116,6 +116,8 @@ export function useLiveMatches() {
   const fetchVersionRef = useRef(0);
   // Track if a fetch is in progress (to avoid overlapping polls)
   const fetchingRef = useRef(false);
+  // Track if we've ever received API data — prevents flicker back to cache during polls
+  const apiDataReceivedRef = useRef(false);
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
@@ -139,6 +141,10 @@ export function useLiveMatches() {
       const rankingEntry = rawData.find(d => d.data_type === "ranking");
 
       if (matchesEntry?.payload && Array.isArray(matchesEntry.payload)) {
+        // During polling, don't overwrite API data with stale cache
+        if (apiDataReceivedRef.current) {
+          return true;
+        }
         setMatches(matchesEntry.payload.map((m: any) => ({
           league: m.league || targetLeague,
           home: m.home || "",
@@ -212,9 +218,11 @@ export function useLiveMatches() {
       setError(null);
 
       // Lancer les deux en parallèle
+      // During polling, skip cache loading if we already have API data
+      const shouldLoadCache = !apiDataReceivedRef.current || !isPoll;
       const [apiData, cacheSuccess] = await Promise.all([
         fetchFromAPI(leagueId, leagueName),
-        loadFromDatabase(leagueName),
+        shouldLoadCache ? loadFromDatabase(leagueName) : Promise.resolve(true),
       ]);
 
       // Si l'API a répondu, utiliser ses données (temps réel)
@@ -224,6 +232,7 @@ export function useLiveMatches() {
         setRanking(apiData.ranking);
         setLastUpdate(new Date().toISOString());
         setDataSource("api");
+        apiDataReceivedRef.current = true;
       } else if (!cacheSuccess && !isPoll) {
         // Message d'erreur convivial : l'API ET le cache ont échoué
         setError(getFriendlyError(leagueName));
@@ -258,6 +267,7 @@ export function useLiveMatches() {
     setError(null);
     setLastUpdate(null);
     setCurrentRound(0);
+    apiDataReceivedRef.current = false;
 
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
