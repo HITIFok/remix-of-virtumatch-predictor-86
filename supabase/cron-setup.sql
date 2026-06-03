@@ -1,17 +1,27 @@
 -- ===========================================
--- Configuration Cron Supabase pour auto-scrape
+-- Configuration Cron Supabase
+-- auto-scrape (toutes les 2 min)
+-- verify-predictions (toutes les 5 min)
 -- ===========================================
 -- Exécutez ce SQL dans l'éditeur SQL de Supabase
--- ⚠️ La clé secrète doit être définie via Supabase Secrets (Dashboard → Settings → Secrets)
---    Nom : CRON_SECRET
---    Valeur : votre clé secrète personnalisée
+-- ⚠️ CRON_SECRET doit être configuré via Supabase Secrets (Dashboard → Settings → Secrets)
 -- ===========================================
 
 -- 1. Activer l'extension pg_cron (si pas déjà activée)
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 
--- 2. Créer la fonction qui appelle l'Edge Function
--- La clé est lue depuis vault.secrets (définie dans Supabase Dashboard)
+-- 2. Créer la table de logs (optionnel)
+CREATE TABLE IF NOT EXISTS cron_logs (
+  id SERIAL PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  job_name TEXT DEFAULT '',
+  response JSONB
+);
+
+-- ═══════════════════════════════════════════
+-- CRON JOB 1 : auto-scrape (toutes les 2 min)
+-- ═══════════════════════════════════════════
+
 CREATE OR REPLACE FUNCTION call_auto_scrape()
 RETURNS void
 LANGUAGE plpgsql
@@ -22,19 +32,17 @@ DECLARE
   v_secret text;
   response json;
 BEGIN
-  -- Lire la clé secrète depuis le vault
   SELECT decrypted_secret INTO v_secret
   FROM vault.decrypted_secrets
   WHERE name = 'CRON_SECRET'
   LIMIT 1;
 
   IF v_secret IS NULL THEN
-    RAISE EXCEPTION 'CRON_SECRET not found in vault. Add it in Supabase Dashboard → Settings → Secrets';
+    RAISE EXCEPTION 'CRON_SECRET not found in vault';
   END IF;
 
-  -- Appeler l'Edge Function auto-scrape avec la clé secrète
   SELECT net.http_post(
-    url := 'REDACTED_SUPABASE_URL/functions/v1/auto-scrape',
+    url := 'https://gxmmeemzkixinsxglfaq.supabase.co/functions/v1/auto-scrape',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-key', v_secret
@@ -42,28 +50,73 @@ BEGIN
     body := '{}'::jsonb
   ) INTO response;
 
-  -- Log le résultat
-  INSERT INTO cron_logs (created_at, response)
-  VALUES (now(), response);
+  INSERT INTO cron_logs (created_at, job_name, response)
+  VALUES (now(), 'auto-scrape', response);
 END;
 $$;
 
--- 3. Créer la table de logs (optionnel)
-CREATE TABLE IF NOT EXISTS cron_logs (
-  id SERIAL PRIMARY KEY,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  response JSONB
-);
-
--- 4. Programmer le cron job (toutes les 2 minutes)
+-- Programmer auto-scrape (toutes les 2 minutes)
+SELECT cron.unschedule('auto-scrape-instant-league');
 SELECT cron.schedule(
   'auto-scrape-instant-league',
   '*/2 * * * *',
   'SELECT call_auto_scrape();'
 );
 
--- Pour voir les jobs cron actifs:
--- SELECT * FROM cron.job;
+-- ═══════════════════════════════════════════
+-- CRON JOB 2 : verify-predictions (toutes les 5 min)
+-- ═══════════════════════════════════════════
 
--- Pour supprimer un job:
--- SELECT cron.unschedule('auto-scrape-instant-league');
+CREATE OR REPLACE FUNCTION call_verify_predictions()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_secret text;
+  response json;
+BEGIN
+  SELECT decrypted_secret INTO v_secret
+  FROM vault.decrypted_secrets
+  WHERE name = 'CRON_SECRET'
+  LIMIT 1;
+
+  IF v_secret IS NULL THEN
+    RAISE EXCEPTION 'CRON_SECRET not found in vault';
+  END IF;
+
+  SELECT net.http_post(
+    url := 'https://gxmmeemzkixinsxglfaq.supabase.co/functions/v1/verify-predictions',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-key', v_secret
+    ),
+    body := '{}'::jsonb
+  ) INTO response;
+
+  INSERT INTO cron_logs (created_at, job_name, response)
+  VALUES (now(), 'verify-predictions', response);
+END;
+$$;
+
+-- Programmer verify-predictions (toutes les 5 minutes)
+SELECT cron.unschedule('verify-predictions-auto');
+SELECT cron.schedule(
+  'verify-predictions-auto',
+  '*/5 * * * *',
+  'SELECT call_verify_predictions();'
+);
+
+-- ═══════════════════════════════════════════
+-- UTILITAIRES
+-- ═══════════════════════════════════════════
+
+-- Voir tous les jobs cron actifs :
+-- SELECT jobid, schedule, command, active FROM cron.job;
+
+-- Voir les logs récents :
+-- SELECT created_at, job_name, response->>'message' as msg, response->>'verified' as verified FROM cron_logs ORDER BY created_at DESC LIMIT 20;
+
+-- Nettoyer les logs (garder 24h) :
+-- DELETE FROM cron_logs WHERE created_at < now() - interval '24 hours';

@@ -1,63 +1,97 @@
 // analyze-match/index.ts — Supabase Edge Function
-// AI-powered match analysis using Lovable AI gateway
+// AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
 // NO imports — uses Deno.serve() + native fetch
+//
+// v14: Switched to Groq as primary AI provider (llama-3.3-70b-versatile)
+//      with Google Gemini as automatic fallback.
+//      Each provider has its own retry with exponential backoff.
 
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+// Si ALLOWED_ORIGIN est défini, restreindre CORS (sécurité)
+if (Deno.env.get("ALLOWED_ORIGIN")) {
+  corsHeaders["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN;
+  corsHeaders["Vary"] = "Origin";
+}
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+/** Sleep helper */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  try {
-    const { matches } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+/** Mask an API key for safe logging */
+const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : "NOT_SET";
 
-    const systemPrompt = `Tu es un expert en prédiction de matchs de football virtuels.
-Tu analyses les cotes 1X2 fournies et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
+// ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
+
+const SYSTEM_PROMPT = `Tu es un expert en prédiction de matchs de football virtuels.
+Tu analyses les données fournies (cotes, classement, résultats récents, confrontations directes) et prédis les résultats avec une logique ANTI-TRAP ÉQUILIBRÉE et MATHÉMATIQUEMENT RIGOUREUSE.
+
+## DONNÉES À TA DISPOSITION
+
+Pour chaque match, tu reçois :
+1. **Cotes 1X2** — pour calculer les probabilités implicites
+2. **Classement** — position, points, buts marqués/encaissés de chaque équipe
+3. **Résultats récents** — les 5 derniers matchs de chaque équipe (V=Victoire, D=Défaite, N=Nul)
+4. **Confrontations directes (H2H)** — les résultats historiques entre les deux équipes
 
 ## MÉTHODE D'ANALYSE — Algorithme de Précision
 
 ### Étape 1 : Probabilités implicites normalisées
 P(résultat) = (1/cote) / Σ(1/cote_i)
 
-### Étape 2 : Analyse du système tactique
-À partir des cotes et probabilités, détermine :
-- Le SYSTÈME DE JEU probable de chaque équipe (offensif/défensif/équilibré)
-- Si une cote dom très basse (<1.40) → système offensif dominant
-- Si cotes serrées → systèmes défensifs/prudents
-- Si cote nul basse (<3.0) → deux équipes défensives
+### Étape 2 : Analyse contextuelle AVANCÉE
+Utilise TOUTES les données fournies :
+- **Classement** : Écart de points, différence de buts, position
+- **Forme récente** : Série en cours (VVV = très bon, DDD = crise), buts marqués/encaissés
+- **Attaque/Défense** : Buts marqués par match = puissance offensive; buts encaissés = solidité défensive
+- **Confrontations directes** : Tendance historique entre les deux équipes (domination, équilibre)
+- **Momentum** : Équipe en hausse ou en baisse basé sur les derniers résultats
 
-### Étape 3 : Détection de piège (Anti-Trap)
-Si la probabilité du score favori > 15% ET (prob_outsider + prob_nul) > 35% → bascule sur alternative.
+### Étape 3 : Analyse du système tactique
+À partir des données complètes, détermine :
+- Le SYSTÈME DE JEU probable de chaque équipe (offensif/défensif/équilibré)
+- Si une équipe marque beaucoup mais encaisse peu → système complet
+- Si les deux équipes encaissent beaucoup → match ouvert
+- Si le classement montre un grand écart → favori logique
+
+### Étape 4 : Détection de piège (Anti-Trap)
+ALERTES de piège quand :
+- Le favori au classement a une cote élevée (bookmaker doute)
+- La forme récente contredit le classement (ex: leader sur 3 défaites)
+- Les confrontations directes montrent un outsider qui domine
+- Les stats de buts suggèrent un score différent des cotes
+
+Si plusieurs alertes → bascule sur l'alternative.
 Sinon → GARDE LE FAVORI.
 
-### Étape 4 : Score exact basé sur les tendances
+### Étape 5 : Score exact basé sur les tendances
+- Analyse les buts marqués/encaissés récents pour estimer le total de buts
+- Utilise les confrontations directes pour le score exact
 - Scores fréquents en virtuel : 1-0, 0-1, 1-1, 2-1, 1-2, 2-0, 0-2, 0-0, 2-2, 3-1, 3-0, 3-2
-- Le score DOIT être cohérent avec le système tactique identifié
-- Système offensif → plus de buts attendus
-- Système défensif → moins de buts, scores serrés
+- Le score DOIT être cohérent avec toutes les données analysées
 
-### Étape 5 : Analyse complète des tendances
+### Étape 6 : Analyse complète des tendances
 Pour chaque match, évalue :
-- Dynamique offensive/défensive de chaque équipe
+- Dynamique offensive/défensive basée sur les RÉSULTATS (pas juste les cotes)
 - Probabilité de but en 1ère mi-temps
 - Probabilité que les deux marquent
-- Tendance Over/Under
-- Risque de piège
+- Tendance Over/Under basée sur les buts récents
+- Risque de piège basé sur les données contextuelles
 
 ## FORMAT DE RÉPONSE JSON (pour CHAQUE match)
 {
   "scoreHome": integer,
   "scoreAway": integer,
   "confidence": number 0-1,
-  "reasoning": string (4-5 phrases détaillées: système tactique, piège ou non, dynamique, justification du score),
+  "reasoning": string (5-7 phrases DÉTAILLÉES utilisant les données: classement, forme récente, H2H, pourquoi ce score, piège ou non),
   "isAntiTrap": boolean,
   "firstHalfGoal": boolean,
-  "tendency": string (ex: "Système offensif domicile, défense fragile extérieur — match ouvert"),
+  "tendency": string (ex: "1er au classement, 4V en forme, attaque forte — mais H2H défavorable"),
   "dangerLevel": "safe" | "moderate" | "trap",
   "topScores": [{"score": "2-1", "probability": 0.18}, ...] (3 scores les plus probables),
   "bttsProb": number 0-1,
@@ -71,67 +105,291 @@ Pour chaque match, évalue :
 
 Retourne un tableau JSON. RIEN D'AUTRE que le JSON.`;
 
-    const userPrompt = matches
-      .map((m: any, i: number) =>
-        `Match ${i + 1}: ${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away} | Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}`
-      )
-      .join("\n");
+// ─── GROQ PROVIDER ───────────────────────────────────────────────────────────
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-      }),
-    });
+async function callGroq(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
+  const url = "https://api.groq.com/openai/v1/chat/completions";
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "Trop de requêtes, réessayez dans quelques secondes." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "Crédits épuisés. Rechargez votre compte." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const t = await response.text();
-      console.error("AI gateway error:", response.status, t);
-      return new Response(JSON.stringify({ error: "Erreur du service IA" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+  console.log(`[analyze-match] 🟢 Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
+
+  const maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const delay = attempt === 1 ? 3000 : 8000;
+      console.log(`[analyze-match] Groq retry ${attempt}/${maxRetries} after ${delay}ms...`);
+      await sleep(delay);
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || "[]";
-
-    let jsonStr = content;
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) jsonStr = jsonMatch[1];
-    jsonStr = jsonStr.trim();
-
-    let predictions;
     try {
-      predictions = JSON.parse(jsonStr);
-      if (!Array.isArray(predictions)) predictions = [predictions];
-    } catch {
-      console.error("Failed to parse AI response:", jsonStr);
-      predictions = [];
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.7,
+          max_tokens: 8192,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || "";
+        console.log(`[analyze-match] Groq success in ${response.headers.get("x-ratelimit-remaining-requests") || "?"} remaining requests`);
+        return { content, provider: "groq" };
+      }
+
+      // Handle errors
+      const errorBody = await response.text();
+      const status = response.status;
+
+      if (status === 429) {
+        console.error(`[analyze-match] Groq 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
+        if (attempt === maxRetries) {
+          console.error("[analyze-match] Groq exhausted, will fallback to Gemini");
+          return null; // Signal to try next provider
+        }
+        continue;
+      }
+
+      // Non-429 error from Groq
+      console.error(`[analyze-match] Groq error ${status}: ${errorBody.substring(0, 200)}`);
+      return null; // Try fallback
+    } catch (err: any) {
+      console.error(`[analyze-match] Groq fetch error (attempt ${attempt + 1}): ${err.message}`);
+      if (attempt === maxRetries) return null;
+    }
+  }
+
+  return null;
+}
+
+// ─── GOOGLE GEMINI PROVIDER (fallback) ────────────────────────────────────────
+
+async function callGemini(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+  console.log(`[analyze-match] 🔵 Gemini fallback | Key: ${maskKey(apiKey)} | Model: ${model}`);
+
+  const maxRetries = 1; // Only 1 retry for fallback
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (attempt > 0) {
+      const delay = 3000;
+      console.log(`[analyze-match] Gemini retry ${attempt}/${maxRetries} after ${delay}ms...`);
+      await sleep(delay);
     }
 
-    return new Response(JSON.stringify({ predictions }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8192,
+            responseMimeType: "application/json",
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+        console.log("[analyze-match] Gemini fallback success");
+        return { content, provider: "gemini" };
+      }
+
+      const errorBody = await response.text();
+      const status = response.status;
+
+      if (status === 429) {
+        console.error(`[analyze-match] Gemini 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
+        if (attempt === maxRetries) return null;
+        continue;
+      }
+
+      console.error(`[analyze-match] Gemini error ${status}: ${errorBody.substring(0, 200)}`);
+      return null;
+    } catch (err: any) {
+      console.error(`[analyze-match] Gemini fetch error: ${err.message}`);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// ─── PARSE AI RESPONSE ────────────────────────────────────────────────────────
+
+function parsePredictions(rawContent: string): any[] {
+  if (!rawContent) return [];
+
+  let jsonStr = rawContent;
+
+  // Groq with json_object mode might wrap in an object: {"": [...] or {"matches": [...]}
+  try {
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      // Look for the array inside the object
+      for (const key of Object.keys(parsed)) {
+        if (Array.isArray(parsed[key])) {
+          jsonStr = JSON.stringify(parsed[key]);
+          break;
+        }
+      }
+    }
+  } catch {
+    // Not JSON yet, continue to code block extraction
+  }
+
+  // Extract from code block if present
+  const codeMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeMatch) jsonStr = codeMatch[1];
+  jsonStr = jsonStr.trim();
+
+  try {
+    let predictions = JSON.parse(jsonStr);
+    if (!Array.isArray(predictions)) predictions = [predictions];
+    return predictions;
+  } catch {
+    console.error("[analyze-match] Failed to parse response:", jsonStr.substring(0, 200));
+    return [];
+  }
+}
+
+// ─── MAIN HANDLER ────────────────────────────────────────────────────────────
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+
+  const startTime = Date.now();
+
+  try {
+    // --- Authorization: require valid apikey header ---
+    const apiKey = req.headers.get("apikey");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: "apikey header required" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { matches } = await req.json();
+    if (!matches || !Array.isArray(matches) || matches.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "matches array required and non-empty" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[analyze-match] Processing ${matches.length} match(es)...`);
+
+    // --- Build enriched user prompt with ranking, results, H2H ---
+    const userPrompt = matches
+      .map((m: any, i: number) => {
+        let block = `--- MATCH ${i + 1} ---\n`;
+        block += `${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away}\n`;
+        block += `Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}\n`;
+
+        // Classement
+        if (m.rankingHome) {
+          const r = m.rankingHome;
+          block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        }
+        if (m.rankingAway) {
+          const r = m.rankingAway;
+          block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        }
+
+        // Résultats récents domicile
+        if (m.recentHome?.length > 0) {
+          block += `\nForme récente ${m.home}:\n`;
+          for (const res of m.recentHome) {
+            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+          }
+        }
+
+        // Résultats récents extérieur
+        if (m.recentAway?.length > 0) {
+          block += `\nForme récente ${m.away}:\n`;
+          for (const res of m.recentAway) {
+            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+          }
+        }
+
+        // Confrontations directes
+        if (m.headToHead?.length > 0) {
+          block += `\nConfrontations directes:\n`;
+          for (const h of m.headToHead) {
+            block += `  ${h.home} ${h.scoreHome}-${h.scoreAway} ${h.away}\n`;
+          }
+        }
+
+        return block;
+      })
+      .join("\n\n");
+
+    // --- Provider keys ---
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
+    const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_KEY");
+    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") || "llama-3.3-70b-versatile";
+    const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
+
+    let result: { content: string; provider: string } | null = null;
+    const errors: string[] = [];
+
+    // ── Provider 1: Groq (primary) ──
+    if (GROQ_API_KEY) {
+      result = await callGroq(GROQ_API_KEY, GROQ_MODEL, SYSTEM_PROMPT, userPrompt);
+      if (!result) errors.push("Groq failed");
+    } else {
+      console.log("[analyze-match] GROQ_API_KEY not set, skipping Groq");
+      errors.push("GROQ_API_KEY not configured");
+    }
+
+    // ── Provider 2: Google Gemini (fallback) ──
+    if (!result && GOOGLE_AI_KEY) {
+      console.log("[analyze-match] Falling back to Google Gemini...");
+      result = await callGemini(GOOGLE_AI_KEY, GEMINI_MODEL, SYSTEM_PROMPT, userPrompt);
+      if (!result) errors.push("Gemini failed");
+    } else if (!result && !GOOGLE_AI_KEY) {
+      console.log("[analyze-match] GOOGLE_AI_KEY not set, no fallback available");
+      errors.push("GOOGLE_AI_KEY not configured");
+    }
+
+    // ── All providers failed ──
+    if (!result) {
+      console.error("[analyze-match] All AI providers failed:", errors.join(" | "));
+      return new Response(
+        JSON.stringify({
+          error: "Tous les fournisseurs IA sont indisponibles. L'analyse mathématique sera utilisée.",
+          providers: errors,
+        }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── Parse response ──
+    const predictions = parsePredictions(result.content);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[analyze-match] ✅ Success via ${result.provider}: ${predictions.length} prediction(s) in ${elapsed}ms`);
+
+    return new Response(
+      JSON.stringify({ predictions, elapsed, provider: result.provider }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (e: any) {
-    console.error("analyze-match error:", e);
+    console.error("[analyze-match] Unhandled error:", e.message, e.stack);
     return new Response(
       JSON.stringify({ error: e.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

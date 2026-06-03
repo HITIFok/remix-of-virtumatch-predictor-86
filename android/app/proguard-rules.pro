@@ -73,5 +73,6 @@
     @android.webkit.JavascriptInterface <methods>;
 }
 
-# R8 full mode
--keep class com.hitif.virutelbet261.** { *; }
+# R8: Obfuscation active - ne garder que les classes necessaires
+# NE PAS garder toutes les classes de l'app (desactive l'obfuscation)
+-keep public class com.hitif.virutelbet261.MainActivity { *; }

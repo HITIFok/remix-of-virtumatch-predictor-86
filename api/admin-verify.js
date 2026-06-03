@@ -1,0 +1,95 @@
+// Vercel Serverless Function - Verify Admin Token (ESM)
+// Vérifie un token HMAC-SHA256 signé par admin-login
+// CORS dynamique (autorise web + APK, bloque les autres sites)
+
+import crypto from 'crypto';
+
+const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+
+// CORS dynamique : whitelist des origines autorisées
+const ALLOWED_ORIGINS = [
+  'https://virtual-match-hitifproject.vercel.app',
+  'https://localhost',
+  'capacitor://localhost',
+  'http://localhost',
+  'http://localhost:5173',
+  'http://localhost:4173',
+];
+
+function setCorsHeaders(req, res) {
+  const origin = req.headers.origin || '';
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
+// Vérification timing-safe du token
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return { valid: false };
+
+  const parts = token.split('.');
+  if (parts.length !== 2) return { valid: false };
+
+  const [payload, signature] = parts;
+
+  let timestamp;
+  try {
+    timestamp = parseInt(Buffer.from(payload, 'base64url').toString(), 10);
+  } catch {
+    return { valid: false };
+  }
+
+  if (isNaN(timestamp)) return { valid: false };
+
+  // Vérifier l'expiration
+  if (Date.now() - timestamp > SESSION_DURATION_MS) return { valid: false };
+
+  // Recalculer la signature
+  const expected = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(payload)
+    .digest('base64url');
+
+  // Comparaison timing-safe
+  try {
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length) return { valid: false };
+    if (!crypto.timingSafeEqual(sigBuf, expBuf)) return { valid: false };
+  } catch {
+    return { valid: false };
+  }
+
+  return { valid: true, timestamp };
+}
+
+export default async function handler(req, res) {
+  setCorsHeaders(req, res);
+
+  if (req.method === 'OPTIONS') {
+    return res.status(204).end('');
+  }
+
+  if (req.method !== 'POST') {
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  }
+
+  if (!ADMIN_TOKEN_SECRET) {
+    console.error('[admin-verify] ADMIN_TOKEN_SECRET manquant');
+    return res.status(500).json({ success: false, error: 'Server not configured' });
+  }
+
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  if (typeof req.body === 'string' && req.body.length > 0) {
+    try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
+  }
+
+  const { token } = body;
+  const result = verifyToken(token);
+
+  return res.status(200).json({ valid: result.valid });
+};

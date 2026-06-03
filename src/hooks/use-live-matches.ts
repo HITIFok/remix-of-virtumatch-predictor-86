@@ -27,84 +27,30 @@ interface ScrapedDataRaw {
   created_at: string;
 }
 
-// Supabase Edge Function URL (contourne CORS) - Configuré via variables d'environnement
-const FETCH_LIVE_URL = `${import.meta.env.VITE_SUPABASE_URL || ''}/functions/v1/fetch-live`;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-
-// Timeout de la requête fetch (10 secondes)
-const FETCH_TIMEOUT_MS = 10_000;
-
-// Délai avant retry (2 secondes)
-const RETRY_DELAY_MS = 2_000;
-
 /** Messages d'erreur conviviaux en français */
 function getFriendlyError(leagueName: string): string {
   return `Les données en direct pour ${leagueName} ne sont pas disponibles pour le moment. Veuillez réessayer dans quelques instants.`;
 }
 
-/**
- * Requête fetch avec timeout et logique de retry.
- * En cas d'échec, retente une fois après RETRY_DELAY_MS.
- */
-async function fetchWithRetry(
-  url: string,
-  options: RequestInit,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(url, { ...options, signal: controller.signal });
-    clearTimeout(timeoutId);
-    return res;
-  } catch (firstErr) {
-    clearTimeout(timeoutId);
-    console.warn("[fetchWithRetry] Première tentative échouée, retry dans 2s…", firstErr);
-
-    // Attendre avant le retry
-    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-
-    // Seconde tentative
-    const retryController = new AbortController();
-    const retryTimeoutId = setTimeout(() => retryController.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const res = await fetch(url, { ...options, signal: retryController.signal });
-      clearTimeout(retryTimeoutId);
-      return res;
-    } catch (retryErr) {
-      clearTimeout(retryTimeoutId);
-      console.error("[fetchWithRetry] Retry échoué :", retryErr);
-      throw retryErr;
-    }
-  }
-}
-
-// Fetch depuis l'API via Supabase Edge Function
+// Fetch depuis l'API via Supabase Edge Function (utilise supabase.functions.invoke pour l'auth auto)
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
   results: MatchResult[];
   ranking: RankingEntry[];
 } | null> {
   try {
-    const res = await fetchWithRetry(
-      `${FETCH_LIVE_URL}?leagueId=${leagueId}`,
-      {
-        headers: {
-          "Accept": "application/json",
-          "apikey": SUPABASE_ANON_KEY,
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        },
-      },
-    );
+    // supabase.functions.invoke() gère automatiquement apikey + Authorization + x-device-id
+    const { data, error: fnError } = await supabase.functions.invoke('fetch-live', {
+      body: { leagueId },
+    });
 
-    if (!res.ok) {
-      console.warn(`[fetchFromAPI] API a retourné ${res.status} pour ${leagueName}`);
+    if (fnError) {
+      console.warn(`[fetchFromAPI] Edge Function error ${fnError.code} pour ${leagueName}:`, fnError.message);
       return null;
     }
 
-    const data = await res.json();
-    if (!data.success) {
-      console.warn(`[fetchFromAPI] Erreur API pour ${leagueName}:`, data.error);
+    if (!data || !data.success) {
+      console.warn(`[fetchFromAPI] Erreur API pour ${leagueName}:`, data?.error);
       return null;
     }
 
@@ -115,7 +61,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         away: m.away || "",
         round: m.round,
         league: leagueName,
-        status: m.status || "upcoming", // live, betting, upcoming
+        status: m.status || "upcoming",
         kickoff: m.kickoff || "",
         oddHome: m.oddHome || 0,
         oddDraw: m.oddDraw || 0,
