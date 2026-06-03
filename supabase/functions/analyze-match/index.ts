@@ -2,9 +2,10 @@
 // AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
 // NO imports — uses Deno.serve() + native fetch
 //
-// v14: Switched to Groq as primary AI provider (llama-3.3-70b-versatile)
-//      with Google Gemini as automatic fallback.
-//      Each provider has its own retry with exponential backoff.
+// v15: Added intelligent chunking to stay within Groq TPM limits.
+//      Matches are split into chunks of CHUNK_SIZE (default 3).
+//      If 413 (request too large), automatically retry with smaller chunks.
+//      Results are merged across all chunks.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
@@ -41,31 +42,17 @@ Tu dois identifier les situations où le marché surestime ou sous-estime une é
 Pour chaque rencontre, tu reçois :
 
 ## 1. Cotes 1X2
-
 * Victoire domicile
 * Match nul
 * Victoire extérieur
 
 ## 2. Classement
-
-* Position
-* Points
-* Buts marqués
-* Buts encaissés
-* Différence de buts
+* Position, Points, Buts marqués, Buts encaissés, Différence de buts
 
 ## 3. Forme récente
-
-5 derniers matchs :
-
-* Victoire (V)
-* Nul (N)
-* Défaite (D)
-
-avec les scores associés.
+5 derniers matchs : Victoire (V), Nul (N), Défaite (D) avec scores.
 
 ## 4. Historique H2H
-
 Confrontations directes entre les deux équipes.
 
 ---
@@ -73,264 +60,128 @@ Confrontations directes entre les deux équipes.
 # ALGORITHME D'ANALYSE
 
 ## ÉTAPE 1 — Probabilités implicites
-
-Calculer :
-
-P = (1/cote) / Σ(1/cote)
-
-Produire :
-
-* P(Home)
-* P(Draw)
-* P(Away)
-
-Normalisées.
-
----
+P = (1/cote) / Σ(1/cote) → P(Home), P(Draw), P(Away) normalisées.
 
 ## ÉTAPE 2 — Force réelle des équipes
-
-Calculer :
-
-### Force offensive
-
-Buts marqués / match
-
-### Force défensive
-
-Buts encaissés / match
-
-### Différence de buts
-
-(BM - BE)
-
-### Rendement global
-
-(Points obtenus / Points maximum possibles)
-
----
+Force offensive = BM/match, Force défensive = BE/match, Différence buts, Rendement = pts/pts max.
 
 ## ÉTAPE 3 — Forme récente pondérée
-
-Attribuer :
-
-* Victoire = 3 points
-* Nul = 1 point
-* Défaite = 0 point
-
-Pondération :
-
-Match le plus récent : x 1.5
-Deuxième : x 1.3
-Troisième : x 1.2
-Quatrième : x 1.1
-Cinquième : x 1.0
-
-Déterminer :
-
-* Momentum positif
-* Momentum neutre
-* Momentum négatif
-
----
+V=3, N=1, D=0. Pondération: récent×1.5, ×1.3, ×1.2, ×1.1, ×1.0. → Momentum.
 
 ## ÉTAPE 4 — Analyse H2H
-
-Évaluer :
-
-* domination domicile
-* domination extérieur
-* équilibre
-
-Importance :
-
-* faible si H2H anciens
-* moyenne si résultats mixtes
-* forte si tendance répétée
-
----
+domination domicile/extérieur/équilibre. Importance: faible/moyenne/forte.
 
 ## ÉTAPE 5 — Classification tactique
-
-Déterminer automatiquement :
-
-### OFFENSIF
-
-Si BM > 1.8 et BE > 1.0
-
-### DÉFENSIF
-
-Si BM < 1.4 et BE < 1.0
-
-### ÉQUILIBRÉ
-
-Tous les autres cas.
-
----
+OFFENSIF si BM>1.8 et BE>1.0, DÉFENSIF si BM<1.4 et BE<1.0, sinon ÉQUILIBRÉ.
 
 ## ÉTAPE 6 — Détection avancée des pièges
-
-Déclencher une ALERTE lorsque :
-
-### Piège Type A
-Favori au classement MAIS forme récente faible.
-
-### Piège Type B
-Favori des cotes MAIS attaque moins performante.
-
-### Piège Type C
-Favori des cotes MAIS H2H défavorable.
-
-### Piège Type D
-Écart de classement important MAIS écart de buts faible.
-
-### Piège Type E
-Cotes fortement orientées MAIS statistiques équilibrées.
+Type A: Favori classement MAIS forme faible.
+Type B: Favori cotes MAIS attaque faible.
+Type C: Favori cotes MAIS H2H défavorable.
+Type D: Écart classement important MAIS écart buts faible.
+Type E: Cotes orientées MAIS stats équilibrées.
 
 ---
 
 # LOGIQUE ANTI-TRAP
-
-Nombre d'alertes :
-
-0 → SAFE
-1 → SAFE
-2 → MODERATE
-3+ → TRAP
-
-Règle :
-
-* 0 ou 1 alerte → suivre le favori
-* 2 alertes → réduire la confiance
-* 3 alertes ou plus → envisager le nul ou l'outsider
-
-Ne jamais basculer automatiquement.
-Toujours justifier par les statistiques.
-
----
+0-1 alertes → SAFE (suivre favori)
+2 alertes → MODERATE (réduire confiance)
+3+ alertes → TRAP (envisager nul/outsider)
 
 # ESTIMATION DES BUTS
-
-Calculer :
-
-Expected Goals simplifiés :
-
-xG Home = (Attaque Home + Défense Away)/2
-xG Away = (Attaque Away + Défense Home)/2
-
-Ajuster avec :
-
-* forme récente
-* H2H
-* classement
-
-Limiter :
-
-0 ≤ buts ≤ 5
-
----
+xG Home = (Attaque Home + Défense Away)/2, xG Away = (Attaque Away + Défense Home)/2. Ajuster forme/H2H/classement. 0≤buts≤5.
 
 # MARCHÉS COMPLÉMENTAIRES
-
-Estimer :
-
-## BTTS
-Both Teams To Score
-
-## Over 2.5
-Plus de 2.5 buts
-
-## But en première période
-Oui / Non
-
-## Score mi-temps
-Le plus probable.
-
----
+Estimer: BTTS, Over 2.5, But 1ère période (O/N), Score mi-temps.
 
 # NIVEAU DE CONFIANCE
-
-Calcul :
-
-Base = probabilité implicite maximale
-
-Ajustements :
-
-+0.05 si forme cohérente
-+0.05 si classement cohérent
-+0.05 si H2H cohérent
--0.05 par alerte piège
-
-Bornes :
-
-0.50 à 0.95
-
----
+Base = prob implicite max. +0.05 si forme/classement/H2H cohérent. -0.05 par alerte. Bornes: 0.50-0.95.
 
 # RAISONNEMENT OBLIGATOIRE
-
-Le champ reasoning doit :
-
-* utiliser les cotes
-* utiliser le classement
-* utiliser la forme récente
-* utiliser les H2H
-* expliquer le score proposé
-* expliquer les alertes détectées
-* justifier le niveau de confiance
-
-Minimum : 7 phrases.
-Maximum : 12 phrases.
+7-12 phrases: utiliser cotes, classement, forme, H2H, expliquer score, alertes, confiance.
 
 ---
 
 # FORMAT DE SORTIE
+Retourner EXCLUSIVEMENT un objet JSON valide contenant un champ "predictions" avec un tableau.
+Aucun texte, aucun markdown hors JSON.
 
-Retourner EXCLUSIVEMENT un tableau JSON valide.
-Aucun texte. Aucune explication. Aucun markdown.
+{
+  "predictions": [
+    {
+      "scoreHome": 2,
+      "scoreAway": 1,
+      "confidence": 0.82,
+      "reasoning": "...",
+      "isAntiTrap": false,
+      "firstHalfGoal": true,
+      "tendency": "...",
+      "dangerLevel": "safe",
+      "topScores": [
+        { "score": "2-1", "probability": 0.22 },
+        { "score": "1-0", "probability": 0.18 }
+      ],
+      "bttsProb": 0.61,
+      "over25Prob": 0.58,
+      "firstHalfScore": "1-0",
+      "systemHome": "offensif",
+      "systemAway": "équilibré",
+      "possessionHome": 57,
+      "possessionAway": 43
+    }
+  ]
+}
 
-Structure :
+IMPORTANT: JSON valide, possessionHome+possessionAway=100, topScores compatibles score final, valeurs calculées pas inventées.`;
 
-[
-  {
-    "scoreHome": 2,
-    "scoreAway": 1,
-    "confidence": 0.82,
-    "reasoning": "...",
-    "isAntiTrap": false,
-    "firstHalfGoal": true,
-    "tendency": "...",
-    "dangerLevel": "safe",
-    "topScores": [
-      { "score": "2-1", "probability": 0.22 },
-      { "score": "1-0", "probability": 0.18 },
-      { "score": "2-0", "probability": 0.14 }
-    ],
-    "bttsProb": 0.61,
-    "over25Prob": 0.58,
-    "firstHalfScore": "1-0",
-    "systemHome": "offensif",
-    "systemAway": "équilibré",
-    "possessionHome": 57,
-    "possessionAway": 43
-  }
-]
+// ─── BUILD USER PROMPT FOR A CHUNK ───────────────────────────────────────────
 
-IMPORTANT :
+function buildUserPrompt(matches: any[]): string {
+  return matches
+    .map((m: any, i: number) => {
+      let block = `--- MATCH ${i + 1} ---\n`;
+      block += `${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away}\n`;
+      block += `Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}\n`;
 
-* JSON strictement valide.
-* Pas de commentaires.
-* Pas de texte hors JSON.
-* Les probabilités doivent être cohérentes.
-* La somme possessionHome + possessionAway = 100.
-* Les topScores doivent être compatibles avec le score final prédit.
-* Les valeurs doivent être calculées à partir des données fournies et non inventées.`;
+      if (m.rankingHome) {
+        const r = m.rankingHome;
+        block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+      }
+      if (m.rankingAway) {
+        const r = m.rankingAway;
+        block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+      }
+
+      if (m.recentHome?.length > 0) {
+        block += `\nForme récente ${m.home}:\n`;
+        for (const res of m.recentHome) {
+          block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+        }
+      }
+
+      if (m.recentAway?.length > 0) {
+        block += `\nForme récente ${m.away}:\n`;
+        for (const res of m.recentAway) {
+          block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
+        }
+      }
+
+      if (m.headToHead?.length > 0) {
+        block += `\nConfrontations directes:\n`;
+        for (const h of m.headToHead) {
+          block += `  ${h.home} ${h.scoreHome}-${h.scoreAway} ${h.away}\n`;
+        }
+      }
+
+      return block;
+    })
+    .join("\n\n");
+}
 
 // ─── GROQ PROVIDER ───────────────────────────────────────────────────────────
 
 async function callGroq(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
   const url = "https://api.groq.com/openai/v1/chat/completions";
-
   console.log(`[analyze-match] 🟢 Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
 
   const maxRetries = 2;
@@ -355,7 +206,7 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
             { role: "user", content: userPrompt },
           ],
           temperature: 0.7,
-          max_tokens: 8192,
+          max_tokens: 4096,
           response_format: { type: "json_object" },
         }),
       });
@@ -367,22 +218,27 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
         return { content, provider: "groq" };
       }
 
-      // Handle errors
       const errorBody = await response.text();
       const status = response.status;
+
+      // 413 = request too large (TPM exceeded) → signal caller to split further
+      if (status === 413) {
+        console.error(`[analyze-match] Groq 413 (request too large for ${model}): ${errorBody.substring(0, 200)}`);
+        // Don't retry 413 — return special marker so caller can split chunks
+        return null;
+      }
 
       if (status === 429) {
         console.error(`[analyze-match] Groq 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
         if (attempt === maxRetries) {
           console.error("[analyze-match] Groq exhausted, will fallback to Gemini");
-          return null; // Signal to try next provider
+          return null;
         }
         continue;
       }
 
-      // Non-429 error from Groq
       console.error(`[analyze-match] Groq error ${status}: ${errorBody.substring(0, 200)}`);
-      return null; // Try fallback
+      return null;
     } catch (err: any) {
       console.error(`[analyze-match] Groq fetch error (attempt ${attempt + 1}): ${err.message}`);
       if (attempt === maxRetries) return null;
@@ -396,15 +252,13 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
 
 async function callGemini(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-
   console.log(`[analyze-match] 🔵 Gemini fallback | Key: ${maskKey(apiKey)} | Model: ${model}`);
 
-  const maxRetries = 1; // Only 1 retry for fallback
+  const maxRetries = 1;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
-      const delay = 3000;
-      console.log(`[analyze-match] Gemini retry ${attempt}/${maxRetries} after ${delay}ms...`);
-      await sleep(delay);
+      console.log(`[analyze-match] Gemini retry ${attempt}/${maxRetries} after 3000ms...`);
+      await sleep(3000);
     }
 
     try {
@@ -416,7 +270,7 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 8192,
+            maxOutputTokens: 4096,
             responseMimeType: "application/json",
           },
         }),
@@ -438,6 +292,12 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
         continue;
       }
 
+      // 400 = likely request too large for Gemini too
+      if (status === 400) {
+        console.error(`[analyze-match] Gemini 400 (request too large?): ${errorBody.substring(0, 200)}`);
+        return null;
+      }
+
       console.error(`[analyze-match] Gemini error ${status}: ${errorBody.substring(0, 200)}`);
       return null;
     } catch (err: any) {
@@ -456,20 +316,20 @@ function parsePredictions(rawContent: string): any[] {
 
   let jsonStr = rawContent;
 
-  // Groq with json_object mode might wrap in an object: {"": [...] or {"matches": [...]}
+  // Try direct parse first
   try {
     const parsed = JSON.parse(jsonStr);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      // Look for the array inside the object
+      // Look for the predictions array inside the object
       for (const key of Object.keys(parsed)) {
         if (Array.isArray(parsed[key])) {
-          jsonStr = JSON.stringify(parsed[key]);
-          break;
+          return parsed[key];
         }
       }
     }
+    if (Array.isArray(parsed)) return parsed;
   } catch {
-    // Not JSON yet, continue to code block extraction
+    // Not valid JSON yet
   }
 
   // Extract from code block if present
@@ -479,12 +339,117 @@ function parsePredictions(rawContent: string): any[] {
 
   try {
     let predictions = JSON.parse(jsonStr);
-    if (!Array.isArray(predictions)) predictions = [predictions];
+    if (!Array.isArray(predictions)) {
+      // Try to find array inside object
+      if (predictions && typeof predictions === "object") {
+        for (const key of Object.keys(predictions)) {
+          if (Array.isArray(predictions[key])) {
+            return predictions[key];
+          }
+        }
+      }
+      predictions = [predictions];
+    }
     return predictions;
   } catch {
     console.error("[analyze-match] Failed to parse response:", jsonStr.substring(0, 200));
     return [];
   }
+}
+
+// ─── CHUNKED AI CALL: process matches in batches with auto-reduce on 413 ───
+
+interface ChunkResult {
+  predictions: any[];
+  provider: string;
+  chunks: number;
+}
+
+async function analyzeChunks(
+  matches: any[],
+  groqKey: string | undefined,
+  groqModel: string,
+  geminiKey: string | undefined,
+  geminiModel: string,
+): Promise<ChunkResult | null> {
+  // Start with chunk size from env or default
+  let chunkSize = parseInt(Deno.env.get("AI_CHUNK_SIZE") || "3", 10);
+  const minChunk = 1;
+
+  while (chunkSize >= minChunk) {
+    const chunks: any[][] = [];
+    for (let i = 0; i < matches.length; i += chunkSize) {
+      chunks.push(matches.slice(i, i + chunkSize));
+    }
+
+    console.log(`[analyze-match] Chunking ${matches.length} matches into ${chunks.length} chunk(s) of ${chunkSize} max`);
+
+    const allPredictions: any[] = [];
+    let lastProvider = "";
+    let failedChunks = 0;
+    const errors: string[] = [];
+
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunk = chunks[ci];
+      const userPrompt = buildUserPrompt(chunk);
+      let result: { content: string; provider: string } | null = null;
+
+      // Provider 1: Groq
+      if (groqKey && !result) {
+        result = await callGroq(groqKey, groqModel, SYSTEM_PROMPT, userPrompt);
+        if (!result) {
+          // Check if it was a 413 (request too large)
+          // We detect this by seeing if ALL providers failed for this chunk
+          // and the chunk size is > 1 → reduce and retry
+          errors.push(`Groq chunk ${ci + 1} failed`);
+        }
+      }
+
+      // Provider 2: Gemini
+      if (!result && geminiKey) {
+        console.log(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: falling back to Gemini...`);
+        result = await callGemini(geminiKey, geminiModel, SYSTEM_PROMPT, userPrompt);
+        if (!result) errors.push(`Gemini chunk ${ci + 1} failed`);
+      }
+
+      if (result) {
+        const preds = parsePredictions(result.content);
+        allPredictions.push(...preds);
+        lastProvider = result.provider;
+        console.log(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: ${preds.length} predictions via ${result.provider}`);
+      } else {
+        failedChunks++;
+        console.error(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: ALL providers failed`);
+      }
+
+      // Small delay between chunks to respect rate limits
+      if (ci < chunks.length - 1) {
+        await sleep(500);
+      }
+    }
+
+    if (allPredictions.length > 0) {
+      return { predictions: allPredictions, provider: lastProvider, chunks: chunks.length };
+    }
+
+    // All chunks failed — if chunkSize > minChunk, try smaller
+    if (chunkSize > minChunk && failedChunks === chunks.length) {
+      const newSize = Math.max(minChunk, Math.floor(chunkSize / 2));
+      console.log(`[analyze-match] All chunks failed at size ${chunkSize}, reducing to ${newSize}...`);
+      chunkSize = newSize;
+      await sleep(1000);
+      continue;
+    }
+
+    // Some chunks succeeded, some failed — return what we have
+    if (allPredictions.length > 0) {
+      return { predictions: allPredictions, provider: lastProvider, chunks: chunks.length };
+    }
+
+    break;
+  }
+
+  return null;
 }
 
 // ─── MAIN HANDLER ────────────────────────────────────────────────────────────
@@ -495,7 +460,7 @@ Deno.serve(async (req: Request) => {
   const startTime = Date.now();
 
   try {
-    // --- Authorization: require valid apikey header ---
+    // --- Authorization ---
     const apiKey = req.headers.get("apikey");
     if (!apiKey) {
       return new Response(
@@ -514,99 +479,43 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[analyze-match] Processing ${matches.length} match(es)...`);
 
-    // --- Build enriched user prompt with ranking, results, H2H ---
-    const userPrompt = matches
-      .map((m: any, i: number) => {
-        let block = `--- MATCH ${i + 1} ---\n`;
-        block += `${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away}\n`;
-        block += `Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}\n`;
-
-        // Classement
-        if (m.rankingHome) {
-          const r = m.rankingHome;
-          block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
-        }
-        if (m.rankingAway) {
-          const r = m.rankingAway;
-          block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
-        }
-
-        // Résultats récents domicile
-        if (m.recentHome?.length > 0) {
-          block += `\nForme récente ${m.home}:\n`;
-          for (const res of m.recentHome) {
-            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
-          }
-        }
-
-        // Résultats récents extérieur
-        if (m.recentAway?.length > 0) {
-          block += `\nForme récente ${m.away}:\n`;
-          for (const res of m.recentAway) {
-            block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
-          }
-        }
-
-        // Confrontations directes
-        if (m.headToHead?.length > 0) {
-          block += `\nConfrontations directes:\n`;
-          for (const h of m.headToHead) {
-            block += `  ${h.home} ${h.scoreHome}-${h.scoreAway} ${h.away}\n`;
-          }
-        }
-
-        return block;
-      })
-      .join("\n\n");
-
-    // --- Provider keys ---
+    // --- Provider config ---
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
     const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_KEY");
     const GROQ_MODEL = Deno.env.get("GROQ_MODEL") || "llama-3.3-70b-versatile";
     const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
 
-    let result: { content: string; provider: string } | null = null;
-    const errors: string[] = [];
-
-    // ── Provider 1: Groq (primary) ──
-    if (GROQ_API_KEY) {
-      result = await callGroq(GROQ_API_KEY, GROQ_MODEL, SYSTEM_PROMPT, userPrompt);
-      if (!result) errors.push("Groq failed");
-    } else {
-      console.log("[analyze-match] GROQ_API_KEY not set, skipping Groq");
-      errors.push("GROQ_API_KEY not configured");
+    if (!GROQ_API_KEY && !GOOGLE_AI_KEY) {
+      return new Response(
+        JSON.stringify({ error: "No AI provider configured. Set GROQ_API_KEY or GOOGLE_AI_KEY." }),
+        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // ── Provider 2: Google Gemini (fallback) ──
-    if (!result && GOOGLE_AI_KEY) {
-      console.log("[analyze-match] Falling back to Google Gemini...");
-      result = await callGemini(GOOGLE_AI_KEY, GEMINI_MODEL, SYSTEM_PROMPT, userPrompt);
-      if (!result) errors.push("Gemini failed");
-    } else if (!result && !GOOGLE_AI_KEY) {
-      console.log("[analyze-match] GOOGLE_AI_KEY not set, no fallback available");
-      errors.push("GOOGLE_AI_KEY not configured");
-    }
+    // --- Chunked analysis ---
+    const result = await analyzeChunks(matches, GROQ_API_KEY, GROQ_MODEL, GOOGLE_AI_KEY, GEMINI_MODEL);
 
-    // ── All providers failed ──
-    if (!result) {
-      console.error("[analyze-match] All AI providers failed:", errors.join(" | "));
+    if (!result || result.predictions.length === 0) {
+      console.error("[analyze-match] All AI providers failed for all chunks");
       return new Response(
         JSON.stringify({
           error: "Tous les fournisseurs IA sont indisponibles. L'analyse mathématique sera utilisée.",
-          providers: errors,
+          providers: ["Groq failed", "Gemini failed"],
         }),
         { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // ── Parse response ──
-    const predictions = parsePredictions(result.content);
-
     const elapsed = Date.now() - startTime;
-    console.log(`[analyze-match] ✅ Success via ${result.provider}: ${predictions.length} prediction(s) in ${elapsed}ms`);
+    console.log(`[analyze-match] ✅ Success via ${result.provider}: ${result.predictions.length} prediction(s) in ${elapsed}ms (${result.chunks} chunk(s))`);
 
     return new Response(
-      JSON.stringify({ predictions, elapsed, provider: result.provider }),
+      JSON.stringify({
+        predictions: result.predictions,
+        elapsed,
+        provider: result.provider,
+        chunks: result.chunks,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (e: any) {
