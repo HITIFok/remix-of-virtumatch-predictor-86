@@ -71,6 +71,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         scoreHome: m.scoreHome ?? null,
         scoreAway: m.scoreAway ?? null,
         stats: m.goals ? { goals: m.goals } : null,
+        predeterminedScore: m.predeterminedScore || null,
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
@@ -283,5 +284,6 @@ export function useLiveMatches() {
     refreshData,
     changeLeague,
     dataSource,
+    preloadedCount: matches.filter(m => m.status === "preloaded").length,
   };
 }

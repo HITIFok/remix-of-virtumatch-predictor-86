@@ -1,3 +1,9 @@
+export interface PredeterminedScore {
+  home: number;
+  away: number;
+  minute: number;
+}
+
 export interface ScrapedMatch {
   id?: number;
   league: string;
@@ -9,12 +15,13 @@ export interface ScrapedMatch {
   oddHome: number;
   oddDraw: number;
   oddAway: number;
-  status: string;
+  status: string; // "upcoming" | "betting" | "preloaded" | "live" | "finished"
   round?: number;
   minute?: number | null;
   scoreHome?: number | null;
   scoreAway?: number | null;
   stats?: Record<string, any>;
+  predeterminedScore?: PredeterminedScore | null;
 }
 
 export interface MatchResult {

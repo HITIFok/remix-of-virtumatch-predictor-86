@@ -13,7 +13,8 @@ import { RankingTable, ResultsList } from "@/components/LeagueData";
 import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap,
-  Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered
+  Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered,
+  Eye, EyeOff, ChevronDown, ChevronUp
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -146,15 +147,20 @@ function MatchCard({
   match,
   onPredict,
   predicting,
+  showScores,
 }: {
   match: ScrapedMatch;
   onPredict: (m: ScrapedMatch) => void;
   predicting: boolean;
+  showScores: boolean;
 }) {
   const hasPremium = isPremium();
 
+  const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
+
   const statusColor =
     match.status === "live" ? "text-success" :
+    match.status === "preloaded" ? "text-amber-400" :
     match.status === "finished" ? "text-muted-foreground" :
     match.status === "betting" ? "text-fire" :
     "text-ice";
@@ -172,23 +178,31 @@ function MatchCard({
 
   const statusLabel =
     match.status === "live" ? `🔴 LIVE ${match.minute ? `(${match.minute}')` : ""}` :
+    match.status === "preloaded" ? `🎯 RÉSULTAT CONNU (${match.predeterminedScore?.minute}')` :
     match.status === "finished" ? "✅ Terminé" :
     match.status === "betting" ? "🟢 Paris ouverts" :
     `⏰ ${formatKickoff(match.kickoff)}`;
 
   return (
     <div className="card-premium overflow-hidden scroll-item">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border/50">
+      <div className={`flex items-center justify-between px-3 py-2 border-b border-border/50 ${isPreloaded ? "bg-amber-500/10 border-amber-500/30" : ""}`}>
         <span className={`text-[10px] font-display tracking-wider ${statusColor}`}>
           {statusLabel}
         </span>
-        {match.stats?.system && (
-          <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-fire/30 text-fire">
-            {match.stats.system === "attack" ? <><Swords size={10} className="mr-0.5" />ATK</> :
-             match.stats.system === "defensive" ? <><Shield size={10} className="mr-0.5" />DEF</> :
-             <><Target size={10} className="mr-0.5" />{match.stats.system}</>}
-          </Badge>
-        )}
+        <div className="flex items-center gap-1">
+          {isPreloaded && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-400/40 text-amber-400 animate-pulse">
+              <Eye size={9} className="mr-0.5" />LEAK
+            </Badge>
+          )}
+          {match.stats?.system && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-fire/30 text-fire">
+              {match.stats.system === "attack" ? <><Swords size={10} className="mr-0.5" />ATK</> :
+               match.stats.system === "defensive" ? <><Shield size={10} className="mr-0.5" />DEF</> :
+               <><Target size={10} className="mr-0.5" />{match.stats.system}</>}
+            </Badge>
+          )}
+        </div>
       </div>
 
       <div className="px-4 py-3">
@@ -196,11 +210,15 @@ function MatchCard({
           <div className="flex-1">
             <p className="text-sm font-display font-bold text-foreground truncate">{match.home}</p>
           </div>
-          {match.status === "live" || match.status === "finished" ? (
+          {(match.status === "live" || match.status === "finished" || (isPreloaded && showScores)) ? (
             <div className="flex items-center gap-1 mx-3">
-              <span className="text-lg font-display font-black text-foreground">{match.scoreHome}</span>
-              <span className="text-xs text-muted-foreground">-</span>
-              <span className="text-lg font-display font-black text-foreground">{match.scoreAway}</span>
+              <span className={`text-lg font-display font-black ${isPreloaded ? "text-amber-400" : "text-foreground"}`}>
+                {isPreloaded ? match.predeterminedScore!.home : match.scoreHome}
+              </span>
+              <span className={`text-xs ${isPreloaded ? "text-amber-400/60" : "text-muted-foreground"}`}>-</span>
+              <span className={`text-lg font-display font-black ${isPreloaded ? "text-amber-400" : "text-foreground"}`}>
+                {isPreloaded ? match.predeterminedScore!.away : match.scoreAway}
+              </span>
             </div>
           ) : (
             <span className="text-xs text-muted-foreground font-display mx-3">VS</span>
@@ -232,13 +250,15 @@ function MatchCard({
         {hasPremium ? (
           <Button
             size="sm"
-            variant="fire"
-            className="w-full"
+            variant={isPreloaded ? "outline" : "fire"}
+            className={`w-full ${isPreloaded ? "border-amber-400/40 text-amber-400 hover:bg-amber-400/10" : ""}`}
             disabled={predicting || match.oddHome <= 0}
             onClick={() => onPredict(match)}
           >
             {predicting ? (
               <><Loader2 size={14} className="mr-1 animate-spin" /> ANALYSE...</>
+            ) : isPreloaded ? (
+              <><Eye size={14} className="mr-1" /> PRÉDIRE (RÉSULTAT CONNU)</>
             ) : (
               <><Zap size={14} className="mr-1" /> PRÉDIRE CE MATCH</>
             )}
@@ -270,6 +290,7 @@ export default function LiveMatches() {
     refreshData,
     changeLeague,
     dataSource,
+    preloadedCount,
   } = useLiveMatches();
 
   const { savePrediction } = usePredictions();
@@ -278,6 +299,7 @@ export default function LiveMatches() {
   const [batchPredicting, setBatchPredicting] = useState(false);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
+  const [showScores, setShowScores] = useState(true); // Toggle for preloaded scores visibility
 
   // Cache IA : éviter d'appeler Google AI pour le même match (cotes identiques)
   const aiCache = useRef<Map<string, AIPrediction>>(new Map());
@@ -341,12 +363,40 @@ export default function LiveMatches() {
     };
     const teamStatsMap = buildTeamStatsMap(ranking);
     const historicalResults = prepareHistoricalResults(results);
-    const result = analyzeMatch(matchInput, aiPrediction, teamStatsMap, historicalResults);
+
+    // If predetermined score is available, use it directly as "AI prediction"
+    let effectiveAiPrediction = aiPrediction;
+    if (!aiPrediction && match.predeterminedScore) {
+      const ps = match.predeterminedScore;
+      const winner = ps.home > ps.away ? "1" : ps.home < ps.away ? "2" : "X";
+      const totalGoals = ps.home + ps.away;
+      const isDraw = ps.home === ps.away;
+      effectiveAiPrediction = {
+        scoreHome: ps.home,
+        scoreAway: ps.away,
+        confidence: 0.95, // Near-certain since it's the actual result
+        reasoning: `Résultat prédéterminé via playout API. Score final: ${ps.home}-${ps.away} à la ${ps.minute}e minute. Aucune analyse IA nécessaire — résultat obtenu directement depuis la source.`,
+        isAntiTrap: false,
+        firstHalfGoal: totalGoals > 0,
+        tendency: winner === "1" ? "home" : winner === "2" ? "away" : "draw",
+        dangerLevel: "safe",
+        topScores: [{ score: `${ps.home}-${ps.away}`, probability: 0.95 }],
+        bttsProb: ps.home > 0 && ps.away > 0 ? 0.90 : 0.10,
+        over25Prob: totalGoals > 2 ? 0.85 : 0.15,
+        firstHalfScore: `${Math.max(0, Math.floor(ps.home / 2))}-${Math.max(0, Math.floor(ps.away / 2))}`,
+        systemHome: ps.home >= 2 ? "offensif" : "équilibré",
+        systemAway: ps.away >= 2 ? "offensif" : "équilibré",
+        possessionHome: 50 + (ps.home - ps.away) * 5,
+        possessionAway: 50 + (ps.away - ps.home) * 5,
+      } as AIPrediction;
+    }
+
+    const result = analyzeMatch(matchInput, effectiveAiPrediction, teamStatsMap, historicalResults);
     setPredictions(prev => ({ ...prev, [matchKey]: result }));
     return result;
   };
 
-  // Prédiction individuelle (utilise le cache, fallback math)
+  // Prédiction individuelle — skip AI if predetermined score exists
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
     const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
@@ -357,38 +407,36 @@ export default function LiveMatches() {
 
     try {
       let aiPrediction: AIPrediction | undefined;
-      const cached = aiCache.current.get(cacheKey);
-      if (cached) {
-        aiPrediction = cached;
-        console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
-      } else {
-        try {
-          // Enrichir avec classement + résultats + face-à-face
-          const enriched = enrichMatchesForAI([match], results, ranking);
-          const { data, error } = await supabase.functions.invoke("analyze-match", {
-            body: { matches: enriched },
-          });
-          if (!error && data?.predictions?.length > 0) {
-            aiPrediction = data.predictions[0] as AIPrediction;
-            aiCache.current.set(cacheKey, aiPrediction);
-            console.log("[LiveMatches] AI prediction received for", match.home, "vs", match.away, "(enriched)");
-          } else {
-            const googleError = error as any;
-            if (googleError?.googleError) {
-              console.error("[LiveMatches] Google AI 429 details:", googleError.googleError);
-              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
+      const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
+
+      if (!isPreloaded) {
+        const cached = aiCache.current.get(cacheKey);
+        if (cached) {
+          aiPrediction = cached;
+          console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
+        } else {
+          try {
+            const enriched = enrichMatchesForAI([match], results, ranking);
+            const { data, error } = await supabase.functions.invoke("analyze-match", {
+              body: { matches: enriched },
+            });
+            if (!error && data?.predictions?.length > 0) {
+              aiPrediction = data.predictions[0] as AIPrediction;
+              aiCache.current.set(cacheKey, aiPrediction);
             } else {
               console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
             }
+          } catch (aiErr) {
+            console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
           }
-        } catch (aiErr) {
-          console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
         }
+      } else {
+        console.log(`[LiveMatches] Skipping AI for ${match.home} vs ${match.away} — predetermined score available`);
       }
 
       const result = processMatch(match, aiPrediction);
       await savePredictionToDb(match, result);
-      toast.success("Prédiction générée 🔥");
+      toast.success(isPreloaded ? "Résultat prédéterminé utilisé 🎯" : "Prédiction générée 🔥");
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
@@ -421,15 +469,29 @@ export default function LiveMatches() {
       return;
     }
 
+    // Separate preloaded matches (no AI needed) from regular ones
+    const preloadedMatches = allMatches.filter(m => m.status === "preloaded" && m.predeterminedScore);
+    const regularMatches = allMatches.filter(m => !(m.status === "preloaded" && m.predeterminedScore));
+    const regularUncached = uncachedMatches.filter(
+      um => !(um.match.status === "preloaded" && um.match.predeterminedScore)
+    );
+
+    console.log(`[LiveMatches] Batch: ${preloadedMatches.length} preloaded, ${regularMatches.length} regular (${regularUncached.length} need AI)`);
+
     setBatchPredicting(true);
     try {
-      // Appel IA groupé — 1 seul appel pour tous les matchs non cachés
+      // Auto-predict preloaded matches instantly (no AI needed)
+      for (const match of preloadedMatches) {
+        const result = processMatch(match, undefined); // processMatch will inject predetermined score
+        await savePredictionToDb(match, result);
+      }
+
+      // AI for regular uncached matches only
       let newAiPredictions: Map<string, AIPrediction> = new Map();
 
-      if (uncachedMatches.length > 0) {
+      if (regularUncached.length > 0) {
         try {
-          // Enrichir avec classement + résultats + face-à-face
-          const uncachedMatchObjects = uncachedMatches.map(m => m.match);
+          const uncachedMatchObjects = regularUncached.map(m => m.match);
           const enriched = enrichMatchesForAI(uncachedMatchObjects, results, ranking);
           const { data, error } = await supabase.functions.invoke("analyze-match", {
             body: { matches: enriched },
@@ -437,41 +499,34 @@ export default function LiveMatches() {
 
           if (!error && data?.predictions?.length > 0) {
             const aiPreds = data.predictions as AIPrediction[];
-            for (let i = 0; i < uncachedMatches.length; i++) {
+            for (let i = 0; i < regularUncached.length; i++) {
               if (aiPreds[i]) {
-                newAiPredictions.set(uncachedMatches[i].cacheKey, aiPreds[i]);
-                aiCache.current.set(uncachedMatches[i].cacheKey, aiPreds[i]);
+                newAiPredictions.set(regularUncached[i].cacheKey, aiPreds[i]);
+                aiCache.current.set(regularUncached[i].cacheKey, aiPreds[i]);
               }
             }
-            console.log(`[LiveMatches] Batch AI: ${aiPreds.length}/${uncachedMatches.length} predictions received`);
           } else {
-            // Log detailed Google error if present
-            const googleError = error as any;
-            if (googleError?.googleError) {
-              console.error("[LiveMatches] Batch Google AI 429 details:", googleError.googleError);
-              toast.error(`IA limitée (Google 429): ${(googleError.googleError || "").substring(0, 120)}`);
-            } else {
-              console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
-              toast.error("IA indisponible, analyse mathématique utilisée");
-            }
+            console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
+            toast.error("IA indisponible pour certains matches");
           }
         } catch (aiErr) {
           console.warn("[LiveMatches] Batch AI call failed:", aiErr);
           toast.error("IA indisponible, analyse mathématique utilisée");
         }
-      } else {
-        console.log("[LiveMatches] All matches already cached");
       }
 
-      // Traiter et sauvegarder chaque match
-      for (const match of allMatches) {
+      // Process and save regular matches (cached + new AI)
+      for (const match of regularMatches) {
         const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
         const aiPrediction = aiCache.current.get(cacheKey) || newAiPredictions.get(cacheKey) || undefined;
         const result = processMatch(match, aiPrediction);
         await savePredictionToDb(match, result);
       }
 
-      toast.success(`${allMatches.length} match(s) analysé(s) avec l'IA 🔥`);
+      const msg = preloadedMatches.length > 0
+        ? `${allMatches.length} match(s) : ${preloadedMatches.length} prédéterminé(s) 🎯 + ${regularMatches.length} analysé(s) 🔥`
+        : `${allMatches.length} match(s) analysé(s) avec l'IA 🔥`;
+      toast.success(msg);
     } catch {
       toast.error("Erreur lors de la prédiction groupée");
     } finally {
@@ -548,6 +603,11 @@ export default function LiveMatches() {
                 ⚽ {totalMatches} Matchs
               </Badge>
             )}
+            {preloadedCount > 0 && (
+              <Badge variant="secondary" className="text-[10px] font-display bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse">
+                🎯 {preloadedCount} Résultat(s) connu(s)
+              </Badge>
+            )}
             {results.length > 0 && (
               <Badge variant="secondary" className="text-[10px] font-display bg-muted/50 border-border/50">
                 📊 {results.length} Résultats
@@ -567,6 +627,15 @@ export default function LiveMatches() {
               <Badge className="text-[10px] font-display bg-gold/20 text-gold border-gold/30">
                 📦 Cache
               </Badge>
+            )}
+            {preloadedCount > 0 && (
+              <button
+                onClick={() => setShowScores(!showScores)}
+                className="text-[9px] text-muted-foreground hover:text-amber-400 transition-colors ml-auto flex items-center gap-0.5"
+              >
+                {showScores ? <EyeOff size={10} /> : <Eye size={10} />}
+                {showScores ? "Masquer scores" : "Voir scores"}
+              </button>
             )}
           </div>
         )}
@@ -650,6 +719,7 @@ export default function LiveMatches() {
                                 match={match}
                                 onPredict={handlePredict}
                                 predicting={predictingId === matchKey}
+                                showScores={showScores}
                               />
                               {prediction && (
                                 <div className="mt-2">
