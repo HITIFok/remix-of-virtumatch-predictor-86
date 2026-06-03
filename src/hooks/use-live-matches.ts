@@ -110,9 +110,12 @@ export function useLiveMatches() {
   const [error, setError] = useState<string | null>(null);
   const [selectedLeagueId, setSelectedLeagueId] = useState<LeagueId>("8035");
   const [dataSource, setDataSource] = useState<"api" | "cache">("cache");
+  const [currentRound, setCurrentRound] = useState<number>(0);
 
   // Empêcher les requêtes concurrentes obsolètes (race condition au changement de ligue)
   const fetchVersionRef = useRef(0);
+  // Track if a fetch is in progress (to avoid overlapping polls)
+  const fetchingRef = useRef(false);
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
@@ -196,36 +199,39 @@ export function useLiveMatches() {
   }, [selectedLeague]);
 
   // Charger les données : API proxy en parallèle avec cache
-  const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string) => {
-    // Incrémenter la version pour invalider les anciennes requêtes
-    const currentVersion = ++fetchVersionRef.current;
+  const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string, isPoll = false) => {
+    // Prevent overlapping fetches
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
 
-    setLoading(true);
-    setError(null);
+    try {
+      // For polling, don't show loading state
+      if (!isPoll) {
+        setLoading(true);
+      }
+      setError(null);
 
-    // Lancer les deux en parallèle
-    const [apiData, cacheSuccess] = await Promise.all([
-      fetchFromAPI(leagueId, leagueName),
-      loadFromDatabase(leagueName),
-    ]);
+      // Lancer les deux en parallèle
+      const [apiData, cacheSuccess] = await Promise.all([
+        fetchFromAPI(leagueId, leagueName),
+        loadFromDatabase(leagueName),
+      ]);
 
-    // Ignorer si une nouvelle requête a été lancée entre-temps
-    if (fetchVersionRef.current !== currentVersion) return;
-
-    // Si l'API a répondu, utiliser ses données (temps réel)
-    if (apiData && apiData.matches.length > 0) {
-      setMatches(apiData.matches);
-      setResults(apiData.results);
-      setRanking(apiData.ranking);
-      setLastUpdate(new Date().toISOString());
-      setDataSource("api");
-    } else if (!cacheSuccess) {
-      // Message d'erreur convivial : l'API ET le cache ont échoué
-      setError(getFriendlyError(leagueName));
+      // Si l'API a répondu, utiliser ses données (temps réel)
+      if (apiData && apiData.matches.length > 0) {
+        setMatches(apiData.matches);
+        setResults(apiData.results);
+        setRanking(apiData.ranking);
+        setLastUpdate(new Date().toISOString());
+        setDataSource("api");
+      } else if (!cacheSuccess && !isPoll) {
+        // Message d'erreur convivial : l'API ET le cache ont échoué
+        setError(getFriendlyError(leagueName));
+      }
+    } finally {
+      setLoading(false);
+      fetchingRef.current = false;
     }
-    // Si le cache a fonctionné, les données sont déjà chargées par loadFromDatabase
-
-    setLoading(false);
   }, [loadFromDatabase]);
 
   // Charger au démarrage
@@ -251,9 +257,55 @@ export function useLiveMatches() {
     setRanking([]);
     setError(null);
     setLastUpdate(null);
+    setCurrentRound(0);
 
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
+
+  // ─── Auto-polling with DYNAMIC interval (v9) ───────────────────────
+  // Uses setTimeout instead of setInterval so the interval can change
+  // dynamically based on match status (rapid when waiting for playout).
+  useEffect(() => {
+    if (loading) return; // Don't start polling until initial load is done
+
+    const NORMAL_INTERVAL = 5000;  // 5s normal polling
+    const RAPID_INTERVAL = 500;   // 500ms rapid polling when waiting for playout
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const scheduleNextPoll = () => {
+      if (cancelled) return;
+
+      // Determine interval based on current match status
+      const bettingCount = matches.filter(m => m.status === "betting").length;
+      const preloadedCount = matches.filter(m => m.status === "preloaded").length;
+      const isRapid = bettingCount > 0 && preloadedCount === 0;
+      const interval = isRapid ? RAPID_INTERVAL : NORMAL_INTERVAL;
+
+      timeoutId = setTimeout(async () => {
+        if (cancelled) return;
+        await fetchData(selectedLeagueId, selectedLeague.name, true);
+        scheduleNextPoll(); // Schedule next after this one completes
+      }, interval);
+    };
+
+    scheduleNextPoll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [loading, matches, selectedLeagueId, selectedLeague.name, fetchData]);
+
+  // Track current round changes
+  useEffect(() => {
+    const newRound = matches.find(m => m.round)?.round || 0;
+    if (newRound !== currentRound) {
+      console.log(`[Poll] Round changed: ${currentRound} → ${newRound}`);
+      setCurrentRound(newRound);
+    }
+  }, [matches, currentRound]);
 
   // Charger au montage
   useEffect(() => {

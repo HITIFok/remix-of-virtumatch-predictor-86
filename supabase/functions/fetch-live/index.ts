@@ -1,23 +1,11 @@
-// fetch-live/index.ts — Supabase Edge Function v8
+// fetch-live/index.ts — Supabase Edge Function v9
 // Fetches VIRTUAL match data, ranking, results from Sporty Instant Leagues API
 //
-// v8: CRITICAL FIX — Playout exploit WORKS, was broken by team-name matching!
-//   Discovery: /round/{N}/playout returns results for CURRENT betting round!
-//   Bug: Playout response has NO team names (homeTeam/awayTeam = null)
-//         only match IDs. v7 matched by team name → all matches ignored → preloaded=0
-//   Fix: Match playout by match ID (m.id) instead of team name
-//   v7 comment "IDs don't align" was WRONG — IDs DO align perfectly!
-//
-// Playout data structure (per match):
-//   { id: 69044871, entryPointId: 0, goals: [...], expectedStart: "..." }
-//   NO homeTeam, NO awayTeam, NO homeName, NO awayName fields at all!
-//
-// Match status priority:
-//   1. PRELOADED: playout data exists AND betting still open → THE EXPLOIT
-//   2. LIVE: playout data exists, no betting → match currently playing
-//   3. BETTING: no playout, but odds active → waiting for simulation
-//   4. FINISHED: past round, no playout, no betting
-//   5. UPCOMING: no data at all
+// v9: AGGRESSIVE POLLING — catch playout data the instant it becomes available
+//   Problem: Playout data appears ~2-3s before match starts. Single retry at 1.5s
+//            misses the window most of the time → preloaded=0 for multiple executions.
+//   Fix: 10 retries at 300ms intervals (3s total) — catches data within 300ms of availability
+//   Also: Track current round match IDs to avoid false matches from previous round
 
 // ─── CORS ───────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -39,6 +27,11 @@ const LEAGUES: Record<string, string> = {
   "8044": "Portuguese League",
   "8065": "Coupe du monde",
 };
+
+// ─── Polling config ──────────────────────────────────────────────────
+const POLL_RETRIES = 10;       // Max retries when playout returns 400
+const POLL_INTERVAL_MS = 300;  // Wait between retries (300ms)
+const POLL_MAX_WAIT_MS = POLL_RETRIES * POLL_INTERVAL_MS; // 3s total max wait
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 function env(raw: string | undefined): string {
@@ -109,7 +102,7 @@ async function fetchAPI(path: string, timeoutMs = 10000): Promise<any> {
 
 /**
  * Fetch playout data for a specific round.
- * v8: Returns Map keyed by match ID (number) — playout has NO team names!
+ * Returns Map keyed by match ID (number).
  * Playout response per match: { id: number, entryPointId: 0, goals: [...], expectedStart: "..." }
  */
 async function fetchPlayout(leagueId: string, round: number): Promise<Map<number, any>> {
@@ -117,7 +110,7 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
   try {
     const data = await fetchAPI(
       `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
-      6000
+      5000 // shorter timeout for faster polling
     );
     if (data?.matches && Array.isArray(data.matches)) {
       for (const m of data.matches) {
@@ -136,11 +129,71 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
         }
       }
     }
-    console.log(`[Sporty] Playout round ${round}: ${playoutResults.size} match(es) with results`);
+    if (playoutResults.size === 0) {
+      console.log(`[Sporty] Playout round ${round}: empty (0 matches)`);
+    }
   } catch (e: any) {
-    console.log(`[Sporty] Playout error: ${e.message}`);
+    console.log(`[Sporty] Playout error round ${round}: ${e.message}`);
   }
   return playoutResults;
+}
+
+/**
+ * Aggressively poll playout for a round until data appears or max retries reached.
+ * Returns Map<number, any> keyed by match ID.
+ * v9: Polls every 300ms up to 10 times (3s total) to catch data ASAP.
+ */
+async function fetchPlayoutWithPolling(
+  leagueId: string,
+  round: number,
+  targetMatchIds?: Set<number> // Optional: only count as success if these IDs are found
+): Promise<Map<number, any>> {
+  // First attempt (immediate, no delay)
+  let result = await fetchPlayout(leagueId, round);
+
+  // If we got results that match our target IDs, return immediately
+  if (targetMatchIds && targetMatchIds.size > 0) {
+    const matchedCount = [...result.keys()].filter(id => targetMatchIds.has(id)).length;
+    if (matchedCount > 0) {
+      console.log(`[Sporty] Playout round ${round}: IMMEDIATE hit! ${matchedCount}/${targetMatchIds.size} target matches found`);
+      return result;
+    }
+  } else if (result.size > 0) {
+    console.log(`[Sporty] Playout round ${round}: IMMEDIATE hit! ${result.size} matches`);
+    return result;
+  }
+
+  // Aggressive polling loop
+  console.log(`[Sporty] Playout round ${round}: empty, starting aggressive polling (${POLL_RETRIES}x${POLL_INTERVAL_MS}ms)...`);
+  const startTime = Date.now();
+
+  for (let attempt = 1; attempt <= POLL_RETRIES; attempt++) {
+    await sleep(POLL_INTERVAL_MS);
+    result = await fetchPlayout(leagueId, round);
+
+    if (targetMatchIds && targetMatchIds.size > 0) {
+      const matchedCount = [...result.keys()].filter(id => targetMatchIds.has(id)).length;
+      if (matchedCount > 0) {
+        const elapsed = Date.now() - startTime;
+        console.log(`[Sporty] Playout round ${round}: HIT at attempt ${attempt}/${POLL_RETRIES} after ${elapsed}ms! ${matchedCount}/${targetMatchIds.size} target matches`);
+        return result;
+      }
+    } else if (result.size > 0) {
+      const elapsed = Date.now() - startTime;
+      console.log(`[Sporty] Playout round ${round}: HIT at attempt ${attempt}/${POLL_RETRIES} after ${elapsed}ms! ${result.size} matches`);
+      return result;
+    }
+
+    // If we got some results but none match our targets, still return them
+    // (they might be from a different round that shares the playout slot)
+    if (result.size > 0 && (!targetMatchIds || targetMatchIds.size === 0)) {
+      return result;
+    }
+  }
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[Sporty] Playout round ${round}: No data after ${elapsed}ms (${POLL_RETRIES} attempts)`);
+  return result;
 }
 
 /** Fetch all data for a league from Sporty API */
@@ -152,6 +205,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
   bettingCount: number;
   finishedCount: number;
   preloadedCount: number;
+  currentRound: number;
 } | null> {
   const leagueName = LEAGUES[leagueId];
   if (!leagueName) {
@@ -173,14 +227,13 @@ async function fetchFromSporty(leagueId: string): Promise<{
     return null;
   }
 
-  // Step 2: Identify the CURRENT betting round and ALL round numbers
-  const roundsToCheck = new Set<number>();
+  // Step 2: Identify the CURRENT betting round and collect match IDs
   let currentBettingRound = 0;
+  const currentRoundMatchIds = new Set<number>();
 
   if (matchesData?.rounds) {
     for (const rd of matchesData.rounds) {
       const rn = rd.roundNumber || 0;
-      if (rn > 0) roundsToCheck.add(rn);
 
       // Find the round with active betting
       for (const m of rd.matches || []) {
@@ -192,50 +245,38 @@ async function fetchFromSporty(leagueId: string): Promise<{
         }
       }
     }
-  }
-  // Only check the current betting round (playout is only useful for this round)
-  // and maybe the previous round for live matches still finishing
-  const roundsToFetch: number[] = [];
-  if (currentBettingRound > 0) {
-    roundsToFetch.push(currentBettingRound);
-    if (currentBettingRound > 1) {
-      roundsToFetch.push(currentBettingRound - 1); // previous round might still be live
-    }
-  }
-  console.log(`[Sporty] Current betting round: ${currentBettingRound}, fetching playout for rounds: [${roundsToFetch.join(", ")}]`);
 
-  // Step 3: Fetch playout for relevant rounds in parallel
-  let playoutMatches = new Map<number, any>();
-
-  if (roundsToFetch.length > 0) {
-    const playoutResults = await Promise.allSettled(
-      roundsToFetch.map(r => fetchPlayout(leagueId, r))
-    );
-    for (const result of playoutResults) {
-      if (result.status === "fulfilled") {
-        for (const [matchId, data] of result.value) {
-          playoutMatches.set(matchId, data);
+    // Collect match IDs for the current betting round (used to validate playout)
+    if (currentBettingRound > 0) {
+      for (const rd of matchesData.rounds) {
+        if (rd.roundNumber === currentBettingRound) {
+          for (const m of rd.matches || []) {
+            if (m.id) currentRoundMatchIds.add(m.id);
+          }
+          break;
         }
       }
     }
   }
 
-  // Step 4: If current round playout was empty, retry after 1.5s
-  // (server might still be generating playout data between rounds)
-  const currentRoundHasData = [...playoutMatches.values()].some(d => {
-    // We can't easily tell which round each playout belongs to from ID alone,
-    // but if we got NO results at all and current round exists, retry
-    return true;
-  });
-  if (playoutMatches.size === 0 && currentBettingRound > 0) {
-    console.log(`[Sporty] No playout data found, retrying current round ${currentBettingRound} after 1500ms...`);
-    await sleep(1500);
-    const retryResult = await fetchPlayout(leagueId, currentBettingRound);
-    for (const [matchId, data] of retryResult) {
+  console.log(`[Sporty] Current betting round: ${currentBettingRound}, match IDs: ${currentRoundMatchIds.size}`);
+
+  // Step 3: Fetch playout with AGGRESSIVE POLLING for current round
+  let playoutMatches = new Map<number, any>();
+
+  if (currentBettingRound > 0) {
+    playoutMatches = await fetchPlayoutWithPolling(
+      leagueId,
+      currentBettingRound,
+      currentRoundMatchIds // Only count as success if these IDs are found
+    );
+  }
+
+  // Step 4: Also try previous round (for live matches still finishing)
+  if (currentBettingRound > 1 && playoutMatches.size === 0) {
+    const prevPlayout = await fetchPlayout(leagueId, currentBettingRound - 1);
+    for (const [matchId, data] of prevPlayout) {
       playoutMatches.set(matchId, data);
-    }
-    if (retryResult.size > 0) {
-      console.log(`[Sporty] Retry SUCCESS: got ${retryResult.size} match(es) for round ${currentBettingRound}`);
     }
   }
 
@@ -266,16 +307,11 @@ async function fetchFromSporty(leagueId: string): Promise<{
           }
         }
 
-        // v8: Match playout by match ID (the ONLY reliable key)
+        // Match playout by match ID
         const matchId = m.id;
         const playoutInfo = matchId ? playoutMatches.get(matchId) : null;
 
-        // Determine match status:
-        // 1. PRELOADED: playout data exists AND betting is open → THE EXPLOIT
-        // 2. LIVE: playout data exists, no betting → currently playing
-        // 3. BETTING: no playout, but odds active → waiting
-        // 4. FINISHED: past round, no playout, no betting
-        // 5. UPCOMING: no data at all
+        // Determine match status
         let status = "upcoming";
         let scoreHome: number | null = null;
         let scoreAway: number | null = null;
@@ -368,7 +404,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
 
   console.log(`[Sporty] ${leagueName}: matches=${matches.length}, ranking=${ranking.length}, results=${results.length}, preloaded=${preloadedCount}, live=${liveCount}, betting=${bettingCount}, finished=${finishedCount}`);
 
-  return { matches, ranking, results, liveCount, bettingCount, finishedCount, preloadedCount };
+  return { matches, ranking, results, liveCount, bettingCount, finishedCount, preloadedCount, currentRound: currentBettingRound };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -385,7 +421,7 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
 
-    console.log(`=== fetch-live v8: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v9: ${leagueName} (${leagueId}) ===`);
 
     const data = await fetchFromSporty(leagueId);
 
@@ -416,6 +452,7 @@ Deno.serve(async (req: Request) => {
         bettingCount: data.bettingCount,
         finishedCount: data.finishedCount,
         preloadedCount: data.preloadedCount,
+        currentRound: data.currentRound,
         scrapedAt: new Date().toISOString(),
         counts: {
           matches: data.matches.length,
