@@ -1,7 +1,9 @@
-// fetch-live/index.ts — Supabase Edge Function v5
+// fetch-live/index.ts — Supabase Edge Function v6
 // Fetches VIRTUAL match data, ranking, results from Sporty Instant Leagues API
-// Headers work without token (tested 2026-06-03). SPORTY_BEARER available as fallback.
-// NO imports — uses Deno.serve() + native fetch
+//
+// v6: EXPLOIT — Playout data reveals full results BEFORE betting closes.
+//      Matches with playout data + active betting are flagged as "preloaded".
+//      Frontend can use predetermined scores instead of AI predictions.
 
 // ─── CORS ───────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -33,12 +35,6 @@ function env(raw: string | undefined): string {
 const API_BASE = env(Deno.env.get("SPORTY_API_BASE")) || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
 
 // ─── Dynamic headers with token injection ─────────────────────────────
-// The user captures their working browser token from bet261.mg DevTools:
-//   1. Open bet261.mg → F12 → Network tab
-//   2. Find any request to hg-event-api-prod.sporty-tech.net
-//   3. Copy the "Authorization: Bearer xxx" value → set as SPORTY_BEARER secret
-//   4. Optionally copy the "Cookie: ..." value → set as SPORTY_COOKIE secret
-//   5. Deploy: supabase secrets set SPORTY_BEARER="your_token_here"
 function buildHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "accept": "application/json, text/plain, */*",
@@ -51,18 +47,15 @@ function buildHeaders(): Record<string, string> {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0",
   };
 
-  // Inject bearer token from Supabase secret (captured from browser)
   const bearer = env(Deno.env.get("SPORTY_BEARER"));
   if (bearer) {
-    // Strip "Bearer " prefix if user included it
     const token = bearer.replace(/^Bearer\s+/i, "");
     headers["authorization"] = `Bearer ${token}`;
     console.log(`[CONF] Using SPORTY_BEARER token (${token.length} chars)`);
   } else {
-    console.log(`[CONF] No SPORTY_BEARER — using headers only (works as of 2026-06-03)`);
+    console.log(`[CONF] No SPORTY_BEARER — using headers only`);
   }
 
-  // Inject cookie from Supabase secret (if user captured it)
   const cookie = env(Deno.env.get("SPORTY_COOKIE"));
   if (cookie) {
     headers["cookie"] = cookie;
@@ -98,9 +91,9 @@ async function fetchAPI(path: string, timeoutMs = 10000): Promise<any> {
   }
 }
 
-/** Fetch live playout data for a specific round */
-async function fetchLiveData(leagueId: string, round: number): Promise<Map<number, any>> {
-  const liveMatches = new Map();
+/** Fetch playout data for a specific round — returns FULL results (the exploit) */
+async function fetchPlayout(leagueId: string, round: number): Promise<Map<number, any>> {
+  const playoutMatches = new Map();
   try {
     const data = await fetchAPI(
       `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
@@ -111,20 +104,21 @@ async function fetchLiveData(leagueId: string, round: number): Promise<Map<numbe
         const goals = m.goals || [];
         if (goals.length > 0) {
           const lastGoal = goals[goals.length - 1];
-          liveMatches.set(m.id, {
+          playoutMatches.set(m.id, {
             scoreHome: lastGoal.homeScore || 0,
             scoreAway: lastGoal.awayScore || 0,
             minute: lastGoal.minute || 0,
+            totalGoals: goals.length,
             goals: goals,
           });
         }
       }
     }
-    console.log(`[Sporty] LIVE round ${round}: ${liveMatches.size} matches`);
+    console.log(`[Sporty] Playout round ${round}: ${playoutMatches.size} match(es) with results`);
   } catch (e: any) {
     console.log(`[Sporty] Playout error: ${e.message}`);
   }
-  return liveMatches;
+  return playoutMatches;
 }
 
 /** Fetch all data for a league from Sporty API */
@@ -135,6 +129,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
   liveCount: number;
   bettingCount: number;
   finishedCount: number;
+  preloadedCount: number;
 } | null> {
   const leagueName = LEAGUES[leagueId];
   if (!leagueName) {
@@ -166,7 +161,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
     }
   }
 
-  // Determine which rounds to check for live data (max 5)
+  // Collect round numbers to check for playout
   const roundsToCheck = new Set<number>();
   if (matchesData?.rounds) {
     for (const rd of matchesData.rounds) {
@@ -175,25 +170,25 @@ async function fetchFromSporty(leagueId: string): Promise<{
   }
   const roundList = [...roundsToCheck].filter(r => r > 0).slice(0, 5);
 
-  // Fetch live data for active rounds in parallel
-  let liveMatches = new Map<number, any>();
+  // Fetch playout for ALL active rounds in parallel
+  let playoutMatches = new Map<number, any>();
   if (roundList.length > 0) {
-    const liveResults = await Promise.allSettled(
-      roundList.map(r => fetchLiveData(leagueId, r))
+    const playoutResults = await Promise.allSettled(
+      roundList.map(r => fetchPlayout(leagueId, r))
     );
-    for (const result of liveResults) {
+    for (const result of playoutResults) {
       if (result.status === "fulfilled") {
         for (const [id, data] of result.value) {
-          liveMatches.set(id, data);
+          playoutMatches.set(id, data);
         }
       }
     }
   }
-  console.log(`[Sporty] Total LIVE: ${liveMatches.size}`);
+  console.log(`[Sporty] Total playout results available: ${playoutMatches.size}`);
 
   // Build matches array
   const matches: any[] = [];
-  let liveCount = 0, bettingCount = 0, finishedCount = 0;
+  let liveCount = 0, bettingCount = 0, finishedCount = 0, preloadedCount = 0;
 
   if (matchesData?.rounds) {
     for (const rd of matchesData.rounds) {
@@ -201,6 +196,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
       for (const m of rd.matches || []) {
         // Extract 1X2 odds
         let oddHome = 0, oddDraw = 0, oddAway = 0;
+        let hasActiveBetting = false;
         for (const bt of m.eventBetTypes || []) {
           if (bt.name === "1X2") {
             for (const it of bt.eventBetTypeItems || []) {
@@ -209,6 +205,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
               if (sn === "1") oddHome = val;
               else if (sn === "X") oddDraw = val;
               else if (sn === "2") oddAway = val;
+              if (it.active && it.bettingAllowed) hasActiveBetting = true;
             }
             break;
           }
@@ -220,26 +217,36 @@ async function fetchFromSporty(leagueId: string): Promise<{
         let scoreAway: number | null = null;
         let minute: number | null = null;
         let goals: any[] | null = null;
+        let predeterminedScore: { home: number; away: number; minute: number } | null = null;
 
         if (finishedMatchIds.has(m.id)) {
           status = "finished";
           finishedCount++;
-        } else if (liveMatches.has(m.id)) {
-          const liveInfo = liveMatches.get(m.id)!;
-          status = "live";
-          scoreHome = liveInfo.scoreHome;
-          scoreAway = liveInfo.scoreAway;
-          minute = liveInfo.minute;
-          goals = liveInfo.goals;
-          liveCount++;
-        } else {
-          const hasActiveBetting = m.eventBetTypes?.some((bt: any) =>
-            bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
-          );
-          if (hasActiveBetting || oddHome > 0) {
-            status = "betting";
-            bettingCount++;
+        } else if (playoutMatches.has(m.id)) {
+          const playoutInfo = playoutMatches.get(m.id)!;
+
+          // THE EXPLOIT: If playout data exists AND betting is still open → preloaded!
+          if (hasActiveBetting) {
+            status = "preloaded";
+            predeterminedScore = {
+              home: playoutInfo.scoreHome,
+              away: playoutInfo.scoreAway,
+              minute: playoutInfo.minute,
+            };
+            preloadedCount++;
+            console.log(`[EXPLOIT] 🎯 ${m.homeTeam?.name} vs ${m.awayTeam?.name} → ${playoutInfo.scoreHome}-${playoutInfo.scoreAway} (betting still open!)`);
+          } else {
+            // Playout data but no betting → match is live
+            status = "live";
+            scoreHome = playoutInfo.scoreHome;
+            scoreAway = playoutInfo.scoreAway;
+            minute = playoutInfo.minute;
+            goals = playoutInfo.goals;
+            liveCount++;
           }
+        } else if (hasActiveBetting || oddHome > 0) {
+          status = "betting";
+          bettingCount++;
         }
 
         matches.push({
@@ -252,6 +259,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
           kickoff: m.expectedStart || "",
           oddHome, oddDraw, oddAway,
           scoreHome, scoreAway, minute, goals,
+          predeterminedScore,
         });
       }
     }
@@ -293,9 +301,9 @@ async function fetchFromSporty(leagueId: string): Promise<{
     }
   }
 
-  console.log(`[Sporty] ${leagueName}: matches=${matches.length}, ranking=${ranking.length}, results=${results.length}, live=${liveCount}, betting=${bettingCount}, finished=${finishedCount}`);
+  console.log(`[Sporty] ${leagueName}: matches=${matches.length}, ranking=${ranking.length}, results=${results.length}, preloaded=${preloadedCount}, live=${liveCount}, betting=${bettingCount}, finished=${finishedCount}`);
 
-  return { matches, ranking, results, liveCount, bettingCount, finishedCount };
+  return { matches, ranking, results, liveCount, bettingCount, finishedCount, preloadedCount };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -312,10 +320,7 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
 
-    console.log(`=== fetch-live v5: ${leagueName} (${leagueId}) ===`);
-    console.log(`[CONF] API_BASE=${API_BASE.substring(0, 50)}...`);
-    console.log(`[CONF] SPORTY_BEARER=${env(Deno.env.get("SPORTY_BEARER")) ? "SET" : "NOT SET"}`);
-    console.log(`[CONF] SPORTY_COOKIE=${env(Deno.env.get("SPORTY_COOKIE")) ? "SET" : "NOT SET"}`);
+    console.log(`=== fetch-live v6: ${leagueName} (${leagueId}) ===`);
 
     const data = await fetchFromSporty(leagueId);
 
@@ -345,6 +350,7 @@ Deno.serve(async (req: Request) => {
         liveCount: data.liveCount,
         bettingCount: data.bettingCount,
         finishedCount: data.finishedCount,
+        preloadedCount: data.preloadedCount,
         scrapedAt: new Date().toISOString(),
         counts: {
           matches: data.matches.length,
