@@ -1,7 +1,6 @@
 // auto-scrape/index.ts — Supabase Edge Function v5
 // Scrape VIRTUAL league data from Sporty Instant Leagues API and store in scraped_data table
-// v5: Dynamic token injection — user provides SPORTY_BEARER / SPORTY_COOKIE
-//      via Supabase secrets (captured from browser DevTools → Network tab)
+// Headers work without token (tested 2026-06-03). SPORTY_BEARER available as fallback.
 // NO imports — uses Deno.serve() + native fetch
 
 // ─── CORS ───────────────────────────────────────────────────────────
@@ -63,7 +62,7 @@ function buildHeaders(): Record<string, string> {
     headers["authorization"] = `Bearer ${token}`;
     console.log(`[CONF] Using SPORTY_BEARER token (${token.length} chars)`);
   } else {
-    console.log(`[CONF] No SPORTY_BEARER set — requests may get 403`);
+    console.log(`[CONF] No SPORTY_BEARER — using headers only (works as of 2026-06-03)`);
   }
 
   // Inject cookie from Supabase secret (if user captured it)
