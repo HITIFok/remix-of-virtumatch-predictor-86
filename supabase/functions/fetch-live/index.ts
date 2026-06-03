@@ -29,9 +29,9 @@ const LEAGUES: Record<string, string> = {
 };
 
 // ─── Polling config ──────────────────────────────────────────────────
-const POLL_RETRIES = 10;       // Max retries when playout returns 400
-const POLL_INTERVAL_MS = 300;  // Wait between retries (300ms)
-const POLL_MAX_WAIT_MS = POLL_RETRIES * POLL_INTERVAL_MS; // 3s total max wait
+const POLL_RETRIES = 15;       // Max retries when playout returns 400
+const POLL_INTERVAL_MS = 400;  // Wait between retries (400ms)
+const POLL_MAX_WAIT_MS = POLL_RETRIES * POLL_INTERVAL_MS; // 6s total max wait
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 function env(raw: string | undefined): string {
@@ -272,12 +272,24 @@ async function fetchFromSporty(leagueId: string): Promise<{
     );
   }
 
-  // Step 4: Also try previous round (for live matches still finishing)
-  if (currentBettingRound > 1 && playoutMatches.size === 0) {
+  console.log(`[Sporty] Playout for round ${currentBettingRound}: ${playoutMatches.size} results`);
+
+  // Step 4: Also try previous round ONLY for live matches still playing
+  // (don't pollute playoutMatches with stale data from completed previous round)
+  // Skip this during new round transition to avoid false matches
+  const bettingMatchCount = matchesData?.rounds
+    ?.flatMap((rd: any) => rd.matches || [])
+    .filter((m: any) => m.eventBetTypes?.some((bt: any) =>
+      bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
+    )).length || 0;
+
+  if (currentBettingRound > 1 && playoutMatches.size === 0 && bettingMatchCount < 10) {
     const prevPlayout = await fetchPlayout(leagueId, currentBettingRound - 1);
+    // Only add previous round data if match IDs overlap with known matches
     for (const [matchId, data] of prevPlayout) {
-      playoutMatches.set(matchId, data);
+      if (matchId) playoutMatches.set(matchId, data);
     }
+    console.log(`[Sporty] Previous round ${currentBettingRound - 1} playout: ${prevPlayout.size} results`);
   }
 
   console.log(`[Sporty] Total playout results available: ${playoutMatches.size}`);
