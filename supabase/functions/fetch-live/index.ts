@@ -1,10 +1,23 @@
-// fetch-live/index.ts — Supabase Edge Function v7
+// fetch-live/index.ts — Supabase Edge Function v8
 // Fetches VIRTUAL match data, ranking, results from Sporty Instant Leagues API
 //
-// v7: Fixed playout exploit — 3 bugs resolved:
-//   1. Check preloaded (playout+betting) BEFORE finished status
-//   2. Key playout by team name instead of match ID (IDs don't align)
-//   3. Add retry for current round playout (400 → wait 1.5s → retry)
+// v8: CRITICAL FIX — Playout exploit WORKS, was broken by team-name matching!
+//   Discovery: /round/{N}/playout returns results for CURRENT betting round!
+//   Bug: Playout response has NO team names (homeTeam/awayTeam = null)
+//         only match IDs. v7 matched by team name → all matches ignored → preloaded=0
+//   Fix: Match playout by match ID (m.id) instead of team name
+//   v7 comment "IDs don't align" was WRONG — IDs DO align perfectly!
+//
+// Playout data structure (per match):
+//   { id: 69044871, entryPointId: 0, goals: [...], expectedStart: "..." }
+//   NO homeTeam, NO awayTeam, NO homeName, NO awayName fields at all!
+//
+// Match status priority:
+//   1. PRELOADED: playout data exists AND betting still open → THE EXPLOIT
+//   2. LIVE: playout data exists, no betting → match currently playing
+//   3. BETTING: no playout, but odds active → waiting for simulation
+//   4. FINISHED: past round, no playout, no betting
+//   5. UPCOMING: no data at all
 
 // ─── CORS ───────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -36,16 +49,6 @@ function env(raw: string | undefined): string {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const API_BASE = env(Deno.env.get("SPORTY_API_BASE")) || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
-
-/** Normalize team name for matching (trim, lowercase) */
-function teamKey(name: string): string {
-  return (name || "").trim().toLowerCase();
-}
-
-/** Create match key from home+away team names */
-function matchKey(home: string, away: string): string {
-  return `${teamKey(home)}|${teamKey(away)}`;
-}
 
 // ─── Dynamic headers with token injection ─────────────────────────────
 function buildHeaders(): Record<string, string> {
@@ -106,10 +109,11 @@ async function fetchAPI(path: string, timeoutMs = 10000): Promise<any> {
 
 /**
  * Fetch playout data for a specific round.
- * Returns Map keyed by "home|away" team name (normalized) for reliable matching.
+ * v8: Returns Map keyed by match ID (number) — playout has NO team names!
+ * Playout response per match: { id: number, entryPointId: 0, goals: [...], expectedStart: "..." }
  */
-async function fetchPlayout(leagueId: string, round: number): Promise<Map<string, any>> {
-  const playoutResults = new Map<string, any>();
+async function fetchPlayout(leagueId: string, round: number): Promise<Map<number, any>> {
+  const playoutResults = new Map<number, any>();
   try {
     const data = await fetchAPI(
       `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
@@ -117,23 +121,18 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<string
     );
     if (data?.matches && Array.isArray(data.matches)) {
       for (const m of data.matches) {
+        const matchId = m.id;
         const goals = m.goals || [];
-        if (goals.length > 0) {
+        if (matchId && goals.length > 0) {
           const lastGoal = goals[goals.length - 1];
-          // Key by team names for reliable cross-endpoint matching
-          const home = m.homeTeam?.name || m.homeName || "";
-          const away = m.awayTeam?.name || m.awayName || "";
-          const key = matchKey(home, away);
-          if (key !== "|") { // Skip if both names empty
-            playoutResults.set(key, {
-              scoreHome: lastGoal.homeScore || 0,
-              scoreAway: lastGoal.awayScore || 0,
-              minute: lastGoal.minute || 0,
-              totalGoals: goals.length,
-              goals: goals,
-              matchId: m.id,
-            });
-          }
+          playoutResults.set(matchId, {
+            scoreHome: lastGoal.homeScore || 0,
+            scoreAway: lastGoal.awayScore || 0,
+            minute: lastGoal.minute || 0,
+            totalGoals: goals.length,
+            goals: goals,
+            matchId: matchId,
+          });
         }
       }
     }
@@ -194,47 +193,55 @@ async function fetchFromSporty(leagueId: string): Promise<{
       }
     }
   }
-  const roundList = [...roundsToCheck].filter(r => r > 0).sort((a, b) => b - a).slice(0, 5);
-  console.log(`[Sporty] Current betting round: ${currentBettingRound}, rounds to check: [${roundList.join(", ")}]`);
+  // Only check the current betting round (playout is only useful for this round)
+  // and maybe the previous round for live matches still finishing
+  const roundsToFetch: number[] = [];
+  if (currentBettingRound > 0) {
+    roundsToFetch.push(currentBettingRound);
+    if (currentBettingRound > 1) {
+      roundsToFetch.push(currentBettingRound - 1); // previous round might still be live
+    }
+  }
+  console.log(`[Sporty] Current betting round: ${currentBettingRound}, fetching playout for rounds: [${roundsToFetch.join(", ")}]`);
 
-  // Step 3: Fetch playout for all rounds in parallel (first attempt)
-  let playoutMatches = new Map<string, any>();
-  let currentRoundPlayoutEmpty = false;
+  // Step 3: Fetch playout for relevant rounds in parallel
+  let playoutMatches = new Map<number, any>();
 
-  if (roundList.length > 0) {
+  if (roundsToFetch.length > 0) {
     const playoutResults = await Promise.allSettled(
-      roundList.map(r => fetchPlayout(leagueId, r))
+      roundsToFetch.map(r => fetchPlayout(leagueId, r))
     );
-    for (let i = 0; i < playoutResults.length; i++) {
-      if (playoutResults[i].status === "fulfilled") {
-        const resultMap = playoutResults[i].value;
-        for (const [key, data] of resultMap) {
-          playoutMatches.set(key, data);
-        }
-        // Check if current round had empty playout
-        if (roundList[i] === currentBettingRound && resultMap.size === 0) {
-          currentRoundPlayoutEmpty = true;
+    for (const result of playoutResults) {
+      if (result.status === "fulfilled") {
+        for (const [matchId, data] of result.value) {
+          playoutMatches.set(matchId, data);
         }
       }
     }
   }
 
-  // Step 4: RETRY current round playout after 1.5s delay (Bug #3 fix)
-  // The playout for the current round might not be generated yet when we first check.
-  // Waiting 1.5s gives the server time to generate the playout data.
-  if (currentRoundPlayoutEmpty && currentBettingRound > 0) {
-    console.log(`[Sporty] Current round ${currentBettingRound} playout was empty, retrying after 1500ms...`);
+  // Step 4: If current round playout was empty, retry after 1.5s
+  // (server might still be generating playout data between rounds)
+  const currentRoundHasData = [...playoutMatches.values()].some(d => {
+    // We can't easily tell which round each playout belongs to from ID alone,
+    // but if we got NO results at all and current round exists, retry
+    return true;
+  });
+  if (playoutMatches.size === 0 && currentBettingRound > 0) {
+    console.log(`[Sporty] No playout data found, retrying current round ${currentBettingRound} after 1500ms...`);
     await sleep(1500);
     const retryResult = await fetchPlayout(leagueId, currentBettingRound);
-    for (const [key, data] of retryResult) {
-      playoutMatches.set(key, data);
-      console.log(`[Sporty] Retry got ${retryResult.size} match(es) for round ${currentBettingRound}`);
+    for (const [matchId, data] of retryResult) {
+      playoutMatches.set(matchId, data);
+    }
+    if (retryResult.size > 0) {
+      console.log(`[Sporty] Retry SUCCESS: got ${retryResult.size} match(es) for round ${currentBettingRound}`);
     }
   }
 
   console.log(`[Sporty] Total playout results available: ${playoutMatches.size}`);
 
-  // Step 5: Build matches array with FIXED priority order (Bug #1 fix)
+  // Step 5: Build matches array with correct status priority
   const matches: any[] = [];
   let liveCount = 0, bettingCount = 0, finishedCount = 0, preloadedCount = 0;
 
@@ -259,15 +266,15 @@ async function fetchFromSporty(leagueId: string): Promise<{
           }
         }
 
-        // Build team key for playout matching (Bug #2 fix: match by team name)
-        const tKey = matchKey(m.homeTeam?.name, m.awayTeam?.name);
-        const playoutInfo = playoutMatches.has(tKey) ? playoutMatches.get(tKey) : null;
+        // v8: Match playout by match ID (the ONLY reliable key)
+        const matchId = m.id;
+        const playoutInfo = matchId ? playoutMatches.get(matchId) : null;
 
-        // Determine match status — FIXED PRIORITY (Bug #1 fix):
+        // Determine match status:
         // 1. PRELOADED: playout data exists AND betting is open → THE EXPLOIT
         // 2. LIVE: playout data exists, no betting → currently playing
-        // 3. FINISHED: appears in results (past completed rounds)
-        // 4. BETTING: no playout, but betting is open
+        // 3. BETTING: no playout, but odds active → waiting
+        // 4. FINISHED: past round, no playout, no betting
         // 5. UPCOMING: no data at all
         let status = "upcoming";
         let scoreHome: number | null = null;
@@ -276,7 +283,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
         let goals: any[] | null = null;
         let predeterminedScore: { home: number; away: number; minute: number } | null = null;
 
-        // PRIORITY 1: If playout exists AND betting is open → PRELOADED (the exploit!)
+        // PRIORITY 1: Playout exists AND betting is open → PRELOADED (the exploit!)
         if (playoutInfo && hasActiveBetting) {
           status = "preloaded";
           predeterminedScore = {
@@ -285,9 +292,9 @@ async function fetchFromSporty(leagueId: string): Promise<{
             minute: playoutInfo.minute,
           };
           preloadedCount++;
-          console.log(`[EXPLOIT] 🎯 ${m.homeTeam?.name} vs ${m.awayTeam?.name} → ${playoutInfo.scoreHome}-${playoutInfo.scoreAway} (betting still open, round ${roundNum})`);
+          console.log(`[EXPLOIT] ${m.homeTeam?.name} vs ${m.awayTeam?.name} → ${playoutInfo.scoreHome}-${playoutInfo.scoreAway} (betting still open! round ${roundNum})`);
         }
-        // PRIORITY 2: If playout exists but no betting → LIVE
+        // PRIORITY 2: Playout exists but no betting → LIVE
         else if (playoutInfo) {
           status = "live";
           scoreHome = playoutInfo.scoreHome;
@@ -296,13 +303,12 @@ async function fetchFromSporty(leagueId: string): Promise<{
           goals = playoutInfo.goals;
           liveCount++;
         }
-        // PRIORITY 3: No playout, has betting → BETTING (waiting for playout)
+        // PRIORITY 3: No playout, has betting → BETTING
         else if (hasActiveBetting || oddHome > 0) {
           status = "betting";
           bettingCount++;
         }
-        // PRIORITY 4: No playout, no betting, check if it's from a past round
-        // (matches from past rounds that don't have playout are finished)
+        // PRIORITY 4: Past round, no playout, no betting → FINISHED
         else if (roundNum < currentBettingRound) {
           status = "finished";
           finishedCount++;
@@ -379,7 +385,7 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
 
-    console.log(`=== fetch-live v7: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v8: ${leagueName} (${leagueId}) ===`);
 
     const data = await fetchFromSporty(leagueId);
 
