@@ -296,6 +296,8 @@ export default function LiveMatches() {
         home_team: match.home,
         away_team: match.away,
         league: match.league,
+        league_id: match.leagueId || null,
+        round: match.round || null,
         odd_home: match.oddHome,
         odd_draw: match.oddDraw,
         odd_away: match.oddAway,

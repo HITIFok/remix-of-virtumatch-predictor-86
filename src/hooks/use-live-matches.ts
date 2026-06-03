@@ -61,6 +61,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         away: m.away || "",
         round: m.round,
         league: leagueName,
+        leagueId: leagueId,
         status: m.status || "upcoming",
         kickoff: m.kickoff || "",
         oddHome: m.oddHome || 0,
