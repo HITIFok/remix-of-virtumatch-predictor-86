@@ -148,19 +148,24 @@ function MatchCard({
   onPredict,
   predicting,
   showScores,
+  aiPrediction,
 }: {
   match: ScrapedMatch;
   onPredict: (m: ScrapedMatch) => void;
   predicting: boolean;
   showScores: boolean;
+  aiPrediction?: any; // v14: Groq AI prediction result (MatchResult)
 }) {
   const hasPremium = isPremium();
 
-  const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
+  // v14: LEAK = predeterminedScore (playout exploit). ODDS = Groq AI prediction.
+  // RÈGLE ABSOLUE : LEAK > ODDS. Jamais les deux simultanément.
+  const hasLeak = match.status === "preloaded" && !!match.predeterminedScore;
+  const hasOdds = !hasLeak && !!aiPrediction;
 
   const statusColor =
     match.status === "live" ? "text-success" :
-    match.status === "preloaded" ? "text-amber-400" :
+    match.status === "preloaded" ? "text-violet-400" :
     match.status === "finished" ? "text-muted-foreground" :
     match.status === "betting" ? "text-fire" :
     "text-ice";
@@ -185,14 +190,20 @@ function MatchCard({
 
   return (
     <div className="card-premium overflow-hidden scroll-item">
-      <div className={`flex items-center justify-between px-3 py-2 border-b border-border/50 ${isPreloaded ? "bg-amber-500/10 border-amber-500/30" : ""}`}>
+      <div className={`flex items-center justify-between px-3 py-2 border-b border-border/50 ${hasLeak ? "bg-violet-500/10 border-violet-500/30" : ""}`}>
         <span className={`text-[10px] font-display tracking-wider ${statusColor}`}>
           {statusLabel}
         </span>
         <div className="flex items-center gap-1">
-          {isPreloaded && (
-            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-amber-400/40 text-amber-400 animate-pulse">
-              <Eye size={9} className="mr-0.5" />LEAK
+          {/* v14 RÈGLE: LEAK affiché UNIQUEMENT si pas de LEAK → ODDS Groq */}
+          {hasLeak && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-violet-400/50 text-violet-400 animate-pulse">
+              <Eye size={9} className="mr-0.5" />LEAK {match.predeterminedScore!.home}-{match.predeterminedScore!.away}
+            </Badge>
+          )}
+          {hasOdds && (
+            <Badge variant="outline" className="text-[9px] px-1.5 py-0 border-cyan-400/50 text-cyan-400">
+              ODDS {aiPrediction.exactScore || `${aiPrediction.scoreHome}-${aiPrediction.scoreAway}`}
             </Badge>
           )}
           {match.stats?.system && (
@@ -210,14 +221,14 @@ function MatchCard({
           <div className="flex-1">
             <p className="text-sm font-display font-bold text-foreground truncate">{match.home}</p>
           </div>
-          {(match.status === "live" || match.status === "finished" || (isPreloaded && showScores)) ? (
+          {(match.status === "live" || match.status === "finished" || (hasLeak && showScores)) ? (
             <div className="flex items-center gap-1 mx-3">
-              <span className={`text-lg font-display font-black ${isPreloaded ? "text-amber-400" : "text-foreground"}`}>
-                {isPreloaded ? match.predeterminedScore!.home : match.scoreHome}
+              <span className={`text-lg font-display font-black ${hasLeak ? "text-violet-400" : "text-foreground"}`}>
+                {hasLeak ? match.predeterminedScore!.home : match.scoreHome}
               </span>
-              <span className={`text-xs ${isPreloaded ? "text-amber-400/60" : "text-muted-foreground"}`}>-</span>
-              <span className={`text-lg font-display font-black ${isPreloaded ? "text-amber-400" : "text-foreground"}`}>
-                {isPreloaded ? match.predeterminedScore!.away : match.scoreAway}
+              <span className={`text-xs ${hasLeak ? "text-violet-400/60" : "text-muted-foreground"}`}>-</span>
+              <span className={`text-lg font-display font-black ${hasLeak ? "text-violet-400" : "text-foreground"}`}>
+                {hasLeak ? match.predeterminedScore!.away : match.scoreAway}
               </span>
             </div>
           ) : (
@@ -250,14 +261,14 @@ function MatchCard({
         {hasPremium ? (
           <Button
             size="sm"
-            variant={isPreloaded ? "outline" : "fire"}
-            className={`w-full ${isPreloaded ? "border-amber-400/40 text-amber-400 hover:bg-amber-400/10" : ""}`}
+            variant={hasLeak ? "outline" : "fire"}
+            className={`w-full ${hasLeak ? "border-violet-400/40 text-violet-400 hover:bg-violet-400/10" : ""}`}
             disabled={predicting || match.oddHome <= 0}
             onClick={() => onPredict(match)}
           >
             {predicting ? (
               <><Loader2 size={14} className="mr-1 animate-spin" /> ANALYSE...</>
-            ) : isPreloaded ? (
+            ) : hasLeak ? (
               <><Eye size={14} className="mr-1" /> PRÉDIRE (RÉSULTAT CONNU)</>
             ) : (
               <><Zap size={14} className="mr-1" /> PRÉDIRE CE MATCH</>
@@ -602,7 +613,7 @@ export default function LiveMatches() {
               </Badge>
             )}
             {preloadedCount > 0 && (
-              <Badge variant="secondary" className="text-[10px] font-display bg-amber-500/20 text-amber-400 border-amber-500/30 animate-pulse">
+              <Badge variant="secondary" className="text-[10px] font-display bg-violet-500/20 text-violet-400 border-violet-500/30 animate-pulse">
                 🎯 {preloadedCount} Résultat(s) connu(s)
               </Badge>
             )}
@@ -629,7 +640,7 @@ export default function LiveMatches() {
             {preloadedCount > 0 && (
               <button
                 onClick={() => setShowScores(!showScores)}
-                className="text-[9px] text-muted-foreground hover:text-amber-400 transition-colors ml-auto flex items-center gap-0.5"
+                className="text-[9px] text-muted-foreground hover:text-violet-400 transition-colors ml-auto flex items-center gap-0.5"
               >
                 {showScores ? <EyeOff size={10} /> : <Eye size={10} />}
                 {showScores ? "Masquer scores" : "Voir scores"}
@@ -718,6 +729,7 @@ export default function LiveMatches() {
                                 onPredict={handlePredict}
                                 predicting={predictingId === matchKey}
                                 showScores={showScores}
+                                aiPrediction={prediction}
                               />
                               {prediction && (
                                 <div className="mt-2">
