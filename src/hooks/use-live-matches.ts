@@ -37,6 +37,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
   results: MatchResult[];
   ranking: RankingEntry[];
+  nextRoundStart: string | null;
 } | null> {
   try {
     // supabase.functions.invoke() gère automatiquement apikey + Authorization + x-device-id
@@ -93,6 +94,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
         points: t.points || 0,
       })),
+      nextRoundStart: data.nextRoundStart || null,
     };
   } catch (err) {
     console.error(`[fetchFromAPI] Échec de la requête pour ${leagueName}:`, err);
@@ -236,6 +238,10 @@ export function useLiveMatches() {
         setLastUpdate(new Date().toISOString());
         setDataSource("api");
         apiDataReceivedRef.current = true;
+        // Update nextRoundStart for PREDICT-AHEAD polling
+        if (apiData.nextRoundStart) {
+          nextRoundStartRef.current = apiData.nextRoundStart;
+        }
       } else if (!cacheSuccess && !isPoll) {
         // Message d'erreur convivial : l'API ET le cache ont échoué
         setError(getFriendlyError(leagueName));
@@ -278,10 +284,13 @@ export function useLiveMatches() {
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
 
-  // ─── Auto-polling with DYNAMIC interval (v11) ──────────────────────
+  // ─── Auto-polling with PREDICT-AHEAD (v12) ────────────────────────
   // Uses setTimeout with recursive scheduling. Uses matchesRef instead of
-  // matches in the dependency array to prevent effect re-runs on every
-  // setMatches() call (which was causing 📦 Cache ↔ 🟢 Temps réel flickering).
+  // matches in the dependency array to prevent flickering.
+  // v12: Also checks if nextRoundStart is within 120s → switch to RAPID
+  //       to catch playout data BEFORE the round officially starts.
+  const nextRoundStartRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (loading) return; // Don't start polling until initial load is done
 
@@ -298,7 +307,19 @@ export function useLiveMatches() {
       const currentMatches = matchesRef.current;
       const bettingCount = currentMatches.filter(m => m.status === "betting").length;
       const preloadedCount = currentMatches.filter(m => m.status === "preloaded").length;
-      const isRapid = bettingCount > 0 && preloadedCount === 0;
+      const hasBetting = bettingCount > 0;
+      const noPreloaded = preloadedCount === 0;
+
+      // Check if next round start is approaching (within 120s)
+      const nextStart = nextRoundStartRef.current;
+      let nextStartSoon = false;
+      if (nextStart) {
+        const timeUntil = Math.round((new Date(nextStart).getTime() - Date.now()) / 1000);
+        nextStartSoon = timeUntil <= 120 && timeUntil >= -30;
+      }
+
+      // RAPID mode when: (1) betting without preloaded, OR (2) next round starting soon
+      const isRapid = (hasBetting && noPreloaded) || nextStartSoon;
       const interval = isRapid ? RAPID_INTERVAL : NORMAL_INTERVAL;
 
       timeoutId = setTimeout(async () => {
