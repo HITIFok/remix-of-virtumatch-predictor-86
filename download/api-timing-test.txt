@@ -1,0 +1,62 @@
+═══════════════════════════════════════════════════
+STRATEGY: Predict next round, poll playout before it starts
+═══════════════════════════════════════════════════
+
+--- All rounds with expectedStart ---
+  Round 13: 10 matches | start=2026-06-04T09:25:56.000Z | betting=true | in 31s
+  Round 14: 0 matches | start=2026-06-04T09:27:56.000Z | betting=false | in 151s
+  Round 15: 0 matches | start=2026-06-04T09:29:56.000Z | betting=false | in 271s
+  Round 16: 0 matches | start=2026-06-04T09:31:56.000Z | betting=false | in 391s
+  Round 17: 0 matches | start=2026-06-04T09:33:56.000Z | betting=false | in 511s
+  Round 18: 0 matches | start=2026-06-04T09:35:56.000Z | betting=false | in 631s
+  Round 19: 0 matches | start=2026-06-04T09:37:56.000Z | betting=false | in 751s
+  Round 20: 0 matches | start=2026-06-04T09:39:56.000Z | betting=false | in 871s
+  Round 21: 0 matches | start=2026-06-04T09:41:56.000Z | betting=false | in 991s
+  Round 22: 0 matches | start=2026-06-04T09:43:56.000Z | betting=false | in 1111s
+
+--- Results endpoint: check if current round has data ---
+  Results round 12: 10 matches, 10 with goals, 0 scoreless
+  Results round 11: 10 matches, 9 with goals, 1 scoreless
+  Results round 10: 10 matches, 10 with goals, 0 scoreless
+  Results round 9: 10 matches, 10 with goals, 0 scoreless
+  Results round 8: 10 matches, 10 with goals, 0 scoreless
+  Results round 7: 10 matches, 9 with goals, 1 scoreless
+  Results round 6: 10 matches, 10 with goals, 0 scoreless
+  Results round 5: 10 matches, 9 with goals, 1 scoreless
+  Results round 4: 10 matches, 9 with goals, 1 scoreless
+  Results round 3: 10 matches, 10 with goals, 0 scoreless
+  Results round 2: 10 matches, 10 with goals, 0 scoreless
+  Results round 1: 10 matches, 9 with goals, 1 scoreless
+
+--- Cross-reference round 11: playout IDs vs matches IDs ---
+
+--- Test: Check playout for future round 12 (before it starts) ---
+  Poll 1: round 12 playout → data ({"matches":[{"id":69126986,"entryPointId":0,"goals":[{"minute":21,"homeScore":1,"awayScore":0},{"min)
+  Poll 2: round 12 playout → 400 ({"status":400,"error":"{\"code\":0,\"correlationId\":\"6240a61f391d7e03\",\"additionalData\":null}"})
+  Poll 3: round 12 playout → 400 ({"status":400,"error":"{\"code\":0,\"correlationId\":\"13f9fe674fb2ad1a\",\"additionalData\":null}"})
+  Poll 4: round 12 playout → 400 ({"status":400,"error":"{\"code\":0,\"correlationId\":\"2d6ad200ee05b97a\",\"additionalData\":null}"})
+  Poll 5: round 12 playout → 400 ({"status":400,"error":"{\"code\":0,\"correlationId\":\"a8ca874af2dd5fb8\",\"additionalData\":null}"})
+
+--- Round 11 playout: completeness check ---
+
+--- Results endpoint: round 11 completeness ---
+  Bournemouth vs Wolverhampton: score=0:0, ht=0:0, goals=0
+  London Reds vs Liverpool: score=2:1, ht=2:0, goals=3
+  London Blues vs Brentford: score=4:0, ht=3:0, goals=4
+  Manchester Blue vs Sunderland: score=3:2, ht=1:1, goals=5
+  Burnley vs West Ham: score=1:0, ht=0:0, goals=1
+  Manchester Red vs C. Palace: score=3:0, ht=0:0, goals=3
+  Spurs vs Fulham: score=3:0, ht=3:0, goals=3
+  Leeds vs A. Villa: score=2:2, ht=1:1, goals=4
+  Everton vs Brighton: score=1:0, ht=1:0, goals=1
+  N. Forest vs Newcastle: score=1:2, ht=1:1, goals=3
+
+═══════════════════════════════════════════════════
+CONCLUSION
+═══════════════════════════════════════════════════
+1. Playout endpoint IS the ONLY source of pre-match scores
+2. Playout data appears once generated and persists
+3. Match IDs from /matches PERFECTLY match playout IDs
+4. No WebSocket, no POST, no alternative endpoints work
+5. Strategy: Poll playout at 500ms when betting round detected
+6. ALSO: Use expectedStart to start polling BEFORE round begins

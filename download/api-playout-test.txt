@@ -1,0 +1,1528 @@
+═══════════════════════════════════════════════════
+STEP 1: Get current matches and round info
+═══════════════════════════════════════════════════
+
+=== MATCHES → 200 (335343 chars) ===
+{
+  "rounds": [
+    {
+      "expectedStart": "2026-06-04T09:21:56Z",
+      "expectedEnd": "0001-01-01T00:00:00Z",
+      "roundNumber": 11,
+      "matches": [
+        {
+          "id": 69126976,
+          "entryPointId": 8035,
+          "round": "11",
+          "name": "Bournemouth vs Wolverhampton",
+          "awayTeam": {
+            "name": "Wolverhampton",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "homeTeam": {
+            "name": "Bournemouth",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "expectedStart": "0001-01-01T00:00:00Z",
+          "eventBetTypes": [
+            {
+              "id": 1988148557,
+              "eventId": 69126976,
+              "name": "1X2",
+              "eventBetTypeItems": [
+                {
+                  "id": 9121667841,
+                  "eventBetTypeId": 1988148557,
+                  "shortName": "1",
+                  "odds": 1.87,
+                  "active": true,
+                  "bettingAllowed": true,
+                  "canBeSimulated": false
+                },
+                {
+                  "id": 9121667842,
+                  "eventBetTypeId": 1988148557,
+                  "shortName": "X",
+                  "odds": 3.56,
+                  "active": true,
+                  "bettingAllowed": true,
+                  "canBeSimulated": false
+                },
+                {
+                  "id": 9121667843,
+                  "eventBetTypeId": 1988148557,
+                  "shortName": "2",
+                  "odds": 4.09,
+                  "active": true,
+                  "bettingAllowed": true,
+                  "canBeSimulated": false
+                }
+              ],
+              "betTypeId": 30083,
+              "isAsian": false,
+              "baseAmount": 1000,
+              "minimumAmountIncrement": 1,
+              "maximumAmount": 100000,
+              "active": true,
+              "bettingAllowed": true,
+              "displayPriority": 1,
+              "hasExplanations": false,
+              "canBeSimulated": false,
+              "isManual": false,
+              "allowBetBuilder": false
+            },
+            {
+              "id": 1988148558,
+              "eventId": 69126976,
+              "name": "Mi-tps 1X2",
+              "eventBetTypeItems": [
+                {
+                  "id": 9121667844,
+                  "eventBetTypeId": 1988148558,
+                  "shortName": "1",
+                  "odds": 2.65,
+                  "active": true,
+                  "bettingAllowed": true,
+                  "canBeSimulated": false
+                },
+                {
+                  "id": 9121667845,
+                  "eventBetTypeId": 1988148558,
+                  "shortName": "X",
+                  "odds": 1.98,
+                  "active": true,
+                  "bettingAllowed"
+
+--- Round 11: 10 matches ---
+  ID=69126976 | Bournemouth vs Wolverhampton | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126977 | London Reds vs Liverpool | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126978 | London Blues vs Brentford | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126979 | Manchester Blue vs Sunderland | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126980 | Burnley vs West Ham | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126981 | Manchester Red vs C. Palace | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126982 | Spurs vs Fulham | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126983 | Leeds vs A. Villa | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126984 | Everton vs Brighton | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+  ID=69126985 | N. Forest vs Newcastle | start=0001-01-01T00:00:00Z | betting=true
+  Fields: id, entryPointId, round, name, awayTeam, homeTeam, expectedStart
+
+
+═══════════════════════════════════════════════════
+STEP 2: Test playout endpoints (correct path)
+═══════════════════════════════════════════════════
+
+=== PLAYOUT round 1 → 200 (2120 chars) ===
+{
+  "matches": [
+    {
+      "id": 69126876,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 49,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 50,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126877,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 23,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 54,
+          "homeScore": 0,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126878,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 16,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 65,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 72,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 81,
+          "homeScore": 4,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126879,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 1,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 50,
+          "homeScore": 0,
+          "awayScore": 2
+        },
+        {
+          "minute": 75,
+          "homeScore": 1,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126880,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 29,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 41,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126881,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 24,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 47,
+          "homeScore": 0,
+          "awayScore": 2
+        },
+        {
+          "minute": 65,
+          "homeScore": 1,
+          "awayScore": 2
+        },
+        {
+          "minute": 89,
+          "homeScore": 2,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126882,
+      "entryPointId": 0,
+      "goals": [],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126883,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 21,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 63,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 71,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 6912
+
+=== PLAYOUT round 2 → 200 (3923 chars) ===
+{
+  "matches": [
+    {
+      "id": 69123209,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 4,
+          "homeScore": 1,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123210,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 32,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 37,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 51,
+          "homeScore": 2,
+          "awayScore": 1
+        },
+        {
+          "minute": 72,
+          "homeScore": 3,
+          "awayScore": 1
+        },
+        {
+          "minute": 87,
+          "homeScore": 4,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123211,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 30,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 61,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 73,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 75,
+          "homeScore": 4,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123212,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 36,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 57,
+          "homeScore": 0,
+          "awayScore": 2
+        },
+        {
+          "minute": 87,
+          "homeScore": 0,
+          "awayScore": 3
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123213,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 63,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 86,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 88,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123214,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 9,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 19,
+          "homeScore": 0,
+          "awayScore": 2
+        },
+        {
+          "minute": 25,
+          "homeScore": 0,
+          "awayScore": 3
+        },
+        {
+          "minute": 55,
+          "homeScore": 0,
+          "awayScore": 4
+        },
+        {
+          "minute": 74,
+          "homeScore": 0,
+          "awayScore": 5
+        },
+        {
+          "minute": 79,
+          "homeScore": 0,
+          "awayScore": 6
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69123215,
+      "entryPointId": 0,
+      "goals": [
+        {
+       
+
+=== PLAYOUT round 3 → 400 (67 chars) ===
+{"code":0,"correlationId":"af4ed8f57cd59d5e","additionalData":null}
+
+=== PLAYOUT round 4 → 400 (67 chars) ===
+{"code":0,"correlationId":"8d9e2ed98a4da4d9","additionalData":null}
+
+=== PLAYOUT round 5 → 400 (67 chars) ===
+{"code":0,"correlationId":"028b54918684385d","additionalData":null}
+
+=== PLAYOUT round 6 → 400 (67 chars) ===
+{"code":0,"correlationId":"1ed9b50d38195b44","additionalData":null}
+
+=== PLAYOUT round 7 → 200 (2444 chars) ===
+{
+  "matches": [
+    {
+      "id": 69126936,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 17,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 36,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 51,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 62,
+          "homeScore": 4,
+          "awayScore": 0
+        },
+        {
+          "minute": 77,
+          "homeScore": 5,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126937,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 35,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 36,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 51,
+          "homeScore": 2,
+          "awayScore": 1
+        },
+        {
+          "minute": 71,
+          "homeScore": 3,
+          "awayScore": 1
+        },
+        {
+          "minute": 80,
+          "homeScore": 4,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126938,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 23,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 43,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 44,
+          "homeScore": 2,
+          "awayScore": 1
+        },
+        {
+          "minute": 54,
+          "homeScore": 3,
+          "awayScore": 1
+        },
+        {
+          "minute": 83,
+          "homeScore": 4,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126939,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 42,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 44,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 45,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 59,
+          "homeScore": 3,
+          "awayScore": 1
+        },
+        {
+          "minute": 77,
+          "homeScore": 4,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126940,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 16,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 25,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 79,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126941,
+      "entryPointId": 0,
+      "goals": [],
+      "expectedStart": "0001-01-01T00:00:00Z"
+  
+
+=== PLAYOUT round 8 → 200 (1983 chars) ===
+{
+  "matches": [
+    {
+      "id": 69044761,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 51,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 55,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 58,
+          "homeScore": 1,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044762,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 27,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 29,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044763,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 34,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 44,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 68,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 74,
+          "homeScore": 4,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044764,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 61,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 65,
+          "homeScore": 0,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044765,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 48,
+          "homeScore": 0,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044766,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 17,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 39,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044767,
+      "entryPointId": 0,
+      "goals": [],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044768,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 6,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 46,
+          "homeScore": 2,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044769,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 15,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 32,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 41,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 62,
+          "hom
+
+=== PLAYOUT round 9 → 200 (2258 chars) ===
+{
+  "matches": [
+    {
+      "id": 69044771,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 33,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 58,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 66,
+          "homeScore": 1,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044772,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 10,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 20,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 41,
+          "homeScore": 1,
+          "awayScore": 2
+        },
+        {
+          "minute": 50,
+          "homeScore": 2,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044773,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 19,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 57,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 84,
+          "homeScore": 3,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044774,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 32,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 43,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 62,
+          "homeScore": 1,
+          "awayScore": 2
+        },
+        {
+          "minute": 85,
+          "homeScore": 1,
+          "awayScore": 3
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044775,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 58,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 58,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 82,
+          "homeScore": 3,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044776,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 89,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 89,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044777,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 83,
+          "homeScore": 1,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044778,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 20,
+          "homeScore": 0,
+          "awayS
+
+=== PLAYOUT round 10 → 200 (1938 chars) ===
+{
+  "matches": [
+    {
+      "id": 69044781,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 19,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 40,
+          "homeScore": 2,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044782,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 15,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 23,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 39,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044783,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 20,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 37,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 39,
+          "homeScore": 2,
+          "awayScore": 1
+        },
+        {
+          "minute": 57,
+          "homeScore": 3,
+          "awayScore": 1
+        },
+        {
+          "minute": 61,
+          "homeScore": 3,
+          "awayScore": 2
+        },
+        {
+          "minute": 72,
+          "homeScore": 4,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044784,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 33,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 46,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 71,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044785,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 88,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 88,
+          "homeScore": 1,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044786,
+      "entryPointId": 0,
+      "goals": [],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044787,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 24,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 85,
+          "homeScore": 2,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69044788,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 55,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 71,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 87,
+          "homeScore": 2,
+          "awayScore":
+
+=== PLAYOUT round 11 → 200 (2075 chars) ===
+{
+  "matches": [
+    {
+      "id": 69126976,
+      "entryPointId": 0,
+      "goals": [],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126977,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 12,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 31,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 88,
+          "homeScore": 2,
+          "awayScore": 1
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126978,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 39,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 43,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 45,
+          "homeScore": 3,
+          "awayScore": 0
+        },
+        {
+          "minute": 83,
+          "homeScore": 4,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126979,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 14,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 36,
+          "homeScore": 1,
+          "awayScore": 1
+        },
+        {
+          "minute": 53,
+          "homeScore": 1,
+          "awayScore": 2
+        },
+        {
+          "minute": 60,
+          "homeScore": 2,
+          "awayScore": 2
+        },
+        {
+          "minute": 88,
+          "homeScore": 3,
+          "awayScore": 2
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126980,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 59,
+          "homeScore": 1,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126981,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 49,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 52,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 77,
+          "homeScore": 3,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126982,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 11,
+          "homeScore": 1,
+          "awayScore": 0
+        },
+        {
+          "minute": 13,
+          "homeScore": 2,
+          "awayScore": 0
+        },
+        {
+          "minute": 36,
+          "homeScore": 3,
+          "awayScore": 0
+        }
+      ],
+      "expectedStart": "0001-01-01T00:00:00Z"
+    },
+    {
+      "id": 69126983,
+      "entryPointId": 0,
+      "goals": [
+        {
+          "minute": 17,
+          "homeScore": 0,
+          "awayScore": 1
+        },
+        {
+          "minute": 41,
+          "homeScore": 1,
+          "awayScore":
+
+=== PLAYOUT round 12 → 400 (67 chars) ===
+{"code":0,"correlationId":"aba8f88a415ee298","additionalData":null}
+
+=== PLAYOUT round 13 → 400 (67 chars) ===
+{"code":0,"correlationId":"34fe0bb8fb5bac3a","additionalData":null}
+
+=== PLAYOUT round 14 → 400 (67 chars) ===
+{"code":0,"correlationId":"5e1bdd6a0cea3c5c","additionalData":null}
+
+=== PLAYOUT round 15 → 400 (67 chars) ===
+{"code":0,"correlationId":"b0b463f8f576980b","additionalData":null}
+
+
+═══════════════════════════════════════════════════
+STEP 3: Get results (completed rounds)
+═══════════════════════════════════════════════════
+
+=== RESULTS → 200 (54751 chars) ===
+{
+  "rounds": [
+    {
+      "expectedStart": "2026-06-04T09:21:56Z",
+      "expectedEnd": "0001-01-01T00:00:00Z",
+      "roundNumber": 11,
+      "matches": [
+        {
+          "id": 0,
+          "entryPointId": 0,
+          "name": "Bournemouth vs Wolverhampton",
+          "awayTeam": {
+            "name": "Wolverhampton",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "homeTeam": {
+            "name": "Bournemouth",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "goals": [],
+          "score": "0:0",
+          "halfTimeScore": "0:0",
+          "expectedStart": "2026-06-04T09:21:56Z"
+        },
+        {
+          "id": 0,
+          "entryPointId": 0,
+          "name": "London Reds vs Liverpool",
+          "awayTeam": {
+            "name": "Liverpool",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "homeTeam": {
+            "name": "London Reds",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "goals": [
+            {
+              "minute": 12,
+              "homeScore": 1,
+              "awayScore": 0,
+              "team": "Home"
+            },
+            {
+              "minute": 31,
+              "homeScore": 2,
+              "awayScore": 0,
+              "team": "Home"
+            },
+            {
+              "minute": 88,
+              "homeScore": 2,
+              "awayScore": 1,
+              "team": "Away"
+            }
+          ],
+          "score": "2:1",
+          "halfTimeScore": "2:0",
+          "expectedStart": "2026-06-04T09:21:56Z"
+        },
+        {
+          "id": 0,
+          "entryPointId": 0,
+          "name": "London Blues vs Brentford",
+          "awayTeam": {
+            "name": "Brentford",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "homeTeam": {
+            "name": "London Blues",
+            "points": 0,
+            "position": 0,
+            "won": 0,
+            "lost": 0,
+            "draw": 0
+          },
+          "goals": [
+            {
+              "minute": 39,
+              "homeScore": 1,
+              "awayScore": 0,
+              "team": "Home"
+            },
+            {
+              "minute": 43,
+              "homeScore": 2,
+              "awayScore": 0,
+              "team": "Home"
+            },
+            {
+              "minute": 45,
+              "homeScore": 3,
+              "awayScore": 0,
+              "team": "Home"
+            },
+            {
+              "minute": 83,
+              "homeScore": 4,
+              "awayScore": 0,
+              "team": "Home"
+            }
+          ],
+          "score": "4:0",
+ 
+
+
+═══════════════════════════════════════════════════
+STEP 4: Alternative playout URL patterns
+═══════════════════════════════════════════════════
+
+=== playout?round=2 → 404 (0 chars) ===
+
+
+=== parentEventCategoryId/8035/round/2/playout → 404 (0 chars) ===
+
+
+=== 8035/playout → 404 (0 chars) ===
+
+
+=== 8035/round/2 → 404 (0 chars) ===
+
+
+=== simulation → 404 (0 chars) ===
+
+
+=== 8035/simulation → 404 (0 chars) ===
+
+
+=== 8035/simulate → 404 (0 chars) ===
+
+
+=== 8035/predetermined → 404 (0 chars) ===
+
+
+=== 8035/round/2/predict → 404 (0 chars) ===
+
+
+=== 8035/events → 404 (0 chars) ===
+
+
+=== round/2/events → 404 (0 chars) ===
+
+
+
+═══════════════════════════════════════════════════
+STEP 5: Alternative base URLs
+═══════════════════════════════════════════════════
+
+=== BASE round/2/playout (direct) → 400 (67 chars) ===
+{"code":0,"correlationId":"275380f50c88e2c5","additionalData":null}
+
+=== bet261 round/2/playout → 200 (24102 chars) ===
+<!DOCTYPE html><html><head>
+    <meta name="google" content="notranslate">
+    <meta charset="utf-8">
+    <base href="/">
+
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+
+    <link rel="preload" as="style" href="ht
+
+=== bet261 8035/matches → 200 (24102 chars) ===
+<!DOCTYPE html><html><head>
+    <meta name="google" content="notranslate">
+    <meta charset="utf-8">
+    <base href="/">
+
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <meta name="format-detection" content="telephone=no">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+
+    <link rel="preload" as="style" href="ht
+
+
+═══════════════════════════════════════════════════
+STEP 6: POST/PUT on playout
+═══════════════════════════════════════════════════
+POST playout → 405: 
+PUT playout → 405: 
+
+
+═══════════════════════════════════════════════════
+STEP 7: Deep inspection of a single match object
+═══════════════════════════════════════════════════
+FULL match object keys: [
+  'id',
+  'entryPointId',
+  'round',
+  'name',
+  'awayTeam',
+  'homeTeam',
+  'expectedStart',
+  'eventBetTypes'
+]
+FULL match object:
+{
+  "id": 69126976,
+  "entryPointId": 8035,
+  "round": "11",
+  "name": "Bournemouth vs Wolverhampton",
+  "awayTeam": {
+    "name": "Wolverhampton",
+    "points": 0,
+    "position": 0,
+    "won": 0,
+    "lost": 0,
+    "draw": 0
+  },
+  "homeTeam": {
+    "name": "Bournemouth",
+    "points": 0,
+    "position": 0,
+    "won": 0,
+    "lost": 0,
+    "draw": 0
+  },
+  "expectedStart": "0001-01-01T00:00:00Z",
+  "eventBetTypes": "[33 betTypes]"
+}
