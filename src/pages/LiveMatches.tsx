@@ -306,9 +306,7 @@ export default function LiveMatches() {
   // Debounce : empêcher les clics multiples rapides
   const predictingRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    fetchMatches();
-  }, []);
+  // fetchMatches is already called by the hook's own useEffect on mount — no duplicate needed
 
   // Helper: sauvegarder une prédiction en BDD
   const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult) => {

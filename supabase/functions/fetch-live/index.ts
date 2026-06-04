@@ -1,11 +1,11 @@
-// fetch-live/index.ts — Supabase Edge Function v9
+// fetch-live/index.ts — Supabase Edge Function v11
 // Fetches VIRTUAL match data, ranking, results from Sporty Instant Leagues API
 //
-// v9: AGGRESSIVE POLLING — catch playout data the instant it becomes available
-//   Problem: Playout data appears ~2-3s before match starts. Single retry at 1.5s
-//            misses the window most of the time → preloaded=0 for multiple executions.
-//   Fix: 10 retries at 300ms intervals (3s total) — catches data within 300ms of availability
-//   Also: Track current round match IDs to avoid false matches from previous round
+// v11: FAST SINGLE-CHECK — no aggressive polling (frontend handles RAPID polling)
+//   - Removes 15x400ms internal polling (was 6s per call)
+//   - Single playout check per round (~200ms total response)
+//   - Frontend polls at 500ms (RAPID) or 5s (NORMAL) based on match status
+//   - Uses ONLY Supabase Secrets for API_BASE, Origin, Referer (no hardcoded fallbacks)
 
 // ─── CORS ───────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -28,28 +28,26 @@ const LEAGUES: Record<string, string> = {
   "8065": "Coupe du monde",
 };
 
-// ─── Polling config ──────────────────────────────────────────────────
-const POLL_RETRIES = 15;       // Max retries when playout returns 400
-const POLL_INTERVAL_MS = 400;  // Wait between retries (400ms)
-const POLL_MAX_WAIT_MS = POLL_RETRIES * POLL_INTERVAL_MS; // 6s total max wait
-
 // ─── Helpers ─────────────────────────────────────────────────────────
 function env(raw: string | undefined): string {
   if (!raw) return "";
   return raw.replace(/^["']|["']$/g, "").trim();
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// API base URL from Supabase Secret ONLY (no fallback)
+const API_BASE = env(Deno.env.get("SPORTY_API_BASE"));
 
-const API_BASE = env(Deno.env.get("SPORTY_API_BASE")) || "https://hg-event-api-prod.sporty-tech.net/api/instantleagues";
-
-// ─── Dynamic headers with token injection ─────────────────────────────
+// ─── Dynamic headers with env var support ───────────────────────────
 function buildHeaders(): Record<string, string> {
+  const apiOrigin = env(Deno.env.get("API_ORIGIN"));
+  const apiReferer = env(Deno.env.get("API_REFERER"));
+
   const headers: Record<string, string> = {
     "accept": "application/json, text/plain, */*",
     "accept-language": "fr",
     "app-version": "33470",
-    "referer": "https://bet261.mg/",
+    "referer": apiReferer || "",
+    "origin": apiOrigin || "",
     "sec-ch-ua": '"Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
@@ -60,15 +58,15 @@ function buildHeaders(): Record<string, string> {
   if (bearer) {
     const token = bearer.replace(/^Bearer\s+/i, "");
     headers["authorization"] = `Bearer ${token}`;
-    console.log(`[CONF] Using SPORTY_BEARER token (${token.length} chars)`);
+    console.log(`[CONF] Bearer=✓ (${token.length} chars), Origin=✓, Referer=✓`);
   } else {
-    console.log(`[CONF] No SPORTY_BEARER — using headers only`);
+    console.log(`[CONF] Bearer=✗ (using headers only), Origin=${apiOrigin ? "✓" : "✗"}, Referer=${apiReferer ? "✓" : "✗"}`);
   }
 
   const cookie = env(Deno.env.get("SPORTY_COOKIE"));
   if (cookie) {
     headers["cookie"] = cookie;
-    console.log(`[CONF] Using SPORTY_COOKIE (${cookie.length} chars)`);
+    console.log(`[CONF] Cookie=✓ (${cookie.length} chars)`);
   }
 
   return headers;
@@ -78,7 +76,7 @@ function buildHeaders(): Record<string, string> {
 // Sporty API fetching
 // ═══════════════════════════════════════════════════════════════════════
 
-async function fetchAPI(path: string, timeoutMs = 10000): Promise<any> {
+async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -101,16 +99,15 @@ async function fetchAPI(path: string, timeoutMs = 10000): Promise<any> {
 }
 
 /**
- * Fetch playout data for a specific round.
+ * Fetch playout data for a specific round (single check, no polling).
  * Returns Map keyed by match ID (number).
- * Playout response per match: { id: number, entryPointId: 0, goals: [...], expectedStart: "..." }
  */
 async function fetchPlayout(leagueId: string, round: number): Promise<Map<number, any>> {
   const playoutResults = new Map<number, any>();
   try {
     const data = await fetchAPI(
       `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
-      5000 // shorter timeout for faster polling
+      4000
     );
     if (data?.matches && Array.isArray(data.matches)) {
       for (const m of data.matches) {
@@ -131,69 +128,13 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
     }
     if (playoutResults.size === 0) {
       console.log(`[Sporty] Playout round ${round}: empty (0 matches)`);
+    } else {
+      console.log(`[Sporty] Playout for round ${round}: ${playoutResults.size} results`);
     }
   } catch (e: any) {
     console.log(`[Sporty] Playout error round ${round}: ${e.message}`);
   }
   return playoutResults;
-}
-
-/**
- * Aggressively poll playout for a round until data appears or max retries reached.
- * Returns Map<number, any> keyed by match ID.
- * v9: Polls every 300ms up to 10 times (3s total) to catch data ASAP.
- */
-async function fetchPlayoutWithPolling(
-  leagueId: string,
-  round: number,
-  targetMatchIds?: Set<number> // Optional: only count as success if these IDs are found
-): Promise<Map<number, any>> {
-  // First attempt (immediate, no delay)
-  let result = await fetchPlayout(leagueId, round);
-
-  // If we got results that match our target IDs, return immediately
-  if (targetMatchIds && targetMatchIds.size > 0) {
-    const matchedCount = [...result.keys()].filter(id => targetMatchIds.has(id)).length;
-    if (matchedCount > 0) {
-      console.log(`[Sporty] Playout round ${round}: IMMEDIATE hit! ${matchedCount}/${targetMatchIds.size} target matches found`);
-      return result;
-    }
-  } else if (result.size > 0) {
-    console.log(`[Sporty] Playout round ${round}: IMMEDIATE hit! ${result.size} matches`);
-    return result;
-  }
-
-  // Aggressive polling loop
-  console.log(`[Sporty] Playout round ${round}: empty, starting aggressive polling (${POLL_RETRIES}x${POLL_INTERVAL_MS}ms)...`);
-  const startTime = Date.now();
-
-  for (let attempt = 1; attempt <= POLL_RETRIES; attempt++) {
-    await sleep(POLL_INTERVAL_MS);
-    result = await fetchPlayout(leagueId, round);
-
-    if (targetMatchIds && targetMatchIds.size > 0) {
-      const matchedCount = [...result.keys()].filter(id => targetMatchIds.has(id)).length;
-      if (matchedCount > 0) {
-        const elapsed = Date.now() - startTime;
-        console.log(`[Sporty] Playout round ${round}: HIT at attempt ${attempt}/${POLL_RETRIES} after ${elapsed}ms! ${matchedCount}/${targetMatchIds.size} target matches`);
-        return result;
-      }
-    } else if (result.size > 0) {
-      const elapsed = Date.now() - startTime;
-      console.log(`[Sporty] Playout round ${round}: HIT at attempt ${attempt}/${POLL_RETRIES} after ${elapsed}ms! ${result.size} matches`);
-      return result;
-    }
-
-    // If we got some results but none match our targets, still return them
-    // (they might be from a different round that shares the playout slot)
-    if (result.size > 0 && (!targetMatchIds || targetMatchIds.size === 0)) {
-      return result;
-    }
-  }
-
-  const elapsed = Date.now() - startTime;
-  console.log(`[Sporty] Playout round ${round}: No data after ${elapsed}ms (${POLL_RETRIES} attempts)`);
-  return result;
 }
 
 /** Fetch all data for a league from Sporty API */
@@ -246,7 +187,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
       }
     }
 
-    // Collect match IDs for the current betting round (used to validate playout)
+    // Collect match IDs for the current betting round
     if (currentBettingRound > 0) {
       for (const rd of matchesData.rounds) {
         if (rd.roundNumber === currentBettingRound) {
@@ -261,22 +202,15 @@ async function fetchFromSporty(leagueId: string): Promise<{
 
   console.log(`[Sporty] Current betting round: ${currentBettingRound}, match IDs: ${currentRoundMatchIds.size}`);
 
-  // Step 3: Fetch playout with AGGRESSIVE POLLING for current round
+  // Step 3: Fetch playout for the current betting round (single check, no polling)
+  // Frontend handles RAPID polling at 500ms — no need for internal polling
   let playoutMatches = new Map<number, any>();
 
   if (currentBettingRound > 0) {
-    playoutMatches = await fetchPlayoutWithPolling(
-      leagueId,
-      currentBettingRound,
-      currentRoundMatchIds // Only count as success if these IDs are found
-    );
+    playoutMatches = await fetchPlayout(leagueId, currentBettingRound);
   }
 
-  console.log(`[Sporty] Playout for round ${currentBettingRound}: ${playoutMatches.size} results`);
-
-  // Step 4: Also try previous round ONLY for live matches still playing
-  // (don't pollute playoutMatches with stale data from completed previous round)
-  // Skip this during new round transition to avoid false matches
+  // Step 4: Also check previous round for any live matches still playing
   const bettingMatchCount = matchesData?.rounds
     ?.flatMap((rd: any) => rd.matches || [])
     .filter((m: any) => m.eventBetTypes?.some((bt: any) =>
@@ -285,11 +219,9 @@ async function fetchFromSporty(leagueId: string): Promise<{
 
   if (currentBettingRound > 1 && playoutMatches.size === 0 && bettingMatchCount < 10) {
     const prevPlayout = await fetchPlayout(leagueId, currentBettingRound - 1);
-    // Only add previous round data if match IDs overlap with known matches
     for (const [matchId, data] of prevPlayout) {
       if (matchId) playoutMatches.set(matchId, data);
     }
-    console.log(`[Sporty] Previous round ${currentBettingRound - 1} playout: ${prevPlayout.size} results`);
   }
 
   console.log(`[Sporty] Total playout results available: ${playoutMatches.size}`);
@@ -433,15 +365,33 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
 
-    console.log(`=== fetch-live v9: ${leagueName} (${leagueId}) ===`);
+    const startTime = Date.now();
+    console.log(`=== fetch-live v11: ${leagueName} (${leagueId}) ===`);
+
+    if (!API_BASE) {
+      console.error(`[CONF] SPORTY_API_BASE is not set! Check Supabase Secrets.`);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "SPORTY_API_BASE secret not configured",
+          source: "error",
+          matches: [],
+          results: [],
+          ranking: [],
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     const data = await fetchFromSporty(leagueId);
+    const elapsed = Date.now() - startTime;
+    console.log(`[Sporty] Total: ${elapsed}ms`);
 
     if (!data) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Sporty API unavailable. Try setting SPORTY_BEARER as fallback.",
+          error: "Sporty API unavailable",
           source: "sporty",
           matches: [],
           results: [],

@@ -118,6 +118,9 @@ export function useLiveMatches() {
   const fetchingRef = useRef(false);
   // Track if we've ever received API data — prevents flicker back to cache during polls
   const apiDataReceivedRef = useRef(false);
+  // Ref for matches — used by polling loop to avoid 'matches' in useEffect deps (prevents flickering)
+  const matchesRef = useRef<ScrapedMatch[]>([]);
+  matchesRef.current = matches;
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
@@ -238,7 +241,10 @@ export function useLiveMatches() {
         setError(getFriendlyError(leagueName));
       }
     } finally {
-      setLoading(false);
+      // Only toggle loading for non-poll fetches (prevents UI flickering)
+      if (!isPoll) {
+        setLoading(false);
+      }
       fetchingRef.current = false;
     }
   }, [loadFromDatabase]);
@@ -272,9 +278,10 @@ export function useLiveMatches() {
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
 
-  // ─── Auto-polling with DYNAMIC interval (v9) ───────────────────────
-  // Uses setTimeout instead of setInterval so the interval can change
-  // dynamically based on match status (rapid when waiting for playout).
+  // ─── Auto-polling with DYNAMIC interval (v11) ──────────────────────
+  // Uses setTimeout with recursive scheduling. Uses matchesRef instead of
+  // matches in the dependency array to prevent effect re-runs on every
+  // setMatches() call (which was causing 📦 Cache ↔ 🟢 Temps réel flickering).
   useEffect(() => {
     if (loading) return; // Don't start polling until initial load is done
 
@@ -287,9 +294,10 @@ export function useLiveMatches() {
     const scheduleNextPoll = () => {
       if (cancelled) return;
 
-      // Determine interval based on current match status
-      const bettingCount = matches.filter(m => m.status === "betting").length;
-      const preloadedCount = matches.filter(m => m.status === "preloaded").length;
+      // Use REF to check match status (avoids 'matches' in dependency array)
+      const currentMatches = matchesRef.current;
+      const bettingCount = currentMatches.filter(m => m.status === "betting").length;
+      const preloadedCount = currentMatches.filter(m => m.status === "preloaded").length;
       const isRapid = bettingCount > 0 && preloadedCount === 0;
       const interval = isRapid ? RAPID_INTERVAL : NORMAL_INTERVAL;
 
@@ -306,7 +314,7 @@ export function useLiveMatches() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [loading, matches, selectedLeagueId, selectedLeague.name, fetchData]);
+  }, [loading, selectedLeagueId, selectedLeague.name, fetchData]);
 
   // Track current round changes
   useEffect(() => {
