@@ -1,5 +1,6 @@
-// fetch-live/index.ts — Supabase Edge Function v14
+// fetch-live/index.ts — Supabase Edge Function v15
 // Fetches live match data, ranking, results from sporty-tech.net API
+// v15: CORS fix — added x-device-id header + POST method support
 // v14 FIX: predeterminedScore sent for preloaded matches → LEAK badge works
 // v14 FIX: loadFromDatabaseRaw (silent) → no Cache ↔ API flickering
 // v13: CORRECT SCORE ODDS PREDICTION — extracts lowest-odds scoreline from
@@ -11,8 +12,8 @@
 
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id, accept, cache-control",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 const API_BASE = Deno.env.get("SPORTY_API_BASE") || "";
@@ -182,7 +183,7 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
     const mode = url.searchParams.get("mode") || "";
-    console.log(`=== fetch-live v14: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v15: ${leagueName} (${leagueId}) ===`);
 
     // === LIGHTWEIGHT PLOAYOUT MODE ===
     if (mode === "playout") {

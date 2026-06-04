@@ -7,8 +7,8 @@
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
   "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-key, x-device-id, accept, cache-control",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
 // ─── Supabase ────────────────────────────────────────────────────────
