@@ -86,3 +86,25 @@ Stage Summary:
 - Frontend displays prediction with cyan badge on betting matches
 - Two-tier system: ODDS (immediate) → LEAK (playout confirmed)
 - All changes pushed to GitHub: https://github.com/HITIFok/remix-of-virtumatch-predictor-86
+
+---
+Task ID: 1-5
+Agent: main
+Task: v14 — Fix LEAK badge, flickering, LEAK > ODDS priority
+
+Work Log:
+- Read all source files: use-live-matches.ts, LiveMatches.tsx, types.ts, fetch-live/index.ts
+- Identified 3 root causes: (1) Edge function never sent predeterminedScore, (2) loadFromDatabase set state directly during Promise.all causing flicker, (3) no LEAK > ODDS priority logic
+- Created loadFromDatabaseRaw (silent, returns data without setState) to eliminate Cache ↔ API flicker
+- Updated fetchData to use silent cache fetch, decide which data to use AFTER both resolve (single setState)
+- Edge function: added predeterminedScore field for preloaded matches, declared at match scope
+- Hook: maps prediction + predeterminedScore from API response
+- MatchCard: implemented LEAK > ODDS priority rule (violet LEAK badge, cyan ODDS badge)
+- Added ScoreExactOdds type to types.ts
+- TypeScript compiles without errors
+- Committed and pushed to GitHub
+
+Stage Summary:
+- v14 fixes: LEAK badge now appears (predeterminedScore sent), flickering eliminated (silent cache fetch), LEAK > ODDS priority enforced
+- Colors: LEAK = violet, ODDS = cyan
+- **MANUAL STEP NEEDED**: Deploy edge function to Supabase: `supabase functions deploy fetch-live --no-verify-jwt`
