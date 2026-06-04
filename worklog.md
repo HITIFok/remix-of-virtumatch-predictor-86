@@ -40,3 +40,24 @@ Stage Summary:
 - Edge function v11: ~200ms response (was ~400-600ms with v9 aggressive polling)
 - Frontend v11: useEffect stable during polls (no more re-runs on setMatches)
 - preloaded=0 is expected: betting round 2 playout data hasn't appeared yet
+
+---
+Task ID: 2
+Agent: main
+Task: Explore Sporty API and find all ways to get playout data earlier
+
+Work Log:
+- Tested 90+ API endpoints — only 4 work: /matches, /ranking, /results, /round/{N}/playout
+- Discovered playout endpoint: /round/{N}/playout?parentEventCategoryId={leagueId}
+- Confirmed match IDs from /matches match playout IDs perfectly
+- Found playout data IS available for current betting round while betting is open
+- Found round 12 playout data is transient (appears briefly then 400)
+- No WebSocket, POST/PUT, simulation, predetermined endpoints exist
+- bet261.mg returns HTML, not API data
+
+Stage Summary:
+- Playout IS the ONLY source — no alternatives exist
+- v12 implements PREDICT-AHEAD: polls upcoming round's playout before it starts
+- Frontend RAPID mode when next round start within 120s
+- All playout fetches are parallel (current + upcoming + previous) — ~200ms total
+- Pushed as commit 09d34b3
