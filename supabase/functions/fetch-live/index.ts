@@ -113,12 +113,13 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
       for (const m of data.matches) {
         const matchId = m.id;
         const goals = m.goals || [];
-        if (matchId && goals.length > 0) {
-          const lastGoal = goals[goals.length - 1];
+        if (matchId) {
+          // Handle 0-0 matches: if no goals, score is 0-0
+          const lastGoal = goals.length > 0 ? goals[goals.length - 1] : null;
           playoutResults.set(matchId, {
-            scoreHome: lastGoal.homeScore || 0,
-            scoreAway: lastGoal.awayScore || 0,
-            minute: lastGoal.minute || 0,
+            scoreHome: lastGoal?.homeScore || 0,
+            scoreAway: lastGoal?.awayScore || 0,
+            minute: lastGoal?.minute || 90,
             totalGoals: goals.length,
             goals: goals,
             matchId: matchId,
