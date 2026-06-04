@@ -1,5 +1,7 @@
-// fetch-live/index.ts — Supabase Edge Function v13
+// fetch-live/index.ts — Supabase Edge Function v14
 // Fetches live match data, ranking, results from sporty-tech.net API
+// v14 FIX: predeterminedScore sent for preloaded matches → LEAK badge works
+// v14 FIX: loadFromDatabaseRaw (silent) → no Cache ↔ API flickering
 // v13: CORRECT SCORE ODDS PREDICTION — extracts lowest-odds scoreline from
 //      "Score exact" market for each match. Available ~2 min before playout!
 //      Combined with playout exploit for two-tier early data system:
@@ -180,7 +182,7 @@ Deno.serve(async (req: Request) => {
     const leagueId = url.searchParams.get("leagueId") || "8035";
     const leagueName = LEAGUES[leagueId] || "Unknown League";
     const mode = url.searchParams.get("mode") || "";
-    console.log(`=== fetch-live v13: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v14: ${leagueName} (${leagueId}) ===`);
 
     // === LIGHTWEIGHT PLOAYOUT MODE ===
     if (mode === "playout") {
@@ -360,6 +362,7 @@ Deno.serve(async (req: Request) => {
           let minute: number | null = null;
           let goals: any[] | null = null;
           let prediction: any = null;
+          let predeterminedScore: { home: number; away: number; minute: number } | null = null;
 
           if (preloadedMatches.has(m.id)) {
             // TIER 2 CONFIRMED: Playout exploit — score known before match starts!
@@ -369,6 +372,12 @@ Deno.serve(async (req: Request) => {
             scoreAway = preloaded.scoreAway;
             minute = preloaded.minute;
             goals = preloaded.goals;
+            // v14 FIX: Send predeterminedScore so frontend can show LEAK badge
+            predeterminedScore = {
+              home: preloaded.scoreHome,
+              away: preloaded.scoreAway,
+              minute: preloaded.minute,
+            };
             // Also include the odds prediction for comparison
             prediction = oddsPredictions.get(m.id) || null;
             console.log(`[EXPLOIT] ${m.homeTeam?.name || '?'} vs ${m.awayTeam?.name || '?'} → ${scoreHome}-${scoreAway} (betting still open! round ${roundNum})`);
@@ -392,6 +401,7 @@ Deno.serve(async (req: Request) => {
             id: m.id, home: m.homeTeam?.name || "", away: m.awayTeam?.name || "",
             round: roundNum, league: leagueName, status, kickoff: m.expectedStart || "",
             oddHome, oddDraw, oddAway, scoreHome, scoreAway, minute, goals,
+            predeterminedScore: predeterminedScore || null, // v14: for LEAK badge
             prediction, // v13: { predictedHome, predictedAway, odds, topScores }
           });
         }
