@@ -61,3 +61,28 @@ Stage Summary:
 - Frontend RAPID mode when next round start within 120s
 - All playout fetches are parallel (current + upcoming + previous) — ~200ms total
 - Pushed as commit 09d34b3
+---
+Task ID: 1
+Agent: Main Agent
+Task: Implement v13 Score Exact Odds Prediction in edge function and frontend
+
+Work Log:
+- Explored 60+ Sporty API endpoints — only 4 work: /matches, /ranking, /results, /round/{N}/playout
+- Discovered /results returns scores but with id=0 (unusable for matching)
+- Found "Score exact" market in /matches with 28 outcomes per match — lowest odds = most likely result
+- Implemented extractScoreExactPrediction() in edge function to parse CS odds
+- Added two-tier early data system:
+  - Tier 1 (ODDS): Available immediately when round appears (~2min before playout)
+  - Tier 2 (PLAYOUT): Confirmed score from playout endpoint
+- Updated frontend types with ScoreExactPrediction interface
+- Updated use-live-matches hook to pass through prediction field
+- Updated MatchCard in LiveMatches.tsx to show cyan ODDS badge + predicted score
+- Fixed playout 0-0 handling (matches with no goals default to 0-0)
+- Pushed to GitHub as HITIFok (commit 1da0729)
+
+Stage Summary:
+- v13 deployed with Score Exact odds prediction
+- Edge function extracts lowest-odds scoreline from "Score exact" market
+- Frontend displays prediction with cyan badge on betting matches
+- Two-tier system: ODDS (immediate) → LEAK (playout confirmed)
+- All changes pushed to GitHub: https://github.com/HITIFok/remix-of-virtumatch-predictor-86
