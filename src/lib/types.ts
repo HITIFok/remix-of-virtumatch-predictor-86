@@ -4,6 +4,13 @@ export interface PredeterminedScore {
   minute: number;
 }
 
+export interface ScoreExactOdds {
+  predictedHome: number;
+  predictedAway: number;
+  odds: number;
+  topScores: { score: string; home: number; away: number; odds: number }[];
+}
+
 export interface ScrapedMatch {
   id?: number;
   league: string;
@@ -22,6 +29,7 @@ export interface ScrapedMatch {
   scoreAway?: number | null;
   stats?: Record<string, any>;
   predeterminedScore?: PredeterminedScore | null;
+  prediction?: ScoreExactOdds | null; // v14: Score exact odds from Sporty API (Tier 1)
 }
 
 export interface MatchResult {

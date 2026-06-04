@@ -73,6 +73,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         scoreAway: m.scoreAway ?? null,
         stats: m.goals ? { goals: m.goals } : null,
         predeterminedScore: m.predeterminedScore || null,
+        prediction: m.prediction || null, // v14: Score exact odds from Sporty API
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
@@ -126,8 +127,13 @@ export function useLiveMatches() {
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
-  // Charger les données depuis Supabase (cache)
-  const loadFromDatabase = useCallback(async (leagueName?: string) => {
+  // Charger les données depuis Supabase (cache) — version silencieuse qui retourne les données sans setter le state
+  const loadFromDatabaseRaw = useCallback(async (leagueName?: string): Promise<{
+    matches: ScrapedMatch[];
+    results: MatchResult[];
+    ranking: RankingEntry[];
+    lastUpdate: string;
+  } | null> => {
     const targetLeague = leagueName || selectedLeague.name;
 
     try {
@@ -138,78 +144,68 @@ export function useLiveMatches() {
         .order("scraped_at", { ascending: false });
 
       if (dbError) throw new Error(dbError.message);
-      if (!data || data.length === 0) return false;
+      if (!data || data.length === 0) return null;
 
       const rawData = data as ScrapedDataRaw[];
       const matchesEntry = rawData.find(d => d.data_type === "matches");
       const resultsEntry = rawData.find(d => d.data_type === "results");
       const rankingEntry = rawData.find(d => d.data_type === "ranking");
 
-      if (matchesEntry?.payload && Array.isArray(matchesEntry.payload)) {
-        // During polling, don't overwrite API data with stale cache
-        if (apiDataReceivedRef.current) {
-          return true;
-        }
-        setMatches(matchesEntry.payload.map((m: any) => ({
-          league: m.league || targetLeague,
-          home: m.home || "",
-          away: m.away || "",
-          kickoff: m.kickoff || m.expectedStart || "",
-          oddHome: m.oddHome || 0,
-          oddDraw: m.oddDraw || 0,
-          oddAway: m.oddAway || 0,
-          status: m.status || "upcoming",
-          minute: m.minute || null,
-          scoreHome: m.scoreHome ?? null,
-          scoreAway: m.scoreAway ?? null,
-          stats: m.stats || null,
-          id: m.id,
-          round: m.round,
-        })));
-      } else {
-        setMatches([]);
-      }
+      const matches: ScrapedMatch[] = matchesEntry?.payload && Array.isArray(matchesEntry.payload)
+        ? matchesEntry.payload.map((m: any) => ({
+            league: m.league || targetLeague,
+            home: m.home || "",
+            away: m.away || "",
+            kickoff: m.kickoff || m.expectedStart || "",
+            oddHome: m.oddHome || 0,
+            oddDraw: m.oddDraw || 0,
+            oddAway: m.oddAway || 0,
+            status: m.status || "upcoming",
+            minute: m.minute || null,
+            scoreHome: m.scoreHome ?? null,
+            scoreAway: m.scoreAway ?? null,
+            stats: m.stats || null,
+            id: m.id,
+            round: m.round,
+          }))
+        : [];
 
-      if (resultsEntry?.payload && Array.isArray(resultsEntry.payload)) {
-        setResults(resultsEntry.payload.map((r: any) => ({
-          home: r.home || "",
-          away: r.away || "",
-          scoreHome: r.scoreHome ?? 0,
-          scoreAway: r.scoreAway ?? 0,
-          league: r.league || targetLeague,
-          matchday: r.matchday || r.round || "",
-        })));
-      } else {
-        setResults([]);
-      }
+      const results: MatchResult[] = resultsEntry?.payload && Array.isArray(resultsEntry.payload)
+        ? resultsEntry.payload.map((r: any) => ({
+            home: r.home || "",
+            away: r.away || "",
+            scoreHome: r.scoreHome ?? 0,
+            scoreAway: r.scoreAway ?? 0,
+            league: r.league || targetLeague,
+            matchday: r.matchday || r.round || "",
+          }))
+        : [];
 
-      if (rankingEntry?.payload && Array.isArray(rankingEntry.payload)) {
-        setRanking(rankingEntry.payload.map((t: any) => ({
-          position: t.position || 0,
-          team: t.team || t.name || "",
-          played: t.played || 0,
-          won: t.won || 0,
-          drawn: t.drawn || t.draw || 0,
-          lost: t.lost || 0,
-          goalsFor: t.goalsFor || 0,
-          goalsAgainst: t.goalsAgainst || 0,
-          goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
-          points: t.points || 0,
-        })));
-      } else {
-        setRanking([]);
-      }
+      const ranking: RankingEntry[] = rankingEntry?.payload && Array.isArray(rankingEntry.payload)
+        ? rankingEntry.payload.map((t: any) => ({
+            position: t.position || 0,
+            team: t.team || t.name || "",
+            played: t.played || 0,
+            won: t.won || 0,
+            drawn: t.drawn || t.draw || 0,
+            lost: t.lost || 0,
+            goalsFor: t.goalsFor || 0,
+            goalsAgainst: t.goalsAgainst || 0,
+            goalDifference: (t.goalsFor || 0) - (t.goalsAgainst || 0),
+            points: t.points || 0,
+          }))
+        : [];
 
-      setLastUpdate(matchesEntry?.scraped_at || rawData[0]?.scraped_at || new Date().toISOString());
-      setDataSource("cache");
-      return true;
+      const lastUpdate = matchesEntry?.scraped_at || rawData[0]?.scraped_at || new Date().toISOString();
+      return { matches, results, ranking, lastUpdate };
     } catch (err) {
-      console.error("[loadFromDatabase] Erreur cache:", err);
-      return false;
+      console.error("[loadFromDatabaseRaw] Erreur cache:", err);
+      return null;
     }
   }, [selectedLeague]);
 
-  // Charger les données : API proxy en parallèle avec cache
+  // Charger les données : API proxy en parallèle avec cache (silencieux)
+  // v14 FIX: loadFromDatabaseRaw ne set plus le state directement → élimine le flicker Cache ↔ API
   const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string, isPoll = false) => {
     // Prevent overlapping fetches
     if (fetchingRef.current) return;
@@ -222,15 +218,15 @@ export function useLiveMatches() {
       }
       setError(null);
 
-      // Lancer les deux en parallèle
-      // During polling, skip cache loading if we already have API data
+      // Run API + cache in parallel. Cache fetch is SILENT (no setState) to prevent flicker.
+      // fetchData itself decides which data to use AFTER both resolve.
       const shouldLoadCache = !apiDataReceivedRef.current || !isPoll;
-      const [apiData, cacheSuccess] = await Promise.all([
+      const [apiData, cacheData] = await Promise.all([
         fetchFromAPI(leagueId, leagueName),
-        shouldLoadCache ? loadFromDatabase(leagueName) : Promise.resolve(true),
+        shouldLoadCache ? loadFromDatabaseRaw(leagueName) : Promise.resolve(null),
       ]);
 
-      // Si l'API a répondu, utiliser ses données (temps réel)
+      // API wins always — set state only once (no flicker)
       if (apiData && apiData.matches.length > 0) {
         setMatches(apiData.matches);
         setResults(apiData.results);
@@ -242,7 +238,14 @@ export function useLiveMatches() {
         if (apiData.nextRoundStart) {
           nextRoundStartRef.current = apiData.nextRoundStart;
         }
-      } else if (!cacheSuccess && !isPoll) {
+      } else if (cacheData && cacheData.matches.length > 0 && !isPoll) {
+        // Fallback to cache ONLY on initial load (not during polls)
+        setMatches(cacheData.matches);
+        setResults(cacheData.results);
+        setRanking(cacheData.ranking);
+        setLastUpdate(cacheData.lastUpdate);
+        setDataSource("cache");
+      } else if (!apiDataReceivedRef.current && !isPoll) {
         // Message d'erreur convivial : l'API ET le cache ont échoué
         setError(getFriendlyError(leagueName));
       }
@@ -253,12 +256,27 @@ export function useLiveMatches() {
       }
       fetchingRef.current = false;
     }
-  }, [loadFromDatabase]);
+  }, [loadFromDatabaseRaw]);
 
   // Charger au démarrage
   const fetchMatches = useCallback(async () => {
     await fetchData(selectedLeagueId, selectedLeague.name);
   }, [fetchData, selectedLeagueId, selectedLeague.name]);
+
+  // Alias pour compatibilité (utilisé en fallback)
+  const loadFromDatabase = useCallback(async (leagueName?: string) => {
+    const data = await loadFromDatabaseRaw(leagueName);
+    if (data && data.matches.length > 0) {
+      if (apiDataReceivedRef.current) return true;
+      setMatches(data.matches);
+      setResults(data.results);
+      setRanking(data.ranking);
+      setLastUpdate(data.lastUpdate);
+      setDataSource("cache");
+      return true;
+    }
+    return false;
+  }, [loadFromDatabaseRaw]);
 
   // Refresh manuel
   const refreshData = useCallback(async () => {
