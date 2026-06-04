@@ -108,3 +108,27 @@ Stage Summary:
 - v14 fixes: LEAK badge now appears (predeterminedScore sent), flickering eliminated (silent cache fetch), LEAK > ODDS priority enforced
 - Colors: LEAK = violet, ODDS = cyan
 - **MANUAL STEP NEEDED**: Deploy edge function to Supabase: `supabase functions deploy fetch-live --no-verify-jwt`
+
+---
+Task ID: repo-cleanup
+Agent: main
+Task: Clone repo, analyze all files, remove obsolete/dead code
+
+Work Log:
+- Cloned repo to /tmp, ran exhaustive analysis of ALL files
+- Traced every import/export across the entire codebase
+- Identified 36 dead files, 23 unused npm dependencies, 5 dead exports
+- Removed dead source files: scraper.ts, NavLink.tsx, toaster.tsx, use-toast.ts, sidebar.tsx, use-mobile.tsx, test/
+- Removed 30 unused shadcn/ui components (accordion, avatar, calendar, carousel, chart, etc.)
+- Removed 2 unused edge functions: scrape-odds, push-odds (never called from frontend)
+- Cleaned dead exports from storage.ts: getHistory, clearHistory, loginAdmin, getSettings, saveSettings
+- Removed 23 unused npm packages from package.json (20 radix, cmdk, date-fns, recharts, react-hook-form, etc.)
+- Reinstalled node_modules (751 packages, down from ~900+)
+- TypeScript compiles ✅, Vite build ✅
+- Pushed to GitHub
+
+Stage Summary:
+- Codebase reduced by ~40% in file count (80+ → 45 source files)
+- 23 npm dependencies removed
+- 2 edge functions removed
+- Build verified: tsc --noEmit ✅, vite build ✅
