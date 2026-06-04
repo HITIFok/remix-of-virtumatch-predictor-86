@@ -132,3 +132,22 @@ Stage Summary:
 - 23 npm dependencies removed
 - 2 edge functions removed
 - Build verified: tsc --noEmit ✅, vite build ✅
+---
+Task ID: 1
+Agent: main
+Task: Fix CORS error blocking fetch-live edge function calls from Vercel frontend
+
+Work Log:
+- Analyzed browser error: `x-device-id` header rejected in CORS preflight
+- Found 2 root causes in edge functions:
+  1. `Access-Control-Allow-Headers` missing `x-device-id`
+  2. `Access-Control-Allow-Methods` missing `POST` (frontend uses `supabase.functions.invoke()` which sends POST)
+- Fixed `fetch-live/index.ts`: added `x-device-id, accept, cache-control` to allowed headers, added `POST` to allowed methods, bumped to v15
+- Fixed `auto-scrape/index.ts`: same CORS update
+- `analyze-match` and `verify-predictions` already had `x-device-id` on remote (no change needed)
+- Pushed to GitHub: `fb873ca`
+
+Stage Summary:
+- CORS fix committed and pushed as v15
+- User must redeploy `fetch-live` edge function to Supabase for fix to take effect
+- The deployed Vercel frontend was sending `x-device-id` header and POST method, both now allowed
