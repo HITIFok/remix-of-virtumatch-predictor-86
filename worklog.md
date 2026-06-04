@@ -21,3 +21,22 @@ Stage Summary:
 - LEAK badge and purple styling for preloaded matches
 - No more Cache/Temps réel flickering
 - Deploy command needed: `supabase functions deploy fetch-live` (requires SUPABASE_ACCESS_TOKEN)
+
+---
+Task ID: 1
+Agent: main
+Task: Fix UI flickering (📦 Cache ↔ 🟢 Temps réel) and remove hardcoded API fallbacks
+
+Work Log:
+- Analyzed logs: API working (no 403), preloaded=0 (betting round 2 playout not available yet)
+- Identified flickering root cause: `matches` in useEffect dependency array caused re-runs on every setMatches() during polls
+- Fixed use-live-matches.ts: Added matchesRef, removed matches from deps, fixed setLoading(false) in finally
+- Fixed LiveMatches.tsx: Removed duplicate fetchMatches() call
+- Rewrote fetch-live/index.ts to v11: removed aggressive polling, removed hardcoded fallbacks, uses Supabase Secrets only
+- Added env var debug logging to edge function
+
+Stage Summary:
+- Commit 134643a pushed to GitHub (force push after rebase conflicts)
+- Edge function v11: ~200ms response (was ~400-600ms with v9 aggressive polling)
+- Frontend v11: useEffect stable during polls (no more re-runs on setMatches)
+- preloaded=0 is expected: betting round 2 playout data hasn't appeared yet
