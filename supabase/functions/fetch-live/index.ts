@@ -1,11 +1,12 @@
-// fetch-live/index.ts — Supabase Edge Function v11
+// fetch-live/index.ts — Supabase Edge Function v12
 // Fetches VIRTUAL match data, ranking, results from Sporty Instant Leagues API
 //
-// v11: FAST SINGLE-CHECK — no aggressive polling (frontend handles RAPID polling)
-//   - Removes 15x400ms internal polling (was 6s per call)
-//   - Single playout check per round (~200ms total response)
-//   - Frontend polls at 500ms (RAPID) or 5s (NORMAL) based on match status
-//   - Uses ONLY Supabase Secrets for API_BASE, Origin, Referer (no hardcoded fallbacks)
+// v12: PREDICT-AHEAD STRATEGY — catch playout data BEFORE round officially starts
+//   - Uses expectedStart timestamp from /matches to predict next round
+//   - Checks playout for the UPCOMING round (not just current betting round)
+//   - Also checks playout for current round + previous round
+//   - Frontend RAPID polling at 500ms when any betting round is near
+//   - Each virtual football round lasts ~2 minutes, matches are simulated
 
 // ─── CORS ───────────────────────────────────────────────────────────
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
@@ -34,7 +35,6 @@ function env(raw: string | undefined): string {
   return raw.replace(/^["']|["']$/g, "").trim();
 }
 
-// API base URL from Supabase Secret ONLY (no fallback)
 const API_BASE = env(Deno.env.get("SPORTY_API_BASE"));
 
 // ─── Dynamic headers with env var support ───────────────────────────
@@ -76,7 +76,7 @@ function buildHeaders(): Record<string, string> {
 // Sporty API fetching
 // ═══════════════════════════════════════════════════════════════════════
 
-async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
+async function fetchAPI(path: string, timeoutMs = 6000): Promise<any> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -88,7 +88,7 @@ async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
     clearTimeout(timeoutId);
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      console.log(`[Sporty] ${res.status} for ${path} — ${text.substring(0, 200)}`);
+      console.log(`[Sporty] ${res.status} for ${path}`);
       return null;
     }
     return await res.json();
@@ -99,7 +99,7 @@ async function fetchAPI(path: string, timeoutMs = 8000): Promise<any> {
 }
 
 /**
- * Fetch playout data for a specific round (single check, no polling).
+ * Fetch playout data for a specific round (single check).
  * Returns Map keyed by match ID (number).
  */
 async function fetchPlayout(leagueId: string, round: number): Promise<Map<number, any>> {
@@ -114,7 +114,6 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
         const matchId = m.id;
         const goals = m.goals || [];
         if (matchId) {
-          // Handle 0-0 matches: if no goals, score is 0-0
           const lastGoal = goals.length > 0 ? goals[goals.length - 1] : null;
           playoutResults.set(matchId, {
             scoreHome: lastGoal?.homeScore || 0,
@@ -127,10 +126,8 @@ async function fetchPlayout(leagueId: string, round: number): Promise<Map<number
         }
       }
     }
-    if (playoutResults.size === 0) {
-      console.log(`[Sporty] Playout round ${round}: empty (0 matches)`);
-    } else {
-      console.log(`[Sporty] Playout for round ${round}: ${playoutResults.size} results`);
+    if (playoutResults.size > 0) {
+      console.log(`[Sporty] Playout round ${round}: ${playoutResults.size} results ✓`);
     }
   } catch (e: any) {
     console.log(`[Sporty] Playout error round ${round}: ${e.message}`);
@@ -148,6 +145,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
   finishedCount: number;
   preloadedCount: number;
   currentRound: number;
+  nextRoundStart: string | null;
 } | null> {
   const leagueName = LEAGUES[leagueId];
   if (!leagueName) {
@@ -169,15 +167,19 @@ async function fetchFromSporty(leagueId: string): Promise<{
     return null;
   }
 
-  // Step 2: Identify the CURRENT betting round and collect match IDs
+  // Step 2: Identify the CURRENT betting round and upcoming round
   let currentBettingRound = 0;
+  let upcomingRound = 0;
+  let nextRoundStart: string | null = null;
   const currentRoundMatchIds = new Set<number>();
+  const upcomingRoundMatchIds = new Set<number>();
 
   if (matchesData?.rounds) {
     for (const rd of matchesData.rounds) {
       const rn = rd.roundNumber || 0;
+      const hasMatches = (rd.matches || []).length > 0;
 
-      // Find the round with active betting
+      // Find the round with active betting (current)
       for (const m of rd.matches || []) {
         const hasBetting = m.eventBetTypes?.some((bt: any) =>
           bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
@@ -186,9 +188,15 @@ async function fetchFromSporty(leagueId: string): Promise<{
           currentBettingRound = rn;
         }
       }
+
+      // Find the NEXT round with matches (upcoming)
+      if (hasMatches && rn > currentBettingRound && upcomingRound === 0) {
+        upcomingRound = rn;
+        nextRoundStart = rd.expectedStart || null;
+      }
     }
 
-    // Collect match IDs for the current betting round
+    // Collect match IDs for current betting round
     if (currentBettingRound > 0) {
       for (const rd of matchesData.rounds) {
         if (rd.roundNumber === currentBettingRound) {
@@ -199,35 +207,67 @@ async function fetchFromSporty(leagueId: string): Promise<{
         }
       }
     }
+
+    // Collect match IDs for upcoming round
+    if (upcomingRound > 0) {
+      for (const rd of matchesData.rounds) {
+        if (rd.roundNumber === upcomingRound) {
+          for (const m of rd.matches || []) {
+            if (m.id) upcomingRoundMatchIds.add(m.id);
+          }
+          break;
+        }
+      }
+    }
   }
 
-  console.log(`[Sporty] Current betting round: ${currentBettingRound}, match IDs: ${currentRoundMatchIds.size}`);
+  const now = new Date();
+  const nextStart = nextRoundStart ? new Date(nextRoundStart) : null;
+  const timeUntilNext = nextStart ? Math.round((nextStart.getTime() - now.getTime()) / 1000) : -1;
+  console.log(`[Sporty] Betting round: ${currentBettingRound} (${currentRoundMatchIds.size} IDs), Next round: ${upcomingRound} (${upcomingRoundMatchIds.size} IDs, starts in ${timeUntilNext}s)`);
 
-  // Step 3: Fetch playout for the current betting round (single check, no polling)
-  // Frontend handles RAPID polling at 500ms — no need for internal polling
-  let playoutMatches = new Map<number, any>();
+  // Step 3: Fetch playout for MULTIPLE rounds in parallel (v12 PREDICT-AHEAD)
+  // Check: current betting round, upcoming round, and previous round
+  const playoutPromises: Promise<Map<number, any>>[] = [];
+  const playoutRoundNumbers: number[] = [];
 
   if (currentBettingRound > 0) {
-    playoutMatches = await fetchPlayout(leagueId, currentBettingRound);
+    playoutPromises.push(fetchPlayout(leagueId, currentBettingRound));
+    playoutRoundNumbers.push(currentBettingRound);
   }
 
-  // Step 4: Also check previous round for any live matches still playing
-  const bettingMatchCount = matchesData?.rounds
-    ?.flatMap((rd: any) => rd.matches || [])
-    .filter((m: any) => m.eventBetTypes?.some((bt: any) =>
-      bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
-    )).length || 0;
+  // KEY STRATEGY: Also check the UPCOMING round's playout
+  // The playout data often appears BEFORE the round officially starts
+  // If upcoming round starts within 120 seconds, check its playout too
+  if (upcomingRound > 0 && timeUntilNext <= 120 && timeUntilNext >= -30) {
+    playoutPromises.push(fetchPlayout(leagueId, upcomingRound));
+    playoutRoundNumbers.push(upcomingRound);
+    console.log(`[Sporty] ⚡ PREDICT-AHEAD: Checking playout for upcoming round ${upcomingRound} (${timeUntilNext}s until start)`);
+  }
 
-  if (currentBettingRound > 1 && playoutMatches.size === 0 && bettingMatchCount < 10) {
-    const prevPlayout = await fetchPlayout(leagueId, currentBettingRound - 1);
-    for (const [matchId, data] of prevPlayout) {
-      if (matchId) playoutMatches.set(matchId, data);
+  // Also check previous round
+  if (currentBettingRound > 1) {
+    playoutPromises.push(fetchPlayout(leagueId, currentBettingRound - 1));
+    playoutRoundNumbers.push(currentBettingRound - 1);
+  }
+
+  // Execute all playout fetches in parallel
+  const playoutResults = await Promise.all(playoutPromises);
+
+  // Merge all playout results into a single map
+  const playoutMatches = new Map<number, any>();
+  for (let i = 0; i < playoutResults.length; i++) {
+    const roundNum = playoutRoundNumbers[i];
+    for (const [matchId, data] of playoutResults[i]) {
+      if (!playoutMatches.has(matchId)) {
+        playoutMatches.set(matchId, data);
+      }
     }
   }
 
   console.log(`[Sporty] Total playout results available: ${playoutMatches.size}`);
 
-  // Step 5: Build matches array with correct status priority
+  // Step 4: Build matches array with correct status priority
   const matches: any[] = [];
   let liveCount = 0, bettingCount = 0, finishedCount = 0, preloadedCount = 0;
 
@@ -349,7 +389,7 @@ async function fetchFromSporty(leagueId: string): Promise<{
 
   console.log(`[Sporty] ${leagueName}: matches=${matches.length}, ranking=${ranking.length}, results=${results.length}, preloaded=${preloadedCount}, live=${liveCount}, betting=${bettingCount}, finished=${finishedCount}`);
 
-  return { matches, ranking, results, liveCount, bettingCount, finishedCount, preloadedCount, currentRound: currentBettingRound };
+  return { matches, ranking, results, liveCount, bettingCount, finishedCount, preloadedCount, currentRound: currentBettingRound, nextRoundStart };
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -367,19 +407,12 @@ Deno.serve(async (req: Request) => {
     const leagueName = LEAGUES[leagueId] || "Unknown League";
 
     const startTime = Date.now();
-    console.log(`=== fetch-live v11: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v12: ${leagueName} (${leagueId}) ===`);
 
     if (!API_BASE) {
-      console.error(`[CONF] SPORTY_API_BASE is not set! Check Supabase Secrets.`);
+      console.error(`[CONF] SPORTY_API_BASE is not set!`);
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: "SPORTY_API_BASE secret not configured",
-          source: "error",
-          matches: [],
-          results: [],
-          ranking: [],
-        }),
+        JSON.stringify({ success: false, error: "SPORTY_API_BASE not configured", source: "error", matches: [], results: [], ranking: [] }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -390,14 +423,7 @@ Deno.serve(async (req: Request) => {
 
     if (!data) {
       return new Response(
-        JSON.stringify({
-          success: false,
-          error: "Sporty API unavailable",
-          source: "sporty",
-          matches: [],
-          results: [],
-          ranking: [],
-        }),
+        JSON.stringify({ success: false, error: "Sporty API unavailable", source: "sporty", matches: [], results: [], ranking: [] }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -416,26 +442,16 @@ Deno.serve(async (req: Request) => {
         finishedCount: data.finishedCount,
         preloadedCount: data.preloadedCount,
         currentRound: data.currentRound,
+        nextRoundStart: data.nextRoundStart,
         scrapedAt: new Date().toISOString(),
-        counts: {
-          matches: data.matches.length,
-          ranking: data.ranking.length,
-          results: data.results.length,
-        },
+        counts: { matches: data.matches.length, ranking: data.ranking.length, results: data.results.length },
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: any) {
     console.error("[fetch-live] error:", error.message);
     return new Response(
-      JSON.stringify({
-        success: false,
-        error: error.message,
-        source: "error",
-        matches: [],
-        results: [],
-        ranking: [],
-      }),
+      JSON.stringify({ success: false, error: error.message, source: "error", matches: [], results: [], ranking: [] }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
