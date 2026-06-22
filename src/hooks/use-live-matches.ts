@@ -206,10 +206,19 @@ export function useLiveMatches() {
 
   // Charger les données : API proxy en parallèle avec cache (silencieux)
   // v14 FIX: loadFromDatabaseRaw ne set plus le state directement → élimine le flicker Cache ↔ API
+  // v17 FIX: fetchVersionRef used to invalidate stale fetches on league change
   const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string, isPoll = false) => {
-    // Prevent overlapping fetches
-    if (fetchingRef.current) return;
+    // v17: Allow only one non-poll fetch at a time, but ALWAYS allow polls
+    // to be interrupted by a league change (non-poll fetch).
+    if (isPoll && fetchingRef.current) return;
+    if (!isPoll && fetchingRef.current) {
+      // A poll is running — cancel it by resetting the flag
+      fetchingRef.current = false;
+    }
     fetchingRef.current = true;
+
+    // Capture the current version — if it changes (league switch), discard results
+    const thisVersion = fetchVersionRef.current;
 
     try {
       // For polling, don't show loading state
@@ -225,6 +234,12 @@ export function useLiveMatches() {
         fetchFromAPI(leagueId, leagueName),
         shouldLoadCache ? loadFromDatabaseRaw(leagueName) : Promise.resolve(null),
       ]);
+
+      // v17: If version changed during fetch, these results are STALE — discard them
+      if (fetchVersionRef.current !== thisVersion) {
+        console.log(`[fetchData] Discarded stale results for ${leagueName} (version ${thisVersion} → ${fetchVersionRef.current})`);
+        return;
+      }
 
       // API wins always — set state only once (no flicker)
       if (apiData && apiData.matches.length > 0) {
@@ -290,6 +305,10 @@ export function useLiveMatches() {
     const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
     if (!newLeague) return;
 
+    // v17: Increment version to invalidate any in-flight fetch
+    fetchVersionRef.current++;
+    fetchingRef.current = false;
+
     setSelectedLeagueId(leagueId);
     setMatches([]);
     setResults([]);
@@ -297,7 +316,9 @@ export function useLiveMatches() {
     setError(null);
     setLastUpdate(null);
     setCurrentRound(0);
+    setDataSource("cache");
     apiDataReceivedRef.current = false;
+    nextRoundStartRef.current = null;
 
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
