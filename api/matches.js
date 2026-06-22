@@ -35,6 +35,7 @@ const ALLOWED_ORIGINS = [
   "https://remix-of-virtumatch-predictor-86.vercel.app",
 ];
 
+
 // ─── Parsing : sporty-tech API response → app format ────────────────────────
 
 function parseSportyMatches(matchesData, leagueName) {

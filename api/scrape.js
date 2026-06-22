@@ -19,6 +19,7 @@ const ALLOWED_ORIGINS = [
   "https://remix-of-virtumatch-predictor-86.vercel.app",
 ];
 
+
 module.exports = async function handler(req, res) {
   // Dynamic CORS: allow configured origins + same-host
   const origin = req.headers.origin || "";
