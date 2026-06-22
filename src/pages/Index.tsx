@@ -9,7 +9,10 @@ import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } fr
 import { saveToHistory } from "@/lib/storage";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Sparkles, TrendingUp } from "lucide-react";
+import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
+import { Button } from "@/components/ui/button";
+
+const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || "";
 
 export default function Index() {
   const [results, setResults] = useState<MatchResult[]>([]);
@@ -69,6 +72,32 @@ export default function Index() {
       <div className="container-responsive relative z-10">
         <AppHeader />
         <PremiumGate onUnlocked={() => setPremiumRefreshKey(k => k + 1)} />
+
+        {/* APK Download Banner */}
+        {APK_DOWNLOAD_URL && (
+          <a
+            href={APK_DOWNLOAD_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-4 flex items-center gap-3 p-3.5 rounded-2xl border border-fire/30 bg-gradient-to-r from-fire/10 to-gold/10 hover:from-fire/20 hover:to-gold/20 transition-all duration-300 group no-underline"
+          >
+            <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-fire/20 flex items-center justify-center group-hover:bg-fire/30 transition-colors">
+              <Smartphone size={20} className="text-fire" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-display font-bold text-foreground">
+                Installer l'application Android
+              </p>
+              <p className="text-[10px] text-muted-foreground">
+                Téléchargez l'APK pour une expérience optimale
+              </p>
+            </div>
+            <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-fire flex items-center justify-center group-hover:scale-105 transition-transform">
+              <Download size={16} className="text-white" />
+            </div>
+          </a>
+        )}
+
         <div className="mt-6">
           <MatchForm onAnalyze={handleAnalyze} loading={loading} />
         </div>
