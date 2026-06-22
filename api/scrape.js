@@ -14,12 +14,17 @@ const HEADERS = {
 };
 
 // CORS: restrict to configured origin
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://virtual-match-hitifproject.vercel.app";
+const ALLOWED_ORIGINS = [
+  "https://virtual-match-hitifproject.vercel.app",
+  "https://remix-of-virtumatch-predictor-86.vercel.app",
+];
 
 module.exports = async function handler(req, res) {
-  // Dynamic CORS: only allow configured origin
+  // Dynamic CORS: allow configured origins + same-host
   const origin = req.headers.origin || "";
-  if (origin === ALLOWED_ORIGIN) {
+  const reqHost = req.headers.host || "";
+  const isAllowed = ALLOWED_ORIGINS.includes(origin) || (origin && (() => { try { return new URL(origin).hostname === reqHost; } catch { return false; } })());
+  if (isAllowed) {
     res.setHeader("Access-Control-Allow-Origin", origin);
   }
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");

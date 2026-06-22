@@ -15,6 +15,7 @@ const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 // ─── CORS dynamique : whitelist des origines autorisées ──────────────────────
 const ALLOWED_ORIGINS = [
   'https://virtual-match-hitifproject.vercel.app',
+  'https://remix-of-virtumatch-predictor-86.vercel.app',
   'https://localhost',           // Capacitor Android (HTTPS)
   'capacitor://localhost',      // Capacitor Android (custom scheme)
   'http://localhost',           // Dev local
@@ -22,9 +23,19 @@ const ALLOWED_ORIGINS = [
   'http://localhost:4173',       // Vite preview
 ];
 
+function isOriginAllowed(origin, reqHost) {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  // Autoriser tout domaine *.vercel.app si le host correspond
+  try {
+    const originHost = new URL(origin).hostname;
+    if (originHost === reqHost) return true;
+  } catch {}
+  return false;
+}
+
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin)) {
+  if (isOriginAllowed(origin, req.headers.host || '')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -82,7 +93,7 @@ export default async function handler(req, res) {
   // Bloquer les origines non-autorisées (bloquer les sites malveillants)
   const origin = req.headers.origin || '';
   const isSameHost = req.headers.host?.includes('vercel.app') || req.headers.host?.includes('localhost');
-  const isAllowed = ALLOWED_ORIGINS.includes(origin) || (!origin && isSameHost);
+  const isAllowed = isOriginAllowed(origin, req.headers.host || '') || (!origin && isSameHost);
   if (!isAllowed) {
     return res.status(403).json({ success: false, error: 'Origin non autorisé' });
   }

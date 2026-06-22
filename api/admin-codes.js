@@ -14,6 +14,7 @@ const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 // CORS dynamique
 const ALLOWED_ORIGINS = [
   'https://virtual-match-hitifproject.vercel.app',
+  'https://remix-of-virtumatch-predictor-86.vercel.app',
   'https://localhost',
   'capacitor://localhost',
   'http://localhost',
@@ -21,9 +22,18 @@ const ALLOWED_ORIGINS = [
   'http://localhost:4173',
 ];
 
+function isOriginAllowed(origin, reqHost) {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  try {
+    const originHost = new URL(origin).hostname;
+    if (originHost === reqHost) return true;
+  } catch {}
+  return false;
+}
+
 function setCorsHeaders(req, res) {
   const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGINS.includes(origin)) {
+  if (isOriginAllowed(origin, req.headers.host || '')) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
