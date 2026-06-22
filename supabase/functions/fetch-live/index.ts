@@ -180,10 +180,19 @@ Deno.serve(async (req: Request) => {
 
   try {
     const url = new URL(req.url);
-    const leagueId = url.searchParams.get("leagueId") || "8035";
+    // Read leagueId from query params OR POST body (supabase.functions.invoke sends body)
+    let leagueId = url.searchParams.get("leagueId");
+    if (!leagueId) {
+      try {
+        const body = await req.json();
+        leagueId = body?.leagueId || "8035";
+      } catch {
+        leagueId = "8035";
+      }
+    }
     const leagueName = LEAGUES[leagueId] || "Unknown League";
     const mode = url.searchParams.get("mode") || "";
-    console.log(`=== fetch-live v15: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v16: ${leagueName} (${leagueId}) ===`);
 
     // === LIGHTWEIGHT PLOAYOUT MODE ===
     if (mode === "playout") {
