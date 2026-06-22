@@ -103,14 +103,13 @@ export function usePredictions() {
         await autoVerifyPredictions()
       }
 
-      // Ensuite charger les prédictions (maintenant à jour)
-      const deviceId = getDeviceId()
+      // Charger toutes les prédictions (pas de filtre device_id pour
+      // que web + APK affichent le même historique complet)
       const { data: predData, error: predError } = await supabase
         .from('predictions')
         .select('*')
-        .eq('device_id', deviceId)
         .order('created_at', { ascending: false })
-        .limit(200)
+        .limit(500)
 
       if (predError) {
         console.error('Erreur chargement prédictions:', predError)
