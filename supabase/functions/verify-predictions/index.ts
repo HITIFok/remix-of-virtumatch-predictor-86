@@ -1,7 +1,9 @@
-// verify-predictions/index.ts — Supabase Edge Function v18
+// verify-predictions/index.ts — Supabase Edge Function v19
 // Verifies pending predictions by comparing with round-specific results
 // NO imports — uses Deno.serve() + native fetch
 //
+// v19: CORS fix — wildcard origin (matches fetch-live pattern)
+//      + x-device-id in allowed headers for Capacitor APK
 // v18: Round-aware verification
 //   - Fetches results per league, organized by round number
 //   - Each prediction must match by: match_id OR (round + team names)
@@ -9,10 +11,9 @@
 //   - Direct API call (always fresh, no cache)
 //   - Falls back to scraped_data DB if API fails
 
-const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "*";
 const corsHeaders: Record<string, string> = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-device-id, accept, cache-control",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 

@@ -66,30 +66,29 @@ export function usePredictions() {
   const [error, setError] = useState<string | null>(null)
 
   // Vérifier automatiquement les prédictions en attente (device-scoped)
+  // v17 FIX: Use supabase.functions.invoke() instead of raw fetch
+  //   Raw fetch fails in APK (Capacitor) due to CORS — origin is capacitor://localhost
+  //   but verify-predictions may restrict ALLOWED_ORIGIN. supabase.functions.invoke()
+  //   handles auth headers + CORS automatically via the Supabase client.
   const autoVerifyPredictions = useCallback(async () => {
     try {
-      const supabaseUrl = import.meta.env.VITE_DATABASE_URL
-      const anonKey = import.meta.env.VITE_DATABASE_ANON_KEY
       const deviceId = getDeviceId()
 
-      // Vérifier silencieusement en arrière-plan — envoie device_id pour filtrer
-      const response = await fetch(`${supabaseUrl}/functions/v1/verify-predictions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': anonKey,
-          'Authorization': `Bearer ${anonKey}`
-        },
-        body: JSON.stringify({ deviceId })
+      const { data, error } = await supabase.functions.invoke('verify-predictions', {
+        body: { deviceId },
       })
 
-      if (response.ok) {
-        const data = await response.json()
+      if (error) {
+        console.warn('[autoVerify] Edge Function error:', error.message)
+        return null
+      }
+
+      if (data) {
         console.log('[autoVerify]', data.verified || 0, 'prediction(s) vérifiée(s)')
         return data
       }
     } catch (err) {
-      console.log('Auto-verify skipped:', err)
+      console.warn('[autoVerify] skipped:', err)
     }
     return null
   }, [])
