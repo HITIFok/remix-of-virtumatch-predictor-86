@@ -2,10 +2,11 @@
 // AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
 // NO imports — uses Deno.serve() + native fetch
 //
-// v15: Added intelligent chunking to stay within Groq TPM limits.
-//      Matches are split into chunks of CHUNK_SIZE (default 3).
-//      If 413 (request too large), automatically retry with smaller chunks.
-//      Results are merged across all chunks.
+// v16: Improved prompt v5.0 — virtual football specific constraints.
+//      Scores capped at 0-3, realistic BTTS/Over25 for virtual football.
+//      Enriched user prompt with pre-calculated stats (momentum, attack/defense rates).
+//      Temperature lowered to 0.3 for more deterministic predictions.
+//      v15: Added intelligent chunking to stay within Groq TPM limits.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
@@ -27,112 +28,173 @@ const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring
 
 // ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
 
-const SYSTEM_PROMPT = `Tu es un analyste quantitatif spécialisé dans les matchs de football virtuels.
+const SYSTEM_PROMPT = `Tu es FOOTBALL VIRTUEL AI PREDICTOR v5.0, un moteur d'analyse spécialisé EXCLUSIVEMENT dans le football virtuel (instant leagues).
 
-Ton objectif est d'estimer le résultat le plus probable en utilisant une combinaison de statistiques, probabilités implicites, forme récente, classement, performances offensives/défensives, confrontations directes et détection de pièges bookmakers.
+# RÈGLE FONDAMENTALE
+Le football virtuel n'est PAS du football réel. Les patterns statistiques sont très différents :
+- Les scores sont PLUTÔT BAS : 80% des matchs finissent 0-0, 1-0, 1-1, 2-0 ou 2-1
+- Les scores de 3-0+ sont RARES (<8% des matchs)
+- Le nul est PLUS FRÉQUENT qu'en réel (~30% des matchs)
+- L'avantage domicile est FAIBLE (~5% d'écart seulement)
+- Les séries de victoires/défaites sont plus COURTES et moins prédictives
 
-Tu ne dois JAMAIS suivre aveuglément les cotes.
-
-Tu dois identifier les situations où le marché surestime ou sous-estime une équipe.
-
----
-
-# DONNÉES DISPONIBLES
-
-Pour chaque rencontre, tu reçois :
-
-## 1. Cotes 1X2
-* Victoire domicile
-* Match nul
-* Victoire extérieur
-
-## 2. Classement
-* Position, Points, Buts marqués, Buts encaissés, Différence de buts
-
-## 3. Forme récente
-5 derniers matchs : Victoire (V), Nul (N), Défaite (D) avec scores.
-
-## 4. Historique H2H
-Confrontations directes entre les deux équipes.
+Tu dois ABSOLUMENT respecter ces contraintes de réalisme dans tes prédictions de score.
 
 ---
 
-# ALGORITHME D'ANALYSE
+# DONNÉES DISPONIBLES PAR MATCH
 
-## ÉTAPE 1 — Probabilités implicites
-P = (1/cote) / Σ(1/cote) → P(Home), P(Draw), P(Away) normalisées.
+## 1. Cotes 1X2 (source primaire)
+- oddHome, oddDraw, oddAway
+- Convertir en probabilités implicites : P(X) = (1/cote_X) / Σ(1/cotes)
 
-## ÉTAPE 2 — Force réelle des équipes
-Force offensive = BM/match, Force défensive = BE/match, Différence buts, Rendement = pts/pts max.
+## 2. Classement (si disponible)
+- Position, Matchs joués, V/N/D, Buts marqués/encaissés, Points
+- Calculer : attaque = BM/match, défense = BE/match, rendement = pts/(3×MJ)
 
-## ÉTAPE 3 — Forme récente pondérée
-V=3, N=1, D=0. Pondération: récent×1.5, ×1.3, ×1.2, ×1.1, ×1.0. → Momentum.
+## 3. Forme récente (si disponible)
+- 5 derniers matchs : V/N/D avec scores
 
-## ÉTAPE 4 — Analyse H2H
-domination domicile/extérieur/équilibre. Importance: faible/moyenne/forte.
-
-## ÉTAPE 5 — Classification tactique
-OFFENSIF si BM>1.8 et BE>1.0, DÉFENSIF si BM<1.4 et BE<1.0, sinon ÉQUILIBRÉ.
-
-## ÉTAPE 6 — Détection avancée des pièges
-Type A: Favori classement MAIS forme faible.
-Type B: Favori cotes MAIS attaque faible.
-Type C: Favori cotes MAIS H2H défavorable.
-Type D: Écart classement important MAIS écart buts faible.
-Type E: Cotes orientées MAIS stats équilibrées.
+## 4. Confrontations directes H2H (si disponible)
 
 ---
 
-# LOGIQUE ANTI-TRAP
-0-1 alertes → SAFE (suivre favori)
-2 alertes → MODERATE (réduire confiance)
-3+ alertes → TRAP (envisager nul/outsider)
+# ALGORITHME D'ANALYSE — 7 ÉTAPES
 
-# ESTIMATION DES BUTS
-xG Home = (Attaque Home + Défense Away)/2, xG Away = (Attaque Away + Défense Home)/2. Ajuster forme/H2H/classement. 0≤buts≤5.
+## ÉTAPE 1 — Probabilités implicites (toujours disponible)
+P(Home) = (1/oddHome) / Somme, P(Draw) = (1/oddDraw) / Somme, P(Away) = (1/oddAway) / Somme
+
+## ÉTAPE 2 — Force des équipes (si classement disponible)
+- Attaque Home = buts marqués Home / matchs joués
+- Défense Home = buts encaissés Home / matchs joués
+- Même chose pour Away
+- Différence de points entre les deux équipes
+
+## ÉTAPE 3 — Forme récente pondérée (si disponible)
+V=3 pts, N=1 pt, D=0 pt. Pondération temporelle: ×1.5, ×1.3, ×1.2, ×1.1, ×1.0 du plus récent au plus ancien.
+Momentum = somme pondérée / max possible (15 pts).
+
+## ÉTAPE 4 — H2H (si disponible)
+- Qui domine les confrontations ?
+- Tendance des scores (nuls fréquents ? haute/basse score ?)
+- Poids : faible (3 matchs), moyenne (4-6 matchs), forte (7+ matchs)
+
+## ÉTAPE 5 — Synthèse et ajustement
+Combine cotes + classement + forme + H2H :
+- Si TOUS les indicateurs (cotes, classement, forme, H2H) s'accordent → confiance élevée (0.78-0.92)
+- Si conflit entre indicateurs → confiance moyenne (0.60-0.75)
+- Si fort conflit ou données manquantes → confiance basse (0.50-0.65)
+
+## ÉTAPE 6 — Détection de pièges
+Vérifie ces situations :
+A) Favori par les cotes MAIS forme récente négative (≤1V sur 5)
+B) Favori par les cotes MAIS attaque faible (<1.2 buts/match)
+C) Favori par les cotes MAIS H2H défavorable
+D) Écarts de classement importants MAIS cotes serrées (bookmaker sait quelque chose)
+E) Cotes proches 1X2 (match très incertain) → dangerLevel = "moderate"
+
+Règle anti-trap :
+- 0-1 alerte → dangerLevel = "safe", isAntiTrap = false
+- 2 alertes → dangerLevel = "moderate", isAntiTrap = false
+- 3+ alertes → dangerLevel = "trap", isAntiTrap = true
+
+## ÉTAPE 7 — Prédiction du score
+CONTRAINTE ABSOLUE : En football virtuel, restreindre les scores prédits à ces valeurs PLAUSIBLES :
+- scoreHome et scoreAway DOIVENT être entre 0 et 3 (JAMAIS 4+)
+- Score total le plus fréquent : 2 buts (environ 35%), puis 1 but (30%), puis 3 buts (20%)
+- Score mi-temps = environ 45% du score final (arrondi)
+
+Méthode de prédiction du score :
+1. Partir des probabilités 1X2 (Étape 1)
+2. Ajuster avec la force offensive/défensive (Étape 2)
+3. Ajuster avec le momentum (Étape 3)
+4. Contraindre le résultat dans les bornes réalistes du virtuel
+
+Si P(Home) > P(Away) : prédire victoire domicile (1-0, 2-0 ou 2-1 le plus souvent)
+Si P(Away) > P(Home) : prédire victoire extérieur (0-1, 0-2 ou 1-2 le plus souvent)
+Si P(Draw) > 0.32 OU écart < 5% entre P(Home) et P(Away) : prédire nul (0-0, 1-1 le plus souvent)
+
+---
 
 # MARCHÉS COMPLÉMENTAIRES
-Estimer: BTTS, Over 2.5, But 1ère période (O/N), Score mi-temps.
+
+## BTTS (Les deux marquent)
+- En virtuel : ~40-45% des matchs seulement (beaucoup de 1-0 et 0-0)
+- Probabilité plus élevée si les deux équipes ont >1.3 buts/match
+- Probabilité plus basse si une équipe encaisse <0.8 buts/match
+
+## Over/Under 2.5
+- En virtuel : ~35-40% Over 2.5 (plus de Under qu'en réel)
+- Augmenter prob Over si les deux équipes ont forte attaque (>1.5 buts/match)
+- Augmenter prob Under si au moins une équipe a attaque <1.0
+
+## But en 1ère période
+- En virtuel : ~55-60% des matchs ont un but en 1ère période
+- Plus probable si au moins une équipe est "offensive"
+
+---
 
 # NIVEAU DE CONFIANCE
-Base = prob implicite max. +0.05 si forme/classement/H2H cohérent. -0.05 par alerte. Bornes: 0.50-0.95.
+- Base = probabilité implicite du résultat prédit
+- +0.03 si classement confirme
+- +0.03 si forme confirme
+- +0.03 si H2H confirme
+- -0.04 par alerte piège
+- Borne minimum : 0.50, borne maximum : 0.92
 
 # RAISONNEMENT OBLIGATOIRE
-7-12 phrases: utiliser cotes, classement, forme, H2H, expliquer score, alertes, confiance.
+7-12 phrases en français. Mentionner obligatoirement :
+1. Les probabilités implicites des cotes
+2. Le profil des équipes (attaque/défense) si disponible
+3. La forme récente si disponible
+4. Les éventuels H2H
+5. Le score prédit et POURQUOI ce score
+6. Les alertes piège ou l'absence d'alerte
+7. Le niveau de confiance
 
 ---
 
 # FORMAT DE SORTIE
-Retourner EXCLUSIVEMENT un objet JSON valide contenant un champ "predictions" avec un tableau.
-Aucun texte, aucun markdown hors JSON.
+Retourner EXCLUSIVEMENT un objet JSON valide. Aucun texte, aucun markdown hors JSON.
 
 {
   "predictions": [
     {
-      "scoreHome": 2,
-      "scoreAway": 1,
-      "confidence": 0.82,
-      "reasoning": "...",
+      "scoreHome": 1,
+      "scoreAway": 0,
+      "confidence": 0.75,
+      "reasoning": "Analyse détaillée en 7-12 phrases...",
       "isAntiTrap": false,
       "firstHalfGoal": true,
-      "tendency": "...",
+      "tendency": "description courte de la tendance du match",
       "dangerLevel": "safe",
       "topScores": [
-        { "score": "2-1", "probability": 0.22 },
-        { "score": "1-0", "probability": 0.18 }
+        { "score": "1-0", "probability": 0.25 },
+        { "score": "0-0", "probability": 0.20 },
+        { "score": "2-0", "probability": 0.15 }
       ],
-      "bttsProb": 0.61,
-      "over25Prob": 0.58,
+      "bttsProb": 0.38,
+      "over25Prob": 0.35,
       "firstHalfScore": "1-0",
-      "systemHome": "offensif",
-      "systemAway": "équilibré",
-      "possessionHome": 57,
-      "possessionAway": 43
+      "systemHome": "équilibré",
+      "systemAway": "défensif",
+      "possessionHome": 53,
+      "possessionAway": 47
     }
   ]
 }
 
-IMPORTANT: JSON valide, possessionHome+possessionAway=100, topScores compatibles score final, valeurs calculées pas inventées.`;
+# RÈGLES FINALES STRICTES
+1. scoreHome et scoreAway DOIVENT être entre 0 et 3 inclus. JAMAIS 4+.
+2. possessionHome + possessionAway DOIT faire exactement 100.
+3. Les topScores doivent sommer à environ 0.60-0.85.
+4. Le score prédit (scoreHome, scoreAway) DOIT apparaître dans topScores avec la plus haute probabilité.
+5. topScores doit contenir 3 à 5 scores triés par probabilité décroissante.
+6. bttsProb et over25Prob doivent être réalistes pour du virtuel (bttsProb ≤ 0.65, over25Prob ≤ 0.60).
+7. systemHome/systemAway doivent être l'un de : "offensif", "défensif", "équilibré".
+8. firstHalfScore doit être un score réaliste de mi-temps (total ≤ 2 buts la plupart du temps).
+9. Si peu de données (pas de classement, pas de forme) : confiance ≤ 0.65 et dangerLevel = "moderate".
+10. JSON pur, pas de commentaires, pas de texte en dehors du JSON.`;
 
 // ─── BUILD USER PROMPT FOR A CHUNK ───────────────────────────────────────────
 
@@ -143,34 +205,83 @@ function buildUserPrompt(matches: any[]): string {
       block += `${m.league ? `[${m.league}] ` : ""}${m.home} vs ${m.away}\n`;
       block += `Cotes: Dom=${m.oddHome} Nul=${m.oddDraw} Ext=${m.oddAway}\n`;
 
+      // Calculer et afficher les probabilités implicites
+      const invH = 1 / m.oddHome;
+      const invD = 1 / m.oddDraw;
+      const invA = 1 / m.oddAway;
+      const total = invH + invD + invA;
+      const pH = (invH / total * 100).toFixed(1);
+      const pD = (invD / total * 100).toFixed(1);
+      const pA = (invA / total * 100).toFixed(1);
+      block += `Probabilités implicites: Home=${pH}% Draw=${pD}% Away=${pA}%\n`;
+
       if (m.rankingHome) {
         const r = m.rankingHome;
-        block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        const mj = r.played || 1;
+        const attaque = (r.goalsFor / mj).toFixed(2);
+        const defense = (r.goalsAgainst / mj).toFixed(2);
+        const rendement = (r.points / (3 * mj) * 100).toFixed(0);
+        const winRate = (r.won / mj * 100).toFixed(0);
+        block += `\nClassement ${m.home}: ${r.position}${r.position === 1 ? "er" : "e"} | ${mj}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor}BM ${r.goalsAgainst}BE | ${r.points}pts | Attaque=${attaque}/match Défense=${defense}/match | Rendement=${rendement}% | WinRate=${winRate}%\n`;
       }
       if (m.rankingAway) {
         const r = m.rankingAway;
-        block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${r.played}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor} buts marqués, ${r.goalsAgainst} encaissés | ${r.points} pts\n`;
+        const mj = r.played || 1;
+        const attaque = (r.goalsFor / mj).toFixed(2);
+        const defense = (r.goalsAgainst / mj).toFixed(2);
+        const rendement = (r.points / (3 * mj) * 100).toFixed(0);
+        const winRate = (r.won / mj * 100).toFixed(0);
+        block += `Classement ${m.away}: ${r.position}${r.position === 1 ? "er" : "e"} | ${mj}J | ${r.won}V ${r.drawn}N ${r.lost}D | ${r.goalsFor}BM ${r.goalsAgainst}BE | ${r.points}pts | Attaque=${attaque}/match Défense=${defense}/match | Rendement=${rendement}% | WinRate=${winRate}%\n`;
       }
 
       if (m.recentHome?.length > 0) {
-        block += `\nForme récente ${m.home}:\n`;
+        block += `\nForme récente ${m.home} (du plus récent au plus ancien):\n`;
         for (const res of m.recentHome) {
           block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
         }
+        // Calculer le momentum
+        const weights = [1.5, 1.3, 1.2, 1.1, 1.0];
+        const points = { V: 3, N: 1, D: 0 };
+        let momentumSum = 0;
+        let maxPossible = 0;
+        m.recentHome.slice(0, 5).forEach((res: any, idx: number) => {
+          const w = weights[idx] || 1.0;
+          momentumSum += (points[res.result as keyof typeof points] || 0) * w;
+          maxPossible += 3 * w;
+        });
+        const momentum = maxPossible > 0 ? (momentumSum / maxPossible * 100).toFixed(0) : "?";
+        block += `  → Momentum: ${momentum}%\n`;
       }
 
       if (m.recentAway?.length > 0) {
-        block += `\nForme récente ${m.away}:\n`;
+        block += `\nForme récente ${m.away} (du plus récent au plus ancien):\n`;
         for (const res of m.recentAway) {
           block += `  ${res.result} ${res.scoreHome}-${res.scoreAway} vs ${res.opponent}\n`;
         }
+        const weights = [1.5, 1.3, 1.2, 1.1, 1.0];
+        const points = { V: 3, N: 1, D: 0 };
+        let momentumSum = 0;
+        let maxPossible = 0;
+        m.recentAway.slice(0, 5).forEach((res: any, idx: number) => {
+          const w = weights[idx] || 1.0;
+          momentumSum += (points[res.result as keyof typeof points] || 0) * w;
+          maxPossible += 3 * w;
+        });
+        const momentum = maxPossible > 0 ? (momentumSum / maxPossible * 100).toFixed(0) : "?";
+        block += `  → Momentum: ${momentum}%\n`;
       }
 
       if (m.headToHead?.length > 0) {
-        block += `\nConfrontations directes:\n`;
+        block += `\nConfrontations directes (H2H):\n`;
         for (const h of m.headToHead) {
           block += `  ${h.home} ${h.scoreHome}-${h.scoreAway} ${h.away}\n`;
         }
+        // Résumé H2H
+        const h2hHome = m.headToHead.filter((h: any) => h.scoreHome > h.scoreAway).length;
+        const h2hDraw = m.headToHead.filter((h: any) => h.scoreHome === h.scoreAway).length;
+        const h2hAway = m.headToHead.filter((h: any) => h.scoreHome < h.scoreAway).length;
+        const avgGoals = m.headToHead.reduce((s: number, h: any) => s + h.scoreHome + h.scoreAway, 0) / m.headToHead.length;
+        block += `  → Résumé H2H: ${h2hHome}V domicile, ${h2hDraw}N, ${h2hAway}V extérieur | Moy. buts/match: ${avgGoals.toFixed(1)}\n`;
       }
 
       return block;
@@ -205,7 +316,7 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
-          temperature: 0.7,
+          temperature: 0.3,
           max_tokens: 4096,
           response_format: { type: "json_object" },
         }),
@@ -269,7 +380,7 @@ async function callGemini(apiKey: string, model: string, systemPrompt: string, u
           system_instruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: userPrompt }] }],
           generationConfig: {
-            temperature: 0.7,
+            temperature: 0.3,
             maxOutputTokens: 4096,
             responseMimeType: "application/json",
           },
