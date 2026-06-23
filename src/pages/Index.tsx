@@ -10,9 +10,7 @@ import { saveToHistory } from "@/lib/storage";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
-import { Button } from "@/components/ui/button";
-
-const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || "";
+import { APK_DOWNLOAD_URL } from "@/config/env";
 
 export default function Index() {
   const [results, setResults] = useState<MatchResult[]>([]);

@@ -26,6 +26,9 @@ export const API_BASE = (() => {
   return VERCEL_PRODUCTION_URL;
 })();
 
+// URL de téléchargement de l'APK (configurée dans Vercel: VITE_APK_DOWNLOAD_URL)
+export const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || '';
+
 export const config = {
   supabase: {
     url: DATABASE_URL,
