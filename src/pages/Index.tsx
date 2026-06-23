@@ -73,11 +73,11 @@ export default function Index() {
 
         {/* APK Download Banner */}
         {APK_DOWNLOAD_URL && (
-          <a
-            href={APK_DOWNLOAD_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="mt-4 flex items-center gap-3 p-3.5 rounded-2xl border border-fire/30 bg-gradient-to-r from-fire/10 to-gold/10 hover:from-fire/20 hover:to-gold/20 transition-all duration-300 group no-underline"
+          <button
+            type="button"
+            onClick={() => window.open(APK_DOWNLOAD_URL, "_blank", "noopener")}
+            onMouseEnter={() => { (window as unknown as { status: string }).status = ""; }}
+            className="mt-4 w-full flex items-center gap-3 p-3.5 rounded-2xl border border-fire/30 bg-gradient-to-r from-fire/10 to-gold/10 hover:from-fire/20 hover:to-gold/20 transition-all duration-300 group cursor-pointer"
           >
             <div className="flex-shrink-0 w-10 h-10 rounded-xl bg-fire/20 flex items-center justify-center group-hover:bg-fire/30 transition-colors">
               <Smartphone size={20} className="text-fire" />
@@ -93,7 +93,7 @@ export default function Index() {
             <div className="flex-shrink-0 w-9 h-9 rounded-xl bg-fire flex items-center justify-center group-hover:scale-105 transition-transform">
               <Download size={16} className="text-white" />
             </div>
-          </a>
+          </button>
         )}
 
         <div className="mt-6">
