@@ -1,14 +1,12 @@
 // analyze-match/index.ts — Supabase Edge Function
-// AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
+// AI-powered match analysis — Groq (primary) + Mathematical fallback (no Gemini)
 // NO imports — uses Deno.serve() + native fetch
 //
+// v21: Removed Gemini. When Groq quota exhausted → mathematical algorithm (same v5.0 rules).
+//      mathPredict() replicates the AI prompt logic: implicit probabilities, form momentum,
+//      anti-trap detection, virtual score rules, BTTS/Over2.5 caps.
 // v20: Ultra-compressed prompt (~35% fewer tokens per run).
-//      - SYSTEM_PROMPT: terse notation, minimal JSON template (field list only)
-//      - buildUserPrompt: removed momentum/att/def pre-calcs, compact labels
-//      - Chunk size 3→4 (fewer chunks = fewer system prompt repetitions)
-//      - Shorter output: 3-4 phrase reasoning, 2-3 topScores
 // v19: Actual token tracking, TPD detection, lastActualTokensPerChunk cache.
-// v18: Compressed system prompt and compact user prompt.
 // v16: Improved prompt v5.0 — virtual football specific constraints.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
@@ -30,10 +28,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : "NOT_SET";
 
 // ─── TPM RATE LIMITER ─────────────────────────────────────────────────────
-// Tracks token usage within the rolling 60s window to avoid 429 on 12k TPM limit
 
-const TPM_LIMIT = 11000; // Stay under 12k with margin
-const TPM_WINDOW_MS = 60000; // 60 seconds rolling window
+const TPM_LIMIT = 11000;
+const TPM_WINDOW_MS = 60000;
 
 interface TokenRecord {
   tokens: number;
@@ -41,36 +38,27 @@ interface TokenRecord {
 }
 
 const tokenLog: TokenRecord[] = [];
-
-/** Cache actual tokens from last successful Groq call — used for accurate pre-flight estimates */
 let lastActualTokensPerChunk = 0;
 
-/** Estimate tokens from text (conservative: 1 token ≈ 3 chars for mixed FR/EN with special chars) */
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3.0);
 }
 
-/** Wait until enough TPM budget is available, then record usage */
 async function tpmWaitAndRecord(inputTokens: number, estimatedOutputTokens: number): Promise<void> {
-  // Use actual tokens from previous call if available (much more accurate than char-based estimate)
   const totalTokens = lastActualTokensPerChunk > 0
     ? lastActualTokensPerChunk
     : Math.ceil((inputTokens + estimatedOutputTokens) * 1.2);
   const now = Date.now();
 
-  // Prune old entries outside the window
   while (tokenLog.length > 0 && now - tokenLog[0].timestamp > TPM_WINDOW_MS) {
     tokenLog.shift();
   }
 
-  // Calculate current usage
   const currentUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
 
   if (currentUsage + totalTokens > TPM_LIMIT) {
-    // Wait until oldest entries expire and we have enough budget
-    const neededBudget = totalTokens;
     const waitForMs = Math.max(
-      5000, // minimum 5s
+      5000,
       tokenLog.length > 0
         ? (tokenLog[0].timestamp + TPM_WINDOW_MS - now) + 1000
         : 15000
@@ -78,21 +66,18 @@ async function tpmWaitAndRecord(inputTokens: number, estimatedOutputTokens: numb
     console.log(`[analyze-match] ⏳ TPM budget low (${currentUsage}/${TPM_LIMIT} used, need ${totalTokens} more). Waiting ${waitForMs}ms...`);
     await sleep(waitForMs);
 
-    // Prune again after waiting
     const afterWait = Date.now();
     while (tokenLog.length > 0 && afterWait - tokenLog[0].timestamp > TPM_WINDOW_MS) {
       tokenLog.shift();
     }
   }
 
-  // Record this usage
   tokenLog.push({ tokens: totalTokens, timestamp: Date.now() });
-
   const newUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
   console.log(`[analyze-match] 📊 TPM usage: ~${newUsage}/${TPM_LIMIT}`);
 }
 
-// ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
+// ─── SYSTEM PROMPT (Groq only) ────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `Rôle:VIRTUFoot PREDICTOR v5. Virtuel ONLY.
 Règles: scores bas(0-0,1-0,1-1,2-0,2-1≈80%), nul≈30%, dom+5%, 3-0+<8%.
@@ -142,18 +127,286 @@ function buildUserPrompt(matches: any[]): string {
     .join("\n");
 }
 
+// ─── MATHEMATICAL PREDICTION (fallback when Groq unavailable) ─────────────
+// Replicates the v5.0 prompt logic algorithmically.
+
+function mathPredict(m: any): any {
+  // --- Implicit probabilities ---
+  const invH = 1 / m.oddHome, invD = 1 / m.oddDraw, invA = 1 / m.oddAway;
+  const invSum = invH + invD + invA;
+  const pH = invH / invSum, pD = invD / invSum, pA = invA / invSum;
+
+  // --- Stats from rankings ---
+  const rH = m.rankingHome, rA = m.rankingAway;
+  const mjH = rH?.played || 1, mjA = rA?.played || 1;
+  const attH = (rH?.goalsFor || 0) / mjH;
+  const defH = (rH?.goalsAgainst || 0) / mjH;
+  const attA = (rA?.goalsFor || 0) / mjA;
+  const defA = (rA?.goalsAgainst || 0) / mjA;
+
+  // --- Form momentum (V=3, N=1, D=0, weights 1.5→1.0) ---
+  const weights = [1.5, 1.3, 1.2, 1.1, 1.0];
+  const pts: Record<string, number> = { V: 3, N: 1, D: 0 };
+
+  function momentum(forms: any[] | undefined): { score: number; wins: number; total: number } {
+    if (!forms?.length) return { score: 0, wins: 0, total: 0 };
+    let ms = 0, mx = 0, wins = 0;
+    const last5 = forms.slice(0, 5);
+    last5.forEach((r: any, i: number) => {
+      const w = weights[i] || 1.0;
+      ms += (pts[r.result] || 0) * w;
+      mx += 3 * w;
+      if (r.result === "V") wins++;
+    });
+    return { score: mx > 0 ? ms / mx : 0, wins, total: last5.length };
+  }
+
+  const momH = momentum(m.recentHome);
+  const momA = momentum(m.recentAway);
+
+  // --- H2H ---
+  const h2h = m.headToHead || [];
+  const h2hWins = h2h.filter((h: any) => h.scoreHome > h.scoreAway).length;
+  const h2hDraws = h2h.filter((h: any) => h.scoreHome === h.scoreAway).length;
+  const h2hLosses = h2h.filter((h: any) => h.scoreHome < h.scoreAway).length;
+  const h2hAvgGoals = h2h.length > 0
+    ? h2h.reduce((s: number, h: any) => s + h.scoreHome + h.scoreAway, 0) / h2h.length
+    : 0;
+
+  // --- Determine favorite by odds ---
+  let fav = "draw" as string;
+  if (pH > pD && pH > pA) fav = "home";
+  else if (pA > pD && pA > pH) fav = "away";
+
+  // --- Anti-trap detection ---
+  let trapAlerts = 0;
+  const reasons: string[] = [];
+
+  if (fav === "home") {
+    if (momH.total >= 3 && momH.wins <= 1) { trapAlerts++; reasons.push("fav cotes ≤1V/5 formes"); }
+    if (attH < 1.2) { trapAlerts++; reasons.push("fav cotes att<1.2"); }
+    if (h2h.length > 0 && h2hLosses > h2hWins) { trapAlerts++; reasons.push("fav cotes H2H défav"); }
+  } else if (fav === "away") {
+    if (momA.total >= 3 && momA.wins <= 1) { trapAlerts++; reasons.push("fav cotes ≤1V/5 formes"); }
+    if (attA < 1.2) { trapAlerts++; reasons.push("fav cotes att<1.2"); }
+    if (h2h.length > 0 && h2hWins > h2hLosses) { trapAlerts++; reasons.push("fav cotes H2H défav"); }
+  }
+
+  // Ranking far apart but odds close
+  if (rH && rA) {
+    const rankDiff = Math.abs((rH.position || 99) - (rA.position || 99));
+    const oddSpread = Math.max(m.oddHome, m.oddAway) - Math.min(m.oddHome, m.oddAway);
+    if (rankDiff >= 5 && oddSpread < 0.5) { trapAlerts++; reasons.push("ranking écarté cotes serrées"); }
+  }
+
+  // Odds very close (all within 0.5)
+  const allOdds = [m.oddHome, m.oddDraw, m.oddAway].sort((a: number, b: number) => a - b);
+  if (allOdds[2] - allOdds[0] < 0.5) { trapAlerts++; reasons.push("cotes proches"); }
+
+  const isAntiTrap = trapAlerts >= 3;
+  const dangerLevel = trapAlerts === 0 ? "safe" : trapAlerts === 1 ? "safe" : trapAlerts === 2 ? "moderate" : "trap";
+
+  // --- Score prediction (virtual football rules) ---
+  // Expected goals based on attack/defense
+  const xgH = (attH + defA) / 2;
+  const xgA = (attA + defH) / 2;
+
+  // Adjust by form momentum (+10% per 0.1 above 0.5, -10% per 0.1 below 0.5)
+  const formAdjH = 1 + (momH.score - 0.5) * 0.8;
+  const formAdjA = 1 + (momA.score - 0.5) * 0.8;
+
+  let expH = xgH * formAdjH;
+  let expA = xgA * formAdjA;
+
+  // Apply virtual football constraints: scores are low
+  // 80% are 0-0, 1-0, 1-1, 2-0, 2-1
+  // Apply a compression function to pull scores toward 0-1 range
+  expH = Math.min(2.5, Math.pow(expH, 0.6) * 1.1);
+  expA = Math.min(2.5, Math.pow(expA, 0.6) * 1.1);
+
+  // Cap at 3
+  expH = Math.min(3, expH);
+  expA = Math.min(3, expA);
+
+  let scoreH: number, scoreA: number;
+
+  // Determine score based on probability (same rules as prompt)
+  if (pD > 0.32 || Math.abs(pH - pA) < 0.05) {
+    // Draw likely
+    if (expH + expA > 2.0) { scoreH = 1; scoreA = 1; }
+    else { scoreH = 0; scoreA = 0; }
+  } else if (pH > pA) {
+    // Home favored
+    if (expH > 1.8 && expA < 0.5) { scoreH = 2; scoreA = 0; }
+    else if (expH > 1.5) { scoreH = 2; scoreA = 1; }
+    else { scoreH = 1; scoreA = 0; }
+  } else {
+    // Away favored
+    if (expA > 1.8 && expH < 0.5) { scoreH = 0; scoreA = 2; }
+    else if (expA > 1.5) { scoreH = 1; scoreA = 2; }
+    else { scoreH = 0; scoreA = 1; }
+  }
+
+  // Anti-trap adjustment: if trap detected, move score one step toward draw
+  if (isAntiTrap) {
+    if (scoreH > scoreA) { scoreH = Math.max(0, scoreH - 1); }
+    else if (scoreA > scoreH) { scoreA = Math.max(0, scoreA - 1); }
+  }
+
+  // --- Half-time score (≈45% of final) ---
+  const mtH = scoreH === 0 ? 0 : (scoreH >= 2 ? 1 : (Math.random() < 0.55 ? 1 : 0));
+  const mtA = scoreA === 0 ? 0 : (scoreA >= 2 ? 1 : (Math.random() < 0.55 ? 1 : 0));
+
+  // --- Top scores ---
+  function scoreProb(sH: number, sA: number): number {
+    // Poisson-like probability centered on expected goals
+    const lambdaH = Math.max(0.3, expH * 0.7);
+    const lambdaA = Math.max(0.3, expA * 0.7);
+    const p = poisson(sH, lambdaH) * poisson(sA, lambdaA);
+    // Boost if this is the predicted score
+    if (sH === scoreH && sA === scoreA) return p * 2.5;
+    // Slight boost for draw-like scores in virtual football
+    if (sH === sA) return p * 1.3;
+    return p;
+  }
+
+  const candidates: [number, number][] = [
+    [scoreH, scoreA],
+    [0, 0], [1, 0], [0, 1], [1, 1], [2, 0], [0, 2], [2, 1], [1, 2],
+  ];
+  // Remove duplicates, keep unique
+  const unique = new Map<string, [number, number]>();
+  for (const c of candidates) {
+    const key = `${c[0]}-${c[1]}`;
+    if (!unique.has(key)) unique.set(key, c);
+  }
+
+  const scored = [...unique.values()]
+    .map(([sH, sA]) => ({ score: `${sH}-${sA}`, probability: scoreProb(sH, sA) }))
+    .sort((a, b) => b.probability - a.probability)
+    .slice(0, 3);
+
+  // Normalize probabilities to sum 0.6-0.85
+  const rawSum = scored.reduce((s, e) => s + e.probability, 0);
+  const target = 0.72;
+  for (const s of scored) {
+    s.probability = Math.round((s.probability / rawSum) * target * 100) / 100;
+  }
+
+  // --- BTTS & Over 2.5 ---
+  const pBTTS = Math.min(0.65, (expH * expA * 0.35) + 0.15);
+  const pOver = Math.min(0.60, (expH + expA > 2.2 ? 0.45 : expH + expA > 1.5 ? 0.30 : 0.18));
+
+  // --- Confidence ---
+  const predictedProb = pH > pA ? pH : pA > pH ? pA : pD;
+  let confidence = Math.min(0.92, Math.max(0.50, predictedProb));
+
+  // +0.03 per confirming indicator
+  const indicators = [
+    fav === "home" && momH.score > 0.55,
+    fav === "away" && momA.score > 0.55,
+    fav === "home" && attH > 1.3,
+    fav === "away" && attA > 1.3,
+    h2h.length > 0 && ((fav === "home" && h2hWins > h2hLosses) || (fav === "away" && h2hLosses > h2hWins)),
+  ];
+  confidence += indicators.filter(Boolean).length * 0.03;
+
+  // -0.04 per trap alert
+  confidence -= trapAlerts * 0.04;
+  confidence = Math.min(0.92, Math.max(0.50, confidence));
+
+  // No data cap
+  if (!rH && !rA && !m.recentHome?.length && !m.recentAway?.length) {
+    confidence = Math.min(confidence, 0.65);
+  }
+
+  // --- Tendency ---
+  const tendency = pH > pA ? "home" : pA > pH ? "away" : "draw";
+
+  // --- System style ---
+  function systemStyle(att: number, def: number): string {
+    if (att > 1.4) return "offensif";
+    if (def < 0.8) return "défensif";
+    return "équilibré";
+  }
+
+  // --- Possession (attack + defense balance) ---
+  const totalAttDef = (attH + defH + attA + defA) || 2;
+  let possH = Math.round(((attH + defA) / totalAttDef) * 100);
+  let possA = 100 - possH;
+
+  // --- Reasoning ---
+  const reasoning = buildReasoning(m, {
+    pH, pD, pA, attH, defH, attA, defA,
+    momH: momH.score, momA: momA.score,
+    scoreH, scoreA, trapAlerts, confidence, isAntiTrap,
+  });
+
+  return {
+    scoreHome: scoreH,
+    scoreAway: scoreA,
+    confidence: Math.round(confidence * 100) / 100,
+    reasoning,
+    isAntiTrap,
+    firstHalfGoal: mtH > 0 || mtA > 0,
+    tendency,
+    dangerLevel,
+    topScores: scored,
+    bttsProb: Math.round(pBTTS * 100) / 100,
+    over25Prob: Math.round(pOver * 100) / 100,
+    firstHalfScore: `${mtH}-${mtA}`,
+    systemHome: systemStyle(attH, defH),
+    systemAway: systemStyle(attA, defA),
+    possessionHome: possH,
+    possessionAway: possA,
+  };
+}
+
+/** Poisson probability P(X=k) for lambda */
+function poisson(k: number, lambda: number): number {
+  if (k === 0) return Math.exp(-lambda);
+  let p = Math.exp(-lambda);
+  for (let i = 1; i <= k; i++) p *= lambda / i;
+  return p;
+}
+
+/** Build a short reasoning string (3-4 sentences) */
+function buildReasoning(m: any, d: {
+  pH: number; pD: number; pA: number;
+  attH: number; defH: number; attA: number; defA: number;
+  momH: number; momA: number;
+  scoreH: number; scoreA: number;
+  trapAlerts: number; confidence: number; isAntiTrap: boolean;
+}): string {
+  const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
+  let r = `Probabilités implicites: ${pct(d.pH)}/${pct(d.pD)}/${pct(d.pA)}.`;
+
+  if (d.momH > 0 || d.momA > 0) {
+    r += ` Forme: ${m.home} ${pct(d.momH)}, ${m.away} ${pct(d.momA)}.`;
+  }
+  if (d.attH > 0 || d.attA > 0) {
+    r += ` Attaque/défense: H ${d.attH.toFixed(1)}/${d.defH.toFixed(1)}, A ${d.attA.toFixed(1)}/${d.defA.toFixed(1)}.`;
+  }
+
+  r += ` Score prédit ${d.scoreH}-${d.scoreA} (confiance ${pct(d.confidence)}).`;
+
+  if (d.isAntiTrap) {
+    r += ` ⚠️ ${d.trapAlerts} alertes anti-trap détectées.`;
+  }
+
+  return r;
+}
+
 // ─── GROQ PROVIDER ───────────────────────────────────────────────────────────
 
 async function callGroq(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
   const url = "https://api.groq.com/openai/v1/chat/completions";
   console.log(`[analyze-match] 🟢 Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
 
-  // Pre-flight TPM check before any attempt
   await tpmWaitAndRecord(estimateTokens(systemPrompt + userPrompt), 800);
 
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-
     try {
       const response = await fetch(url, {
         method: "POST",
@@ -178,11 +431,9 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
         const content = data.choices?.[0]?.message?.content || "";
         const actualTokens = data.usage?.total_tokens || 0;
 
-        // Replace estimate with actual tokens in TPM tracker
         if (actualTokens > 0 && tokenLog.length > 0) {
           tokenLog[tokenLog.length - 1].tokens = actualTokens;
           lastActualTokensPerChunk = actualTokens;
-          // Re-log with actual count
           const realUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
           console.log(`[analyze-match] 📊 TPM actual: ${realUsage}/${TPM_LIMIT} (this chunk: ${actualTokens}tok)`);
         }
@@ -194,10 +445,8 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
       const errorBody = await response.text();
       const status = response.status;
 
-      // 413 = request too large (TPM exceeded) → signal caller to split further
       if (status === 413) {
         console.error(`[analyze-match] Groq 413 (request too large for ${model}): ${errorBody.substring(0, 200)}`);
-        // Don't retry 413 — return special marker so caller can split chunks
         return null;
       }
 
@@ -205,19 +454,17 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
         const isTPD = errorBody.includes("tokens per day");
         console.error(`[analyze-match] Groq ${isTPD ? "TPD" : "TPM"} 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
 
-        // TPD (daily limit) — no point retrying, skip straight to Gemini
         if (isTPD) {
-          console.error("[analyze-match] Groq daily limit (TPD) exhausted, skipping retries → Gemini");
+          console.log("[analyze-match] Groq daily limit (TPD) exhausted → mathematical fallback");
           return null;
         }
 
         if (attempt === maxRetries) {
-          console.error("[analyze-match] Groq TPM exhausted, will fallback to Gemini");
+          console.log("[analyze-match] Groq TPM exhausted → mathematical fallback");
           return null;
         }
-        // On TPM 429, wait longer to let bucket drain (window is 60s)
-        const retryDelay = 15000 + attempt * 10000; // 15s, then 25s
-        console.log(`[analyze-match] Groq TPM 429 retry: waiting ${retryDelay}ms for bucket to drain...`);
+        const retryDelay = 15000 + attempt * 10000;
+        console.log(`[analyze-match] Groq TPM 429 retry: waiting ${retryDelay}ms...`);
         await sleep(retryDelay);
         continue;
       }
@@ -233,67 +480,6 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
   return null;
 }
 
-// ─── GOOGLE GEMINI PROVIDER (fallback) ────────────────────────────────────────
-
-async function callGemini(apiKey: string, model: string, systemPrompt: string, userPrompt: string): Promise<{ content: string; provider: string } | null> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  console.log(`[analyze-match] 🔵 Gemini fallback | Key: ${maskKey(apiKey)} | Model: ${model}`);
-
-  const maxRetries = 1;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) {
-      console.log(`[analyze-match] Gemini retry ${attempt}/${maxRetries} after 3000ms...`);
-      await sleep(3000);
-    }
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 4096,
-            responseMimeType: "application/json",
-          },
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        console.log("[analyze-match] Gemini fallback success");
-        return { content, provider: "gemini" };
-      }
-
-      const errorBody = await response.text();
-      const status = response.status;
-
-      if (status === 429) {
-        console.error(`[analyze-match] Gemini 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
-        if (attempt === maxRetries) return null;
-        continue;
-      }
-
-      // 400 = likely request too large for Gemini too
-      if (status === 400) {
-        console.error(`[analyze-match] Gemini 400 (request too large?): ${errorBody.substring(0, 200)}`);
-        return null;
-      }
-
-      console.error(`[analyze-match] Gemini error ${status}: ${errorBody.substring(0, 200)}`);
-      return null;
-    } catch (err: any) {
-      console.error(`[analyze-match] Gemini fetch error: ${err.message}`);
-      return null;
-    }
-  }
-
-  return null;
-}
-
 // ─── PARSE AI RESPONSE ────────────────────────────────────────────────────────
 
 function parsePredictions(rawContent: string): any[] {
@@ -301,23 +487,16 @@ function parsePredictions(rawContent: string): any[] {
 
   let jsonStr = rawContent;
 
-  // Try direct parse first
   try {
     const parsed = JSON.parse(jsonStr);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      // Look for the predictions array inside the object
       for (const key of Object.keys(parsed)) {
-        if (Array.isArray(parsed[key])) {
-          return parsed[key];
-        }
+        if (Array.isArray(parsed[key])) return parsed[key];
       }
     }
     if (Array.isArray(parsed)) return parsed;
-  } catch {
-    // Not valid JSON yet
-  }
+  } catch {}
 
-  // Extract from code block if present
   const codeMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeMatch) jsonStr = codeMatch[1];
   jsonStr = jsonStr.trim();
@@ -325,12 +504,9 @@ function parsePredictions(rawContent: string): any[] {
   try {
     let predictions = JSON.parse(jsonStr);
     if (!Array.isArray(predictions)) {
-      // Try to find array inside object
       if (predictions && typeof predictions === "object") {
         for (const key of Object.keys(predictions)) {
-          if (Array.isArray(predictions[key])) {
-            return predictions[key];
-          }
+          if (Array.isArray(predictions[key])) return predictions[key];
         }
       }
       predictions = [predictions];
@@ -342,7 +518,7 @@ function parsePredictions(rawContent: string): any[] {
   }
 }
 
-// ─── CHUNKED AI CALL: process matches in batches with auto-reduce on 413 ───
+// ─── CHUNKED ANALYSIS: Groq with mathematical fallback ─────────────────────
 
 interface ChunkResult {
   predictions: any[];
@@ -354,107 +530,105 @@ async function analyzeChunks(
   matches: any[],
   groqKey: string | undefined,
   groqModel: string,
-  geminiKey: string | undefined,
-  geminiModel: string,
-): Promise<ChunkResult | null> {
-  // Start with chunk size from env or default
+): Promise<ChunkResult> {
   let chunkSize = parseInt(Deno.env.get("AI_CHUNK_SIZE") || "4", 10);
   const minChunk = 1;
 
-  while (chunkSize >= minChunk) {
-    const chunks: any[][] = [];
-    for (let i = 0; i < matches.length; i += chunkSize) {
-      chunks.push(matches.slice(i, i + chunkSize));
-    }
+  // Track which matches still need predictions after Groq
+  const pendingMatches: { match: any; originalIndex: number }[] = matches.map((m, i) => ({ match: m, originalIndex: i }));
+  const groqPredictions: (any | null)[] = new Array(matches.length).fill(null);
+  let groqChunksUsed = 0;
 
-    console.log(`[analyze-match] Chunking ${matches.length} matches into ${chunks.length} chunk(s) of ${chunkSize} max`);
-
-    const allPredictions: any[] = [];
-    let lastProvider = "";
-    let failedChunks = 0;
-    const errors: string[] = [];
-
-    for (let ci = 0; ci < chunks.length; ci++) {
-      const chunk = chunks[ci];
-      const userPrompt = buildUserPrompt(chunk);
-      let result: { content: string; provider: string } | null = null;
-
-      // Provider 1: Groq
-      if (groqKey && !result) {
-        result = await callGroq(groqKey, groqModel, SYSTEM_PROMPT, userPrompt);
-        if (!result) {
-          // Check if it was a 413 (request too large)
-          // We detect this by seeing if ALL providers failed for this chunk
-          // and the chunk size is > 1 → reduce and retry
-          errors.push(`Groq chunk ${ci + 1} failed`);
-        }
+  // --- Try Groq first ---
+  if (groqKey) {
+    while (chunkSize >= minChunk) {
+      const chunks: any[][] = [];
+      for (let i = 0; i < pendingMatches.length; i += chunkSize) {
+        chunks.push(pendingMatches.slice(i, i + chunkSize).map(p => p.match));
       }
 
-      // Provider 2: Gemini
-      if (!result && geminiKey) {
-        console.log(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: falling back to Gemini...`);
-        result = await callGemini(geminiKey, geminiModel, SYSTEM_PROMPT, userPrompt);
-        if (!result) errors.push(`Gemini chunk ${ci + 1} failed`);
-      }
+      console.log(`[analyze-match] Groq: chunking ${pendingMatches.length} matches into ${chunks.length} chunk(s) of ${chunkSize} max`);
+      let allFailed = true;
 
-      if (result) {
-        const preds = parsePredictions(result.content);
-        allPredictions.push(...preds);
-        lastProvider = result.provider;
-        console.log(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: ${preds.length} predictions via ${result.provider}`);
-      } else {
-        failedChunks++;
-        console.error(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: ALL providers failed`);
-      }
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const chunk = chunks[ci];
+        const userPrompt = buildUserPrompt(chunk);
+        const result = await callGroq(groqKey, groqModel, SYSTEM_PROMPT, userPrompt);
 
-      // Delay between chunks — TPM limiter handles Groq, add buffer for Gemini fallback
-      if (ci < chunks.length - 1) {
-        // Estimate if next chunk will fit in TPM budget
-        const nextPrompt = buildUserPrompt(chunks[ci + 1]);
-        const nextEstTokens = lastActualTokensPerChunk > 0
-          ? lastActualTokensPerChunk
-          : estimateTokens(SYSTEM_PROMPT + nextPrompt) + 800;
-        const now = Date.now();
-        const windowUsage = tokenLog
-          .filter(e => now - e.timestamp < TPM_WINDOW_MS)
-          .reduce((s, e) => s + e.tokens, 0);
-
-        if (windowUsage + nextEstTokens > TPM_LIMIT) {
-          // Need to wait for old entries to expire
-          const oldestInWindow = tokenLog.find(e => now - e.timestamp < TPM_WINDOW_MS);
-          const waitMs = oldestInWindow
-            ? Math.max(10000, (oldestInWindow.timestamp + TPM_WINDOW_MS - now) + 2000)
-            : 15000;
-          console.log(`[analyze-match] ⏳ Pre-wait before chunk ${ci + 2}: ${waitMs}ms (TPM ~${windowUsage}/${TPM_LIMIT})`);
-          await sleep(waitMs);
+        if (result) {
+          const preds = parsePredictions(result.content);
+          // Store predictions at their original indices
+          const startIdx = ci * chunkSize;
+          for (let pi = 0; pi < preds.length && startIdx + pi < pendingMatches.length; pi++) {
+            const origIdx = pendingMatches[startIdx + pi].originalIndex;
+            groqPredictions[origIdx] = preds[pi];
+          }
+          allFailed = false;
+          groqChunksUsed++;
+          console.log(`[analyze-match] Groq chunk ${ci + 1}/${chunks.length}: ${preds.length} predictions`);
         } else {
-          await sleep(2000); // Minimum 2s between chunks
+          console.log(`[analyze-match] Groq chunk ${ci + 1}/${chunks.length}: failed → will use math fallback`);
+        }
+
+        // Delay between chunks
+        if (ci < chunks.length - 1) {
+          const nextPrompt = buildUserPrompt(chunks[ci + 1]);
+          const nextEstTokens = lastActualTokensPerChunk > 0
+            ? lastActualTokensPerChunk
+            : estimateTokens(SYSTEM_PROMPT + nextPrompt) + 800;
+          const now = Date.now();
+          const windowUsage = tokenLog
+            .filter(e => now - e.timestamp < TPM_WINDOW_MS)
+            .reduce((s, e) => s + e.tokens, 0);
+
+          if (windowUsage + nextEstTokens > TPM_LIMIT) {
+            const oldestInWindow = tokenLog.find(e => now - e.timestamp < TPM_WINDOW_MS);
+            const waitMs = oldestInWindow
+              ? Math.max(10000, (oldestInWindow.timestamp + TPM_WINDOW_MS - now) + 2000)
+              : 15000;
+            console.log(`[analyze-match] ⏳ Pre-wait before chunk ${ci + 2}: ${waitMs}ms (TPM ~${windowUsage}/${TPM_LIMIT})`);
+            await sleep(waitMs);
+          } else {
+            await sleep(2000);
+          }
         }
       }
-    }
 
-    if (allPredictions.length > 0) {
-      return { predictions: allPredictions, provider: lastProvider, chunks: chunks.length };
-    }
+      if (!allFailed) break;
 
-    // All chunks failed — if chunkSize > minChunk, try smaller
-    if (chunkSize > minChunk && failedChunks === chunks.length) {
-      const newSize = Math.max(minChunk, Math.floor(chunkSize / 2));
-      console.log(`[analyze-match] All chunks failed at size ${chunkSize}, reducing to ${newSize}...`);
-      chunkSize = newSize;
-      await sleep(1000);
-      continue;
-    }
+      // All chunks failed — try smaller chunk size
+      if (chunkSize > minChunk) {
+        const newSize = Math.max(minChunk, Math.floor(chunkSize / 2));
+        console.log(`[analyze-match] All Groq chunks failed at size ${chunkSize}, reducing to ${newSize}...`);
+        chunkSize = newSize;
+        await sleep(1000);
+        continue;
+      }
 
-    // Some chunks succeeded, some failed — return what we have
-    if (allPredictions.length > 0) {
-      return { predictions: allPredictions, provider: lastProvider, chunks: chunks.length };
+      break;
     }
-
-    break;
   }
 
-  return null;
+  // --- Fill gaps with mathematical predictions ---
+  const allPredictions: any[] = [];
+  let mathCount = 0;
+
+  for (let i = 0; i < matches.length; i++) {
+    if (groqPredictions[i]) {
+      allPredictions.push(groqPredictions[i]);
+    } else {
+      const mathPred = mathPredict(matches[i]);
+      allPredictions.push(mathPred);
+      mathCount++;
+    }
+  }
+
+  if (mathCount > 0) {
+    console.log(`[analyze-match] 🧮 Mathematical fallback for ${mathCount} match(es)`);
+  }
+
+  const provider = mathCount === matches.length ? "math" : mathCount > 0 ? "groq+math" : "groq";
+  return { predictions: allPredictions, provider, chunks: groqChunksUsed || 0 };
 }
 
 // ─── MAIN HANDLER ────────────────────────────────────────────────────────────
@@ -465,7 +639,6 @@ Deno.serve(async (req: Request) => {
   const startTime = Date.now();
 
   try {
-    // --- Authorization ---
     const apiKey = req.headers.get("apikey");
     if (!apiKey) {
       return new Response(
@@ -484,32 +657,15 @@ Deno.serve(async (req: Request) => {
 
     console.log(`[analyze-match] Processing ${matches.length} match(es)...`);
 
-    // --- Provider config ---
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
-    const GOOGLE_AI_KEY = Deno.env.get("GOOGLE_AI_KEY");
     const GROQ_MODEL = Deno.env.get("GROQ_MODEL") || "llama-3.3-70b-versatile";
-    const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") || "gemini-2.0-flash";
 
-    if (!GROQ_API_KEY && !GOOGLE_AI_KEY) {
-      return new Response(
-        JSON.stringify({ error: "No AI provider configured. Set GROQ_API_KEY or GOOGLE_AI_KEY." }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!GROQ_API_KEY) {
+      console.log("[analyze-match] No GROQ_API_KEY → full mathematical fallback");
     }
 
-    // --- Chunked analysis ---
-    const result = await analyzeChunks(matches, GROQ_API_KEY, GROQ_MODEL, GOOGLE_AI_KEY, GEMINI_MODEL);
-
-    if (!result || result.predictions.length === 0) {
-      console.error("[analyze-match] All AI providers failed for all chunks");
-      return new Response(
-        JSON.stringify({
-          error: "Tous les fournisseurs IA sont indisponibles. L'analyse mathématique sera utilisée.",
-          providers: ["Groq failed", "Gemini failed"],
-        }),
-        { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // --- Chunked analysis with mathematical fallback ---
+    const result = await analyzeChunks(matches, GROQ_API_KEY, GROQ_MODEL);
 
     const elapsed = Date.now() - startTime;
     console.log(`[analyze-match] ✅ Success via ${result.provider}: ${result.predictions.length} prediction(s) in ${elapsed}ms (${result.chunks} chunk(s))`);
