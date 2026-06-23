@@ -75,7 +75,7 @@ export default function Index() {
         {APK_DOWNLOAD_URL && (
           <button
             type="button"
-            onClick={() => window.open(APK_DOWNLOAD_URL, "_blank", "noopener")}
+            onClick={() => { const a = document.createElement("a"); a.href = APK_DOWNLOAD_URL; a.download = ""; a.click(); }}
             onMouseEnter={() => { (window as unknown as { status: string }).status = ""; }}
             className="mt-4 w-full flex items-center gap-3 p-3.5 rounded-2xl border border-fire/30 bg-gradient-to-r from-fire/10 to-gold/10 hover:from-fire/20 hover:to-gold/20 transition-all duration-300 group cursor-pointer"
           >
