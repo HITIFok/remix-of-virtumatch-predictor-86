@@ -2,16 +2,14 @@
 // AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
 // NO imports — uses Deno.serve() + native fetch
 //
-// v18: Compressed system prompt (-75% tokens: 1363→196) and compact user prompt.
-//      Same logic, dense notation. Frees ~6000 tokens across 4 chunks.
-//      Pre-flight token budget check before each Groq call.
-//      Smart inter-chunk delays based on remaining TPM budget.
-//      429 retry delays increased to 15s/25s (TPM window = 60s).
-//      v16: Improved prompt v5.0 — virtual football specific constraints.
-//      Scores capped at 0-3, realistic BTTS/Over25 for virtual football.
-//      Enriched user prompt with pre-calculated stats (momentum, attack/defense rates).
-//      Temperature lowered to 0.3 for more deterministic predictions.
-//      v15: Added intelligent chunking to stay within Groq TPM limits.
+// v20: Ultra-compressed prompt (~35% fewer tokens per run).
+//      - SYSTEM_PROMPT: terse notation, minimal JSON template (field list only)
+//      - buildUserPrompt: removed momentum/att/def pre-calcs, compact labels
+//      - Chunk size 3→4 (fewer chunks = fewer system prompt repetitions)
+//      - Shorter output: 3-4 phrase reasoning, 2-3 topScores
+// v19: Actual token tracking, TPD detection, lastActualTokensPerChunk cache.
+// v18: Compressed system prompt and compact user prompt.
+// v16: Improved prompt v5.0 — virtual football specific constraints.
 
 const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "https://virtual-match-hitifproject.vercel.app";
 const corsHeaders: Record<string, string> = {
@@ -44,14 +42,20 @@ interface TokenRecord {
 
 const tokenLog: TokenRecord[] = [];
 
-/** Estimate tokens from text (rough: 1 token ≈ 4 chars for mixed FR/EN) */
+/** Cache actual tokens from last successful Groq call — used for accurate pre-flight estimates */
+let lastActualTokensPerChunk = 0;
+
+/** Estimate tokens from text (conservative: 1 token ≈ 3 chars for mixed FR/EN with special chars) */
 function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 3.5);
+  return Math.ceil(text.length / 3.0);
 }
 
 /** Wait until enough TPM budget is available, then record usage */
 async function tpmWaitAndRecord(inputTokens: number, estimatedOutputTokens: number): Promise<void> {
-  const totalTokens = inputTokens + estimatedOutputTokens;
+  // Use actual tokens from previous call if available (much more accurate than char-based estimate)
+  const totalTokens = lastActualTokensPerChunk > 0
+    ? lastActualTokensPerChunk
+    : Math.ceil((inputTokens + estimatedOutputTokens) * 1.2);
   const now = Date.now();
 
   // Prune old entries outside the window
@@ -90,58 +94,39 @@ async function tpmWaitAndRecord(inputTokens: number, estimatedOutputTokens: numb
 
 // ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
 
-const SYSTEM_PROMPT = `Tu es FOOTBALL VIRTUEL AI PREDICTOR v5.0. Football virtuel ONLY — pas du vrai football.
-Règles virtuel: scores bas (80% sont 0-0,1-0,1-1,2-0,2-1), nul ~30%, avantage domicile ~5%, 3-0+ <8%.
-
-ANALYSE: 1) P(1X2)=(1/cote)/Σ 2) Attaque=BM/MJ, Défense=BE/MJ 3) Momentum forme (V=3,N=1,D=0, poids 1.5→1.0) 4) H2H si dispo 5) Synthèse 6) Anti-trap 7) Score.
-
-ANTI-TRAP: A)fav cotes mais ≤1V/5 forme B)fav cotes mais attaque<1.2 C)fav cotes mais H2H défavorable D)classement écarté mais cotes serrées E)cotes proches.
-0-1 alerte→safe, 2→moderate, 3+→trap(isAntiTrap=true).
-
-SCORE: home/away entre 0-3 (JAMAIS 4+). Si P(Home)>P(Away): 1-0/2-0/2-1. Si P(Away)>P(Home): 0-1/0-2/1-2. Si P(Draw)>32% ou écart<5%: 0-0/1-1. Mi-temps≈45% score final.
-
-MARCHÉS: BTTS≤0.65, Over2.5≤0.60 (virtuel=plus de under).
-
-CONFIANCE: base=prob implicite, +0.03 par indicateur confirmant, -0.04 par alerte. Min 0.50, max 0.92. Sans données: ≤0.65 moderate.
-
-RAISONNEMENT: 5-8 phrases FR: prob implicites, profil équipes, forme, H2H, score prédit+pourquoi, alertes, confiance.
-
-JSON UNIQUEMENT, pas de markdown:
-{"predictions":[{"scoreHome":1,"scoreAway":0,"confidence":0.75,"reasoning":"...","isAntiTrap":false,"firstHalfGoal":true,"tendency":"...","dangerLevel":"safe","topScores":[{"score":"1-0","probability":0.25},{"score":"0-0","probability":0.20}],"bttsProb":0.38,"over25Prob":0.35,"firstHalfScore":"1-0","systemHome":"équilibré","systemAway":"défensif","possessionHome":53,"possessionAway":47}]}
-RÈGLES: possession=100, topScores somment 0.6-0.85, score prédit=top1, 3-5 scores, system∈offensif|défensif|équilibré.`;
+const SYSTEM_PROMPT = `Rôle:VIRTUFoot PREDICTOR v5. Virtuel ONLY.
+Règles: scores bas(0-0,1-0,1-1,2-0,2-1≈80%), nul≈30%, dom+5%, 3-0+<8%.
+Analyse: P(1X2)=inv/Σ|att=BM/MJ|def=BE/MJ|forme(V3N1D0,w→1.5)|H2H|anti-trap|score.
+Anti-trap: fav cotes mais(≤1V/5formes|att<1.2|H2H défav|ranking écarté cotes serrées|cotes proches). 0-1→safe|2→moderate|3+→trap.
+Score: 0-3max. P(H)>P(A)→1-0/2-0/2-1|P(A)>P(H)→0-1/0-2/1-2|P(D)>32%|écart<5%→0-0/1-1|MT≈45%final.
+BTTS≤0.65|Over2.5≤0.60|conf=baseP+0.03/confirm-0.04/alerte[0.50-0.92]|sans données≤0.65.
+Raisonnement: 3-4 phrases FR.
+JSON sans markdown. Champs par prediction: scoreHome,scoreAway,confidence,reasoning,isAntiTrap,firstHalfGoal,tendency,dangerLevel,topScores[{score,probability}],bttsProb,over25Prob,firstHalfScore,systemHome,systemAway,possessionHome,possessionAway.
+Règles: poss=100|topScores Σ=0.6-0.85|prédit=top1|2-3 scores|system∈off|def|éq.`;
 
 // ─── BUILD USER PROMPT FOR A CHUNK ───────────────────────────────────────────
 
 function buildUserPrompt(matches: any[]): string {
-  const w = [1.5, 1.3, 1.2, 1.1, 1.0];
-  const pts: Record<string, number> = { V: 3, N: 1, D: 0 };
-
   return matches
     .map((m: any, i: number) => {
       const invH = 1 / m.oddHome, invD = 1 / m.oddDraw, invA = 1 / m.oddAway;
       const tot = invH + invD + invA;
-      let b = `M${i + 1}: ${m.home} vs ${m.away} | ${m.oddHome}/${m.oddDraw}/${m.oddAway} | P: ${(invH/tot*100).toFixed(0)}/${(invD/tot*100).toFixed(0)}/${(invA/tot*100).toFixed(0)}%`;
+      let b = `M${i + 1}: ${m.home} vs ${m.away} | ${m.oddHome}/${m.oddDraw}/${m.oddAway} | P:${(invH/tot*100).toFixed(0)}/${(invD/tot*100).toFixed(0)}/${(invA/tot*100).toFixed(0)}`;
 
       if (m.rankingHome) {
         const r = m.rankingHome, mj = r.played || 1;
-        b += `\n${m.home}: #${r.position} ${mj}J ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}BM/${r.goalsAgainst}BE ${r.points}pts att:${(r.goalsFor/mj).toFixed(1)} def:${(r.goalsAgainst/mj).toFixed(1)}`;
+        b += `\nH:#${r.position} ${mj}j ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}-${r.goalsAgainst} ${r.points}p`;
       }
       if (m.rankingAway) {
         const r = m.rankingAway, mj = r.played || 1;
-        b += `\n${m.away}: #${r.position} ${mj}J ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}BM/${r.goalsAgainst}BE ${r.points}pts att:${(r.goalsFor/mj).toFixed(1)} def:${(r.goalsAgainst/mj).toFixed(1)}`;
+        b += `\nA:#${r.position} ${mj}j ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}-${r.goalsAgainst} ${r.points}p`;
       }
 
       if (m.recentHome?.length > 0) {
-        b += `\nForme ${m.home}: ${m.recentHome.map((r: any) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(" ")}`;
-        let ms = 0, mx = 0;
-        m.recentHome.slice(0, 5).forEach((r: any, idx: number) => { ms += (pts[r.result] || 0) * (w[idx] || 1); mx += 3 * (w[idx] || 1); });
-        b += ` mom:${mx > 0 ? (ms / mx * 100).toFixed(0) : "?"}%`;
+        b += `\nFH:${m.recentHome.map((r: any) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(" ")}`;
       }
       if (m.recentAway?.length > 0) {
-        b += `\nForme ${m.away}: ${m.recentAway.map((r: any) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(" ")}`;
-        let ms = 0, mx = 0;
-        m.recentAway.slice(0, 5).forEach((r: any, idx: number) => { ms += (pts[r.result] || 0) * (w[idx] || 1); mx += 3 * (w[idx] || 1); });
-        b += ` mom:${mx > 0 ? (ms / mx * 100).toFixed(0) : "?"}%`;
+        b += `\nFA:${m.recentAway.map((r: any) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(" ")}`;
       }
 
       if (m.headToHead?.length > 0) {
@@ -149,12 +134,12 @@ function buildUserPrompt(matches: any[]): string {
         const hd = m.headToHead.filter((h: any) => h.scoreHome === h.scoreAway).length;
         const ha = m.headToHead.filter((h: any) => h.scoreHome < h.scoreAway).length;
         const avg = (m.headToHead.reduce((s: number, h: any) => s + h.scoreHome + h.scoreAway, 0) / m.headToHead.length).toFixed(1);
-        b += `\nH2H: ${hw}V/${hd}N/${ha}D avg:${avg}bm`;
+        b += `\nH2H:${hw}V${hd}N${ha}D g${avg}`;
       }
 
       return b;
     })
-    .join("\n\n");
+    .join("\n");
 }
 
 // ─── GROQ PROVIDER ───────────────────────────────────────────────────────────
@@ -183,7 +168,7 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_tokens: 4096,
+          max_tokens: 3072,
           response_format: { type: "json_object" },
         }),
       });
@@ -191,7 +176,18 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
       if (response.ok) {
         const data = await response.json();
         const content = data.choices?.[0]?.message?.content || "";
-        console.log(`[analyze-match] Groq success in ${response.headers.get("x-ratelimit-remaining-requests") || "?"} remaining requests`);
+        const actualTokens = data.usage?.total_tokens || 0;
+
+        // Replace estimate with actual tokens in TPM tracker
+        if (actualTokens > 0 && tokenLog.length > 0) {
+          tokenLog[tokenLog.length - 1].tokens = actualTokens;
+          lastActualTokensPerChunk = actualTokens;
+          // Re-log with actual count
+          const realUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
+          console.log(`[analyze-match] 📊 TPM actual: ${realUsage}/${TPM_LIMIT} (this chunk: ${actualTokens}tok)`);
+        }
+
+        console.log(`[analyze-match] Groq success (${actualTokens || "?"}tok) in ${response.headers.get("x-ratelimit-remaining-requests") || "?"} remaining requests`);
         return { content, provider: "groq" };
       }
 
@@ -206,14 +202,22 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
       }
 
       if (status === 429) {
-        console.error(`[analyze-match] Groq 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
-        if (attempt === maxRetries) {
-          console.error("[analyze-match] Groq exhausted, will fallback to Gemini");
+        const isTPD = errorBody.includes("tokens per day");
+        console.error(`[analyze-match] Groq ${isTPD ? "TPD" : "TPM"} 429 (attempt ${attempt + 1}/${maxRetries + 1}): ${errorBody.substring(0, 200)}`);
+
+        // TPD (daily limit) — no point retrying, skip straight to Gemini
+        if (isTPD) {
+          console.error("[analyze-match] Groq daily limit (TPD) exhausted, skipping retries → Gemini");
           return null;
         }
-        // On 429, wait longer to let TPM bucket drain (window is 60s)
+
+        if (attempt === maxRetries) {
+          console.error("[analyze-match] Groq TPM exhausted, will fallback to Gemini");
+          return null;
+        }
+        // On TPM 429, wait longer to let bucket drain (window is 60s)
         const retryDelay = 15000 + attempt * 10000; // 15s, then 25s
-        console.log(`[analyze-match] Groq 429 retry: waiting ${retryDelay}ms for TPM bucket to drain...`);
+        console.log(`[analyze-match] Groq TPM 429 retry: waiting ${retryDelay}ms for bucket to drain...`);
         await sleep(retryDelay);
         continue;
       }
@@ -354,7 +358,7 @@ async function analyzeChunks(
   geminiModel: string,
 ): Promise<ChunkResult | null> {
   // Start with chunk size from env or default
-  let chunkSize = parseInt(Deno.env.get("AI_CHUNK_SIZE") || "3", 10);
+  let chunkSize = parseInt(Deno.env.get("AI_CHUNK_SIZE") || "4", 10);
   const minChunk = 1;
 
   while (chunkSize >= minChunk) {
@@ -407,7 +411,9 @@ async function analyzeChunks(
       if (ci < chunks.length - 1) {
         // Estimate if next chunk will fit in TPM budget
         const nextPrompt = buildUserPrompt(chunks[ci + 1]);
-        const nextEstTokens = estimateTokens(SYSTEM_PROMPT + nextPrompt) + 800;
+        const nextEstTokens = lastActualTokensPerChunk > 0
+          ? lastActualTokensPerChunk
+          : estimateTokens(SYSTEM_PROMPT + nextPrompt) + 800;
         const now = Date.now();
         const windowUsage = tokenLog
           .filter(e => now - e.timestamp < TPM_WINDOW_MS)
