@@ -2,7 +2,11 @@
 // AI-powered match analysis — Multi-provider: Groq (primary) + Google Gemini (fallback)
 // NO imports — uses Deno.serve() + native fetch
 //
-// v16: Improved prompt v5.0 — virtual football specific constraints.
+// v17: Added TPM rate limiter to stay within 12k TPM Groq limit.
+//      Pre-flight token budget check before each Groq call.
+//      Smart inter-chunk delays based on remaining TPM budget.
+//      429 retry delays increased to 15s/25s (TPM window = 60s).
+//      v16: Improved prompt v5.0 — virtual football specific constraints.
 //      Scores capped at 0-3, realistic BTTS/Over25 for virtual football.
 //      Enriched user prompt with pre-calculated stats (momentum, attack/defense rates).
 //      Temperature lowered to 0.3 for more deterministic predictions.
@@ -25,6 +29,63 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Mask an API key for safe logging */
 const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : "NOT_SET";
+
+// ─── TPM RATE LIMITER ─────────────────────────────────────────────────────
+// Tracks token usage within the rolling 60s window to avoid 429 on 12k TPM limit
+
+const TPM_LIMIT = 11000; // Stay under 12k with margin
+const TPM_WINDOW_MS = 60000; // 60 seconds rolling window
+
+interface TokenRecord {
+  tokens: number;
+  timestamp: number;
+}
+
+const tokenLog: TokenRecord[] = [];
+
+/** Estimate tokens from text (rough: 1 token ≈ 4 chars for mixed FR/EN) */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 3.5);
+}
+
+/** Wait until enough TPM budget is available, then record usage */
+async function tpmWaitAndRecord(inputTokens: number, estimatedOutputTokens: number): Promise<void> {
+  const totalTokens = inputTokens + estimatedOutputTokens;
+  const now = Date.now();
+
+  // Prune old entries outside the window
+  while (tokenLog.length > 0 && now - tokenLog[0].timestamp > TPM_WINDOW_MS) {
+    tokenLog.shift();
+  }
+
+  // Calculate current usage
+  const currentUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
+
+  if (currentUsage + totalTokens > TPM_LIMIT) {
+    // Wait until oldest entries expire and we have enough budget
+    const neededBudget = totalTokens;
+    const waitForMs = Math.max(
+      5000, // minimum 5s
+      tokenLog.length > 0
+        ? (tokenLog[0].timestamp + TPM_WINDOW_MS - now) + 1000
+        : 15000
+    );
+    console.log(`[analyze-match] ⏳ TPM budget low (${currentUsage}/${TPM_LIMIT} used, need ${totalTokens} more). Waiting ${waitForMs}ms...`);
+    await sleep(waitForMs);
+
+    // Prune again after waiting
+    const afterWait = Date.now();
+    while (tokenLog.length > 0 && afterWait - tokenLog[0].timestamp > TPM_WINDOW_MS) {
+      tokenLog.shift();
+    }
+  }
+
+  // Record this usage
+  tokenLog.push({ tokens: totalTokens, timestamp: Date.now() });
+
+  const newUsage = tokenLog.reduce((sum, entry) => sum + entry.tokens, 0);
+  console.log(`[analyze-match] 📊 TPM usage: ~${newUsage}/${TPM_LIMIT}`);
+}
 
 // ─── SYSTEM PROMPT (shared by all providers) ────────────────────────────────
 
@@ -295,13 +356,11 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
   const url = "https://api.groq.com/openai/v1/chat/completions";
   console.log(`[analyze-match] 🟢 Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
 
+  // Pre-flight TPM check before any attempt
+  await tpmWaitAndRecord(estimateTokens(systemPrompt + userPrompt), 800);
+
   const maxRetries = 2;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    if (attempt > 0) {
-      const delay = attempt === 1 ? 3000 : 8000;
-      console.log(`[analyze-match] Groq retry ${attempt}/${maxRetries} after ${delay}ms...`);
-      await sleep(delay);
-    }
 
     try {
       const response = await fetch(url, {
@@ -345,6 +404,10 @@ async function callGroq(apiKey: string, model: string, systemPrompt: string, use
           console.error("[analyze-match] Groq exhausted, will fallback to Gemini");
           return null;
         }
+        // On 429, wait longer to let TPM bucket drain (window is 60s)
+        const retryDelay = 15000 + attempt * 10000; // 15s, then 25s
+        console.log(`[analyze-match] Groq 429 retry: waiting ${retryDelay}ms for TPM bucket to drain...`);
+        await sleep(retryDelay);
         continue;
       }
 
@@ -533,9 +596,27 @@ async function analyzeChunks(
         console.error(`[analyze-match] Chunk ${ci + 1}/${chunks.length}: ALL providers failed`);
       }
 
-      // Small delay between chunks to respect rate limits
+      // Delay between chunks — TPM limiter handles Groq, add buffer for Gemini fallback
       if (ci < chunks.length - 1) {
-        await sleep(500);
+        // Estimate if next chunk will fit in TPM budget
+        const nextPrompt = buildUserPrompt(chunks[ci + 1]);
+        const nextEstTokens = estimateTokens(SYSTEM_PROMPT + nextPrompt) + 800;
+        const now = Date.now();
+        const windowUsage = tokenLog
+          .filter(e => now - e.timestamp < TPM_WINDOW_MS)
+          .reduce((s, e) => s + e.tokens, 0);
+
+        if (windowUsage + nextEstTokens > TPM_LIMIT) {
+          // Need to wait for old entries to expire
+          const oldestInWindow = tokenLog.find(e => now - e.timestamp < TPM_WINDOW_MS);
+          const waitMs = oldestInWindow
+            ? Math.max(10000, (oldestInWindow.timestamp + TPM_WINDOW_MS - now) + 2000)
+            : 15000;
+          console.log(`[analyze-match] ⏳ Pre-wait before chunk ${ci + 2}: ${waitMs}ms (TPM ~${windowUsage}/${TPM_LIMIT})`);
+          await sleep(waitMs);
+        } else {
+          await sleep(2000); // Minimum 2s between chunks
+        }
       }
     }
 
