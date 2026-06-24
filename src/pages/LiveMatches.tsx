@@ -405,47 +405,71 @@ export default function LiveMatches() {
     return result;
   };
 
-  // Prédiction individuelle — skip AI if predetermined score exists
+  // ─── Background AI enhancement (non-blocking) ───────────────────────────
+  const aiEnhancingRef = useRef<Set<string>>(new Set());
+
+  const enhanceWithAI = async (matches: ScrapedMatch[]) => {
+    // Filter out preloaded and already-cached matches
+    const toEnrich: { match: ScrapedMatch; cacheKey: string; matchKey: string }[] = [];
+    for (const match of matches) {
+      const matchKey = `${match.home}-${match.away}`;
+      const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+      const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
+      if (!isPreloaded && !aiCache.current.has(cacheKey) && !aiEnhancingRef.current.has(cacheKey)) {
+        toEnrich.push({ match, cacheKey, matchKey });
+        aiEnhancingRef.current.add(cacheKey);
+      }
+    }
+    if (toEnrich.length === 0) return;
+
+    try {
+      const enriched = enrichMatchesForAI(toEnrich.map(t => t.match), results, ranking);
+      const { data, error } = await supabase.functions.invoke("analyze-match", {
+        body: { matches: enriched },
+      });
+      if (!error && data?.predictions?.length > 0) {
+        const aiPreds = data.predictions as AIPrediction[];
+        for (let i = 0; i < toEnrich.length; i++) {
+          if (aiPreds[i]) {
+            const { cacheKey, matchKey, match } = toEnrich[i];
+            aiCache.current.set(cacheKey, aiPreds[i]);
+            // Re-process with AI and update display
+            const result = processMatch(match, aiPreds[i]);
+            await savePredictionToDb(match, result);
+          }
+        }
+        console.log(`[LiveMatches] AI enhanced ${aiPreds.length} prediction(s)`);
+      } else {
+        console.warn("[LiveMatches] AI unavailable:", error || data?.error);
+      }
+    } catch (aiErr) {
+      console.warn("[LiveMatches] AI enhancement failed:", aiErr);
+    } finally {
+      for (const t of toEnrich) aiEnhancingRef.current.delete(t.cacheKey);
+    }
+  };
+
+  // Prédiction individuelle — math instantané, IA en arrière-plan
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
-    const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
 
     if (predictingRef.current === matchKey) return;
     predictingRef.current = matchKey;
     setPredictingId(matchKey);
 
     try {
-      let aiPrediction: AIPrediction | undefined;
+      // STEP 1: Affichage instantané (< 100ms) via math
       const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
-
-      if (!isPreloaded) {
-        const cached = aiCache.current.get(cacheKey);
-        if (cached) {
-          aiPrediction = cached;
-          console.log("[LiveMatches] AI cache hit for", match.home, "vs", match.away);
-        } else {
-          try {
-            const enriched = enrichMatchesForAI([match], results, ranking);
-            const { data, error } = await supabase.functions.invoke("analyze-match", {
-              body: { matches: enriched },
-            });
-            if (!error && data?.predictions?.length > 0) {
-              aiPrediction = data.predictions[0] as AIPrediction;
-              aiCache.current.set(cacheKey, aiPrediction);
-            } else {
-              console.warn("[LiveMatches] AI unavailable, using math fallback:", error || data?.error);
-            }
-          } catch (aiErr) {
-            console.warn("[LiveMatches] AI call failed, math fallback:", aiErr);
-          }
-        }
-      } else {
-        console.log(`[LiveMatches] Skipping AI for ${match.home} vs ${match.away} — predetermined score available`);
-      }
-
-      const result = processMatch(match, aiPrediction);
+      const result = processMatch(match, undefined);
       await savePredictionToDb(match, result);
-      toast.success(isPreloaded ? "Résultat prédéterminé utilisé 🎯" : "Prédiction générée 🔥");
+      setPredictingId(null);
+      toast.success(isPreloaded ? "Résultat prédéterminé 🎯" : "Prédiction générée 🔥");
+
+      // STEP 2: IA en arrière-plan (non-blocking)
+      const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
+      if (!isPreloaded && !aiCache.current.has(cacheKey)) {
+        enhanceWithAI([match]);
+      }
     } catch {
       toast.error("Erreur lors de la prédiction");
     } finally {
@@ -454,22 +478,13 @@ export default function LiveMatches() {
     }
   };
 
-  // Prédiction groupée : 1 seul appel IA pour tous les matchs
+  // Prédiction groupée : math instantané pour TOUS, IA en arrière-plan
   const handleBatchPredict = async () => {
-    // Collecter tous les matchs visibles (avec cotes > 0) qui n'ont pas encore été prédits
+    // Collecter tous les matchs visibles (avec cotes > 0)
     const allMatches: ScrapedMatch[] = [];
-    const uncachedMatches: { match: ScrapedMatch; cacheKey: string }[] = [];
-
     for (const league of Object.keys(matchesByLeague)) {
       for (const match of matchesByLeague[league]) {
-        if (match.oddHome > 0) {
-          const matchKey = `${match.home}-${match.away}`;
-          const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
-          allMatches.push(match);
-          if (!aiCache.current.has(cacheKey) && !predictions[matchKey]) {
-            uncachedMatches.push({ match, cacheKey });
-          }
-        }
+        if (match.oddHome > 0) allMatches.push(match);
       }
     }
 
@@ -478,67 +493,24 @@ export default function LiveMatches() {
       return;
     }
 
-    // Separate preloaded matches (no AI needed) from regular ones
-    const preloadedMatches = allMatches.filter(m => m.status === "preloaded" && m.predeterminedScore);
-    const regularMatches = allMatches.filter(m => !(m.status === "preloaded" && m.predeterminedScore));
-    const regularUncached = uncachedMatches.filter(
-      um => !(um.match.status === "preloaded" && um.match.predeterminedScore)
-    );
-
-    console.log(`[LiveMatches] Batch: ${preloadedMatches.length} preloaded, ${regularMatches.length} regular (${regularUncached.length} need AI)`);
-
     setBatchPredicting(true);
     try {
-      // Auto-predict preloaded matches instantly (no AI needed)
-      for (const match of preloadedMatches) {
-        const result = processMatch(match, undefined); // processMatch will inject predetermined score
-        await savePredictionToDb(match, result);
+      // STEP 1: Prédiction mathématique instantanée pour TOUS les matchs
+      const batchResults: { match: ScrapedMatch; result: MatchResult }[] = [];
+      for (const match of allMatches) {
+        const result = processMatch(match, undefined);
+        batchResults.push({ match, result });
       }
+      // Sauvegarder en BDD (non-blocking, ne bloque pas l'affichage)
+      Promise.all(batchResults.map(({ match, result }) => savePredictionToDb(match, result)));
 
-      // AI for regular uncached matches only
-      let newAiPredictions: Map<string, AIPrediction> = new Map();
+      setBatchPredicting(false);
+      toast.success(`${allMatches.length} match(s) analysé(s) 🔥`);
 
-      if (regularUncached.length > 0) {
-        try {
-          const uncachedMatchObjects = regularUncached.map(m => m.match);
-          const enriched = enrichMatchesForAI(uncachedMatchObjects, results, ranking);
-          const { data, error } = await supabase.functions.invoke("analyze-match", {
-            body: { matches: enriched },
-          });
-
-          if (!error && data?.predictions?.length > 0) {
-            const aiPreds = data.predictions as AIPrediction[];
-            for (let i = 0; i < regularUncached.length; i++) {
-              if (aiPreds[i]) {
-                newAiPredictions.set(regularUncached[i].cacheKey, aiPreds[i]);
-                aiCache.current.set(regularUncached[i].cacheKey, aiPreds[i]);
-              }
-            }
-          } else {
-            console.warn("[LiveMatches] Batch AI unavailable:", error || data?.error);
-            toast.error("IA indisponible pour certains matches");
-          }
-        } catch (aiErr) {
-          console.warn("[LiveMatches] Batch AI call failed:", aiErr);
-          toast.error("IA indisponible, analyse mathématique utilisée");
-        }
-      }
-
-      // Process and save regular matches (cached + new AI)
-      for (const match of regularMatches) {
-        const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
-        const aiPrediction = aiCache.current.get(cacheKey) || newAiPredictions.get(cacheKey) || undefined;
-        const result = processMatch(match, aiPrediction);
-        await savePredictionToDb(match, result);
-      }
-
-      const msg = preloadedMatches.length > 0
-        ? `${allMatches.length} match(s) : ${preloadedMatches.length} prédéterminé(s) 🎯 + ${regularMatches.length} analysé(s) 🔥`
-        : `${allMatches.length} match(s) analysé(s) avec l'IA 🔥`;
-      toast.success(msg);
+      // STEP 2: IA en arrière-plan pour enrichir les prédictions
+      enhanceWithAI(allMatches);
     } catch {
       toast.error("Erreur lors de la prédiction groupée");
-    } finally {
       setBatchPredicting(false);
     }
   };
