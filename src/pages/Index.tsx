@@ -45,20 +45,17 @@ export default function Index() {
 
       const analyzed = matches.map((m, i) => analyzeMatch(m, aiPredictions[i]));
 
-      for (const r of analyzed) {
-        await saveToHistory(r);
-      }
+      // Affichage instantané — sauvegarde en arrière-plan
       setResults(analyzed);
       toast.success(`${analyzed.length} match(s) analysé(s) avec l'IA 🔥`);
+      Promise.all(analyzed.map(r => saveToHistory(r).catch(() => {})));
     } catch (err) {
       console.error("Analysis error:", err);
       // Full fallback
       const analyzed = matches.map((m) => analyzeMatch(m));
-      for (const r of analyzed) {
-        await saveToHistory(r);
-      }
       setResults(analyzed);
       toast.error("Analyse IA échouée, résultats mathématiques affichés");
+      Promise.all(analyzed.map(r => saveToHistory(r).catch(() => {})));
     } finally {
       setLoading(false);
     }

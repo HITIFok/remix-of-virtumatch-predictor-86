@@ -429,15 +429,25 @@ export default function LiveMatches() {
       });
       if (!error && data?.predictions?.length > 0) {
         const aiPreds = data.predictions as AIPrediction[];
+        // Mise à jour instantanée de l'affichage
         for (let i = 0; i < toEnrich.length; i++) {
           if (aiPreds[i]) {
             const { cacheKey, matchKey, match } = toEnrich[i];
             aiCache.current.set(cacheKey, aiPreds[i]);
-            // Re-process with AI and update display
-            const result = processMatch(match, aiPreds[i]);
-            await savePredictionToDb(match, result);
+            processMatch(match, aiPreds[i]);
           }
         }
+        // Sauvegarde BDD en arrière-plan (non-bloquant)
+        Promise.all(
+          toEnrich.map((t, i) => {
+            if (aiPreds[i]) {
+              const matchKey = `${t.match.home}-${t.match.away}`;
+              const result = predictions[matchKey];
+              if (result) return savePredictionToDb(t.match, result);
+            }
+            return Promise.resolve();
+          })
+        ).catch(() => {});
         console.log(`[LiveMatches] AI enhanced ${aiPreds.length} prediction(s)`);
       } else {
         console.warn("[LiveMatches] AI unavailable:", error || data?.error);
@@ -461,9 +471,10 @@ export default function LiveMatches() {
       // STEP 1: Affichage instantané (< 100ms) via math
       const isPreloaded = match.status === "preloaded" && match.predeterminedScore;
       const result = processMatch(match, undefined);
-      await savePredictionToDb(match, result);
+      // Libérer le bouton IMMÉDIATEMENT — sauvegarde BDD en arrière-plan
       setPredictingId(null);
       toast.success(isPreloaded ? "Résultat prédéterminé 🎯" : "Prédiction générée 🔥");
+      savePredictionToDb(match, result).catch(() => {});
 
       // STEP 2: IA en arrière-plan (non-blocking)
       const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
