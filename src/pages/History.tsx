@@ -270,8 +270,9 @@ function StatsOverview({ stats }: { stats: AggregatedStats | null }) {
 }
 
 export default function History() {
-  const { predictions, stats, loading, refresh, deletePrediction } = usePredictions();
+  const { predictions, stats, loading, refresh, deletePrediction, deletePendingPredictions } = usePredictions();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
@@ -281,6 +282,17 @@ export default function History() {
       console.error('Erreur suppression:', err);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDeleteAllPending = async () => {
+    setDeletingAll(true);
+    try {
+      await deletePendingPredictions();
+    } catch (err) {
+      console.error('Erreur suppression en attente:', err);
+    } finally {
+      setDeletingAll(false);
     }
   };
   const [activeTab, setActiveTab] = useState("stats");
@@ -371,6 +383,45 @@ export default function History() {
             </TabsContent>
 
             <TabsContent value="pending">
+              {pendingPredictions.length > 0 && (
+                <div className="mb-3">
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={deletingAll}
+                        className="w-full border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive font-display text-xs tracking-wider"
+                      >
+                        {deletingAll ? (
+                          <><Loader2 size={14} className="mr-1.5 animate-spin" /> Suppression...</>
+                        ) : (
+                          <><Trash2 size={14} className="mr-1.5" /> Supprimer tout ({pendingPredictions.length})</>
+                        )}
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent className="bg-card border-border rounded-2xl">
+                      <AlertDialogHeader>
+                        <AlertDialogTitle className="font-display text-foreground text-base">
+                          Supprimer les {pendingPredictions.length} prédiction(s) en attente ?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription className="text-muted-foreground text-sm leading-relaxed">
+                          Toutes les prédictions « En attente » seront définitivement supprimées. Les prédictions vérifiées (correctes/incorrectes) ne seront pas affectées.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter className="gap-2 sm:gap-2">
+                        <AlertDialogCancel className="border-border font-display">Annuler</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-display"
+                          onClick={handleDeleteAllPending}
+                        >
+                          Tout supprimer
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              )}
               {pendingPredictions.length === 0 ? (
                 <div className="text-center py-12">
                   <CheckCircle size={32} className="mx-auto text-success/30 mb-2" />

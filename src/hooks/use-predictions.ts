@@ -319,6 +319,27 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
+  // Supprimer toutes les prédictions "en attente" en une seule requête
+  const deletePendingPredictions = useCallback(async () => {
+    try {
+      const { error } = await supabase
+        .from('predictions')
+        .delete()
+        .eq('status', 'pending')
+
+      if (error) {
+        console.error('Erreur suppression en attente:', error)
+        throw error
+      }
+
+      await loadPredictions(true)
+      return true
+    } catch (err) {
+      console.error('Error deleting pending predictions:', err)
+      throw err
+    }
+  }, [loadPredictions])
+
   // Vérifier manuellement les prédictions via Edge Function (optionnel)
   const verifyPredictions = useCallback(async () => {
     try {
@@ -351,6 +372,7 @@ export function usePredictions() {
     error,
     savePrediction,
     deletePrediction,
+    deletePendingPredictions,
     verifyPredictions,
     refresh: () => loadPredictions(false)
   }
