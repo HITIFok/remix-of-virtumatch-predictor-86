@@ -383,7 +383,7 @@ Deno.serve(async (req: Request) => {
 
       if (!found) {
         notFound++;
-        console.log(`[verify] MISS: ${pred.home_team} vs ${pred.away_team} | no match_id | league=${predLeagueId || "?""} | round=${predRound || "?"}`);
+        console.log(`[verify] MISS: ${pred.home_team} vs ${pred.away_team} | no match_id | league=${predLeagueId || "?"} | round=${predRound || "?"}`);
       }
     }
 
