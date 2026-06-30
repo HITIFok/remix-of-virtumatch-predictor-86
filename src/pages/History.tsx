@@ -270,9 +270,11 @@ function StatsOverview({ stats }: { stats: AggregatedStats | null }) {
 }
 
 export default function History() {
-  const { predictions, stats, loading, refresh, deletePrediction, deletePendingPredictions } = usePredictions();
+  const { predictions, stats, loading, refresh, deletePrediction, deletePendingPredictions, verifyPredictions } = usePredictions();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingAll, setDeletingAll] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<string | null>(null);
 
   const handleDelete = async (id: string) => {
     setDeletingId(id);
@@ -293,6 +295,28 @@ export default function History() {
       console.error('Erreur suppression en attente:', err);
     } finally {
       setDeletingAll(false);
+    }
+  };
+
+  const handleVerifyNow = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifyPredictions();
+      if (result) {
+        const msg = result.verified > 0
+          ? `${result.verified} vérifiée(s) : ${result.correct} ✓ ${result.incorrect} ✗`
+          : result.stillPending > 0
+            ? `Aucun nouveau résultat — ${result.stillPending} en attente`
+            : 'Aucune prédiction en attente';
+        setVerifyResult(msg);
+      } else {
+        setVerifyResult('Erreur lors de la vérification');
+      }
+    } catch {
+      setVerifyResult('Erreur lors de la vérification');
+    } finally {
+      setVerifying(false);
     }
   };
   const [activeTab, setActiveTab] = useState("stats");
@@ -383,6 +407,24 @@ export default function History() {
             </TabsContent>
 
             <TabsContent value="pending">
+              <div className="mb-3 flex flex-col gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={verifying}
+                  onClick={handleVerifyNow}
+                  className="w-full border-success/30 text-success hover:bg-success/10 hover:text-success font-display text-xs tracking-wider"
+                >
+                  {verifying ? (
+                    <><Loader2 size={14} className="mr-1.5 animate-spin" /> Vérification en cours...</>
+                  ) : (
+                    <><RefreshCw size={14} className="mr-1.5" /> Vérifier maintenant ({pendingPredictions.length} en attente)</>
+                  )}
+                </Button>
+                {verifyResult && (
+                  <p className="text-[10px] text-center text-muted-foreground font-display">{verifyResult}</p>
+                )}
+              </div>
               {pendingPredictions.length > 0 && (
                 <div className="mb-3">
                   <AlertDialog>
