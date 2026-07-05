@@ -1,6 +1,7 @@
 // ============================================
-// MOTEUR DE PRÉDICTION POISSON AVANCÉ
+// MOTEUR DE PRÉDICTION POISSON AVANCÉ v2.0
 // Algorithme basé sur Grid Search + Distribution de Poisson
+// v2.0: Utilise teamStats, forme, H2H, IA, redistribution virtuelle
 // ============================================
 
 export interface MatchInput {
@@ -11,7 +12,7 @@ export interface MatchInput {
   oddHome: number;
   oddDraw: number;
   oddAway: number;
-  newSeasonMode?: boolean; // Boost +0.22 pour le favori
+  newSeasonMode?: boolean;
 }
 
 export interface TeamStats {
@@ -107,7 +108,6 @@ export interface MatchResult {
   homeAdvantage: number;
   rankingDiff: number;
   predictedOutcome: string;
-  // Nouveaux champs pour l'algorithme avancé
   lambdaHome: number;
   lambdaAway: number;
   favorite: '1' | 'X' | '2';
@@ -127,29 +127,22 @@ let idCounter = 0;
 // ÉTAPE 1 — CONVERSION DES COTES EN PROBABILITÉS 1X2
 // ============================================
 function convertOddsToProbabilities(oddHome: number, oddDraw: number, oddAway: number): {
-  pH: number;  // Probabilité victoire domicile
-  pD: number;  // Probabilité nul
-  pA: number;  // Probabilité victoire extérieur
+  pH: number; pD: number; pA: number;
   favorite: '1' | 'X' | '2';
   favoriteProb: number;
 } {
-  // Inverses des cotes
   const invH = 1 / oddHome;
   const invD = 1 / oddDraw;
   const invA = 1 / oddAway;
-  
-  // Somme totale (inclut la marge du bookmaker)
   const total = invH + invD + invA;
-  
-  // Normalisation pour retirer la marge
+
   const pH = invH / total;
   const pD = invD / total;
   const pA = invA / total;
-  
-  // Identifier le favori
+
   let favorite: '1' | 'X' | '2';
   let favoriteProb: number;
-  
+
   if (pH >= pD && pH >= pA) {
     favorite = '1';
     favoriteProb = pH;
@@ -160,7 +153,7 @@ function convertOddsToProbabilities(oddHome: number, oddDraw: number, oddAway: n
     favorite = 'X';
     favoriteProb = pD;
   }
-  
+
   return { pH, pD, pA, favorite, favoriteProb };
 }
 
@@ -168,9 +161,6 @@ function convertOddsToProbabilities(oddHome: number, oddDraw: number, oddAway: n
 // ÉTAPE 2 — DISTRIBUTION DE POISSON
 // ============================================
 
-/**
- * Calcule la factorielle (avec cache pour performance)
- */
 const factorialCache: number[] = [1, 1, 2, 6, 24, 120, 720, 5040];
 function factorial(n: number): number {
   if (n < factorialCache.length) return factorialCache[n];
@@ -182,9 +172,6 @@ function factorial(n: number): number {
   return r;
 }
 
-/**
- * Distribution de Poisson: P(k | λ) = e^(-λ) × λ^k / k!
- */
 function poisson(lambda: number, k: number): number {
   return Math.exp(-lambda) * Math.pow(lambda, k) / factorial(k);
 }
@@ -193,13 +180,8 @@ function poisson(lambda: number, k: number): number {
 // ÉTAPE 3 — ESTIMATION DES LAMBDAS (GRID SEARCH)
 // ============================================
 
-/**
- * Calcule les probabilités 1X2 à partir des lambdas
- */
 function calculate1X2FromLambdas(lambdaH: number, lambdaA: number): { pH: number; pD: number; pA: number } {
   let pH = 0, pD = 0, pA = 0;
-  
-  // Somme sur tous les scores possibles (0-0 à 10-10 pour précision)
   for (let h = 0; h <= 10; h++) {
     for (let a = 0; a <= 10; a++) {
       const p = poisson(lambdaH, h) * poisson(lambdaA, a);
@@ -208,37 +190,27 @@ function calculate1X2FromLambdas(lambdaH: number, lambdaA: number): { pH: number
       else pD += p;
     }
   }
-  
   return { pH, pD, pA };
 }
 
-/**
- * Grid Search pour trouver les meilleurs lambdas
- * Teste toutes les combinaisons entre 0.5 et 3.0 (pas de 0.05)
- */
 function gridSearchLambdas(
-  targetPH: number,
-  targetPD: number,
-  targetPA: number
+  targetPH: number, targetPD: number, targetPA: number
 ): { lambdaH: number; lambdaA: number; error: number } {
   const minLambda = 0.5;
   const maxLambda = 3.0;
   const step = 0.05;
-  
+
   let bestLambdaH = 1.5;
   let bestLambdaA = 1.2;
   let bestError = Infinity;
-  
-  // Grid search
+
   for (let lambdaH = minLambda; lambdaH <= maxLambda; lambdaH += step) {
     for (let lambdaA = minLambda; lambdaA <= maxLambda; lambdaA += step) {
       const { pH, pD, pA } = calculate1X2FromLambdas(lambdaH, lambdaA);
-      
-      // Erreur quadratique
-      const error = Math.pow(pH - targetPH, 2) + 
-                    Math.pow(pD - targetPD, 2) + 
+      const error = Math.pow(pH - targetPH, 2) +
+                    Math.pow(pD - targetPD, 2) +
                     Math.pow(pA - targetPA, 2);
-      
+
       if (error < bestError) {
         bestError = error;
         bestLambdaH = lambdaH;
@@ -246,16 +218,267 @@ function gridSearchLambdas(
       }
     }
   }
-  
-  return { 
-    lambdaH: Math.round(bestLambdaH * 100) / 100, 
-    lambdaA: Math.round(bestLambdaA * 100) / 100, 
-    error: bestError 
+
+  return {
+    lambdaH: Math.round(bestLambdaH * 100) / 100,
+    lambdaA: Math.round(bestLambdaA * 100) / 100,
+    error: bestError
   };
 }
 
 // ============================================
-// ÉTAPE 4 — MATRICE DES SCORES 7×7
+// NOUVEAU — EXTRACTION FORME & H2H
+// ============================================
+
+interface TeamForm {
+  formScores: string[];   // derniers résultats ["V","N","D"...]
+  avgScored: number;      // buts marqués/match récent
+  avgConceded: number;    // buts encaissés/match récent
+  momentumScore: number;  // 0-100 (pondéré: V=3,N=1,D=0, décroissant)
+  goalsBalance: number;   // buts marqués - encaissés récents
+}
+
+const FORM_WEIGHTS = [1.5, 1.3, 1.2, 1.1, 1.0];
+const FORM_POINTS: Record<string, number> = { V: 3, N: 1, D: 0 };
+
+/**
+ * Extrait la forme récente d'une équipe à partir des résultats historiques.
+ * Cherche les 5 derniers matchs de l'équipe (domicile ou extérieur).
+ */
+function extractTeamForm(
+  results: HistoricalResult[],
+  teamName: string
+): TeamForm {
+  const teamLower = teamName.toLowerCase().trim();
+  const matches: { scored: number; conceded: number; result: string }[] = [];
+
+  // Parcourir les résultats du plus récent au plus ancien
+  for (let i = results.length - 1; i >= 0 && matches.length < 5; i--) {
+    const r = results[i];
+    const rHome = r.home.toLowerCase().trim();
+    const rAway = r.away.toLowerCase().trim();
+
+    if (rHome === teamLower) {
+      const res = r.scoreHome > r.scoreAway ? "V" : r.scoreHome < r.scoreAway ? "D" : "N";
+      matches.push({ scored: r.scoreHome, conceded: r.scoreAway, result: res });
+    } else if (rAway === teamLower) {
+      const res = r.scoreAway > r.scoreHome ? "V" : r.scoreAway < r.scoreHome ? "D" : "N";
+      matches.push({ scored: r.scoreAway, conceded: r.scoreHome, result: res });
+    }
+  }
+
+  if (matches.length === 0) {
+    return { formScores: [], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
+  }
+
+  const formScores = matches.map(m => m.result);
+  const avgScored = matches.reduce((s, m) => s + m.scored, 0) / matches.length;
+  const avgConceded = matches.reduce((s, m) => s + m.conceded, 0) / matches.length;
+
+  // Momentum pondéré (matchs récents comptent plus)
+  let earnedPoints = 0;
+  let maxPoints = 0;
+  for (let i = 0; i < matches.length; i++) {
+    const w = FORM_WEIGHTS[i] || 1.0;
+    earnedPoints += (FORM_POINTS[matches[i].result] || 0) * w;
+    maxPoints += 3 * w;
+  }
+  const momentumScore = maxPoints > 0 ? Math.round((earnedPoints / maxPoints) * 100) : 50;
+  const goalsBalance = avgScored - avgConceded;
+
+  return { formScores, avgScored, avgConceded, momentumScore, goalsBalance };
+}
+
+interface H2HData {
+  totalMatches: number;
+  homeWins: number;
+  draws: number;
+  awayWins: number;
+  avgHomeGoals: number;
+  avgAwayGoals: number;
+  avgTotalGoals: number;
+  homeTeamBias: number;  // positif = home dominant, négatif = away dominant
+}
+
+/**
+ * Extrait les confrontations directes entre deux équipes.
+ */
+function extractH2H(
+  results: HistoricalResult[],
+  home: string,
+  away: string
+): H2HData {
+  const hLower = home.toLowerCase().trim();
+  const aLower = away.toLowerCase().trim();
+  const h2hMatches: { homeGoals: number; awayGoals: number; isHomeTeam: boolean }[] = [];
+
+  for (const r of results) {
+    const rHome = r.home.toLowerCase().trim();
+    const rAway = r.away.toLowerCase().trim();
+
+    // Match direct entre les deux équipes
+    if ((rHome === hLower && rAway === aLower)) {
+      h2hMatches.push({ homeGoals: r.scoreHome, awayGoals: r.scoreAway, isHomeTeam: true });
+    } else if ((rHome === aLower && rAway === hLower)) {
+      h2hMatches.push({ homeGoals: r.scoreAway, awayGoals: r.scoreHome, isHomeTeam: false });
+    }
+  }
+
+  if (h2hMatches.length === 0) {
+    return {
+      totalMatches: 0, homeWins: 0, draws: 0, awayWins: 0,
+      avgHomeGoals: 0, avgAwayGoals: 0, avgTotalGoals: 0, homeTeamBias: 0
+    };
+  }
+
+  let homeWins = 0, draws = 0, awayWins = 0;
+  let totalHomeGoals = 0, totalAwayGoals = 0;
+
+  for (const m of h2hMatches) {
+    totalHomeGoals += m.homeGoals;
+    totalAwayGoals += m.awayGoals;
+    if (m.homeGoals > m.awayGoals) homeWins++;
+    else if (m.homeGoals < m.awayGoals) awayWins++;
+    else draws++;
+  }
+
+  const n = h2hMatches.length;
+  // homeTeamBias: positif = l'équipe home (dans le match à prédire) domine en H2H
+  const homeTeamBias = ((homeWins - awayWins) / n) * 100;
+
+  return {
+    totalMatches: n,
+    homeWins,
+    draws,
+    awayWins,
+    avgHomeGoals: Math.round((totalHomeGoals / n) * 100) / 100,
+    avgAwayGoals: Math.round((totalAwayGoals / n) * 100) / 100,
+    avgTotalGoals: Math.round(((totalHomeGoals + totalAwayGoals) / n) * 100) / 100,
+    homeTeamBias: Math.round(homeTeamBias),
+  };
+}
+
+// ============================================
+// NOUVEAU — AJUSTEMENT DES LAMBDAS
+// ============================================
+
+// Moyenne virtuelle de buts par équipe par match
+const VIRTUAL_AVG_GOALS = 1.3;
+
+/**
+ * Ajuste les lambdas en utilisant les statistiques des équipes (classement).
+ * Utilise les ratios attaque/défense par rapport à la moyenne virtuelle.
+ */
+function adjustLambdasWithStats(
+  lambdaH: number,
+  lambdaA: number,
+  teamStats: Map<string, TeamStats> | undefined,
+  home: string,
+  away: string
+): { lambdaH: number; lambdaA: number; hasData: boolean } {
+  if (!teamStats) return { lambdaH, lambdaA, hasData: false };
+
+  const homeStats = teamStats.get(home) || findTeamStats(teamStats, home);
+  const awayStats = teamStats.get(away) || findTeamStats(teamStats, away);
+
+  if (!homeStats && !awayStats) return { lambdaH, lambdaA, hasData: false };
+
+  let adjustedH = lambdaH;
+  let adjustedA = lambdaA;
+
+  // Ajustement attaque/défense pour l'équipe home
+  if (homeStats && homeStats.played >= 3) {
+    const attackStrength = homeStats.avgGoalsScored / VIRTUAL_AVG_GOALS;
+    const defenseWeakness = homeStats.avgGoalsConceded / VIRTUAL_AVG_GOALS;
+
+    // Force d'attaque home: augmente lambdaH
+    // Faiblesse défensive home: augmente lambdaA (adversaire marque plus)
+    adjustedH = adjustedH * 0.70 + adjustedH * attackStrength * 0.20 + (lambdaA * defenseWeakness) * 0.10;
+  }
+
+  // Ajustement attaque/défense pour l'équipe away
+  if (awayStats && awayStats.played >= 3) {
+    const attackStrength = awayStats.avgGoalsScored / VIRTUAL_AVG_GOALS;
+    const defenseWeakness = awayStats.avgGoalsConceded / VIRTUAL_AVG_GOALS;
+
+    adjustedA = adjustedA * 0.70 + adjustedA * attackStrength * 0.20 + (lambdaH * defenseWeakness) * 0.10;
+  }
+
+  // Clamp aux bornes réalistes du football virtuel
+  return {
+    lambdaH: clamp(adjustedH, 0.3, 2.8),
+    lambdaA: clamp(adjustedA, 0.3, 2.8),
+    hasData: true,
+  };
+}
+
+/**
+ * Ajuste les lambdas en utilisant la forme récente et le H2H.
+ */
+function adjustLambdasWithHistory(
+  lambdaH: number,
+  lambdaA: number,
+  homeForm: TeamForm,
+  awayForm: TeamForm,
+  h2h: H2HData
+): { lambdaH: number; lambdaA: number; formAgreement: number; h2hAgreement: number } {
+  let adjustedH = lambdaH;
+  let adjustedA = lambdaA;
+
+  // ── Ajustement forme récente ──
+  // Si une équipe marque plus que la moyenne virtuelle, booster son lambda
+  // Si elle encaisse plus, booster le lambda adverse
+  if (homeForm.formScores.length >= 3) {
+    const attackBoost = (homeForm.avgScored - VIRTUAL_AVG_GOALS) * 0.15;
+    const defensePenalty = (homeForm.avgConceded - VIRTUAL_AVG_GOALS) * 0.10;
+    adjustedH += attackBoost - defensePenalty * 0.5;
+    adjustedA += defensePenalty * 0.3;
+  }
+
+  if (awayForm.formScores.length >= 3) {
+    const attackBoost = (awayForm.avgScored - VIRTUAL_AVG_GOALS) * 0.15;
+    const defensePenalty = (awayForm.avgConceded - VIRTUAL_AVG_GOALS) * 0.10;
+    adjustedA += attackBoost - defensePenalty * 0.5;
+    adjustedH += defensePenalty * 0.3;
+  }
+
+  // ── Ajustement momentum (forme pondérée) ──
+  // Équipe en bonne forme = léger boost, mauvaise forme = léger malus
+  if (homeForm.formScores.length >= 3) {
+    const momentumBoost = (homeForm.momentumScore - 50) / 500; // -0.10 à +0.10
+    adjustedH += momentumBoost;
+  }
+  if (awayForm.formScores.length >= 3) {
+    const momentumBoost = (awayForm.momentumScore - 50) / 500;
+    adjustedA += momentumBoost;
+  }
+
+  // ── Ajustement H2H ──
+  // Si l'équipe home domine historiquement, léger boost
+  if (h2h.totalMatches >= 2) {
+    const h2hBoost = h2h.homeTeamBias / 200; // -0.15 à +0.15
+    adjustedH += h2hBoost * 0.5;
+    adjustedA -= h2hBoost * 0.3;
+  }
+
+  // Calculer l'accord entre forme et favori
+  const formAgreement = (homeForm.momentumScore > awayForm.momentumScore + 15) ? 1
+    : (awayForm.momentumScore > homeForm.momentumScore + 15) ? -1 : 0;
+
+  const h2hAgreement = h2h.totalMatches >= 2
+    ? (h2h.homeTeamBias > 20 ? 1 : h2h.homeTeamBias < -20 ? -1 : 0)
+    : 0;
+
+  return {
+    lambdaH: clamp(adjustedH, 0.3, 2.8),
+    lambdaA: clamp(adjustedA, 0.3, 2.8),
+    formAgreement,
+    h2hAgreement,
+  };
+}
+
+// ============================================
+// NOUVEAU — FUSION IA / MATHS
 // ============================================
 
 interface ScoreMatrix {
@@ -267,37 +490,152 @@ interface ScoreMatrix {
 }
 
 /**
- * Génère la matrice 7×7 des scores possibles (0-0 à 6-6)
+ * Fusionne la prédiction IA avec la matrice mathématique.
+ * Si l'IA donne un score spécifique, on le booste dans la matrice.
+ * Blend: 65% maths + 35% IA (les maths sont plus fiables en virtuel).
  */
+function blendWithAI(
+  scoreMatrix: ScoreMatrix[],
+  aiPrediction: AIPrediction | undefined,
+  favorite: '1' | 'X' | '2'
+): { matrix: ScoreMatrix[]; aiAgreement: number } {
+  if (!aiPrediction || aiPrediction.scoreHome === undefined) {
+    return { matrix: scoreMatrix, aiAgreement: 0 };
+  }
+
+  const aiScore = `${aiPrediction.scoreHome}-${aiPrediction.scoreAway}`;
+  const aiOutcome = aiPrediction.scoreHome > aiPrediction.scoreAway ? '1'
+    : aiPrediction.scoreHome < aiPrediction.scoreAway ? '2' : 'X';
+
+  // L'IA est-elle d'accord avec le favori des cotes ?
+  const aiAgreement = aiOutcome === favorite ? 1 : -1;
+
+  // Trouver le score prédit par l'IA dans la matrice
+  const aiEntry = scoreMatrix.find(s => s.score === aiScore);
+
+  // Boost: augmenter la probabilité du score IA de 35% et réduire les autres
+  const AI_WEIGHT = 0.35;
+  const boosted = scoreMatrix.map(s => {
+    if (s.score === aiScore) {
+      return { ...s, prob: s.prob * (1 + AI_WEIGHT) };
+    }
+    // Réduire proportionnellement
+    return { ...s, prob: s.prob * (1 - AI_WEIGHT * s.prob) };
+  });
+
+  // Renormaliser
+  const total = boosted.reduce((sum, s) => sum + s.prob, 0);
+  const normalized = boosted.map(s => ({ ...s, prob: s.prob / total }));
+
+  // Retrier
+  return { matrix: normalized.sort((a, b) => b.prob - a.prob), aiAgreement };
+}
+
+// ============================================
+// NOUVEAU — REDISTRIBUTION FOOTBALL VIRTUEL
+// ============================================
+
+/**
+ * En football virtuel, les scores 4+ sont extrêmement rares (<3%).
+ * On élimine les scores irréalistes et on redistribue leur probabilité
+ * vers les scores les plus probables du football virtuel.
+ *
+ * Distribution typique virtuelle:
+ *   0-0 (18%), 1-0 (15%), 0-1 (13%), 1-1 (14%),
+ *   2-0 (10%), 0-2 (8%), 2-1 (9%), 1-2 (7%),
+ *   2-2 (3%), 3-0 (1.5%), 0-3 (1%), 3-1 (0.5%)
+ */
+function redistributeForVirtualFootball(scoreMatrix: ScoreMatrix[]): ScoreMatrix[] {
+  const VIRTUAL_CAP = 3; // Max 3 buts par équipe
+
+  // Scores "réalistes" en virtuel (priorité de redistribution)
+  const priorityScores = new Set([
+    "0-0", "1-0", "0-1", "1-1", "2-0", "0-2", "2-1", "1-2", "2-2", "3-0", "0-3", "3-1", "1-3"
+  ]);
+
+  let excess = 0;
+  const adjusted = scoreMatrix.map(s => {
+    if (s.h > VIRTUAL_CAP || s.a > VIRTUAL_CAP) {
+      // Score irréaliste: éliminer complètement
+      excess += s.prob;
+      return { ...s, prob: 0 };
+    }
+    if (s.h === VIRTUAL_CAP && s.a === VIRTUAL_CAP) {
+      // 3-3 est très rare: réduire de 70%
+      const reduction = s.prob * 0.70;
+      excess += reduction;
+      return { ...s, prob: s.prob - reduction };
+    }
+    if ((s.h === VIRTUAL_CAP && s.a >= 2) || (s.a === VIRTUAL_CAP && s.h >= 2)) {
+      // 3-2, 3-1, etc.: réduire de 40%
+      const reduction = s.prob * 0.40;
+      excess += reduction;
+      return { ...s, prob: s.prob - reduction };
+    }
+    return s;
+  });
+
+  if (excess <= 0) {
+    return adjusted.sort((a, b) => b.prob - a.prob);
+  }
+
+  // Redistribuer l'excédent vers les scores réalistes, proportionnellement
+  // avec un bonus pour les scores les plus fréquents en virtuel
+  const realistic = adjusted.filter(s => s.prob > 0 && priorityScores.has(s.score));
+  const realisticTotal = realistic.reduce((sum, s) => sum + s.prob, 0);
+
+  if (realisticTotal > 0) {
+    // Bonus pour les scores les plus fréquents (0-0, 1-0, 1-1, 2-0, 2-1)
+    const topVirtualBonus: Record<string, number> = {
+      "0-0": 1.15, "1-0": 1.12, "0-1": 1.10, "1-1": 1.12,
+      "2-0": 1.08, "0-2": 1.05, "2-1": 1.06, "1-2": 1.04,
+    };
+
+    // Calculer les poids de redistribution
+    const weightedTotal = realistic.reduce((sum, s) => {
+      const bonus = topVirtualBonus[s.score] || 1.0;
+      return sum + (s.prob / realisticTotal) * bonus;
+    }, 0);
+
+    const redistributed = adjusted.map(s => {
+      if (s.prob > 0 && priorityScores.has(s.score)) {
+        const bonus = topVirtualBonus[s.score] || 1.0;
+        const share = (s.prob / realisticTotal) * bonus / weightedTotal;
+        return { ...s, prob: s.prob + excess * share };
+      }
+      return s;
+    });
+
+    // Renormaliser pour garantir somme = 1
+    const newTotal = redistributed.reduce((sum, s) => sum + s.prob, 0);
+    return redistributed
+      .map(s => ({ ...s, prob: s.prob / newTotal }))
+      .sort((a, b) => b.prob - a.prob);
+  }
+
+  return adjusted.sort((a, b) => b.prob - a.prob);
+}
+
+// ============================================
+// MATRICE DES SCORES
+// ============================================
+
 function generateScoreMatrix(lambdaH: number, lambdaA: number): ScoreMatrix[] {
   const scores: ScoreMatrix[] = [];
-  
   for (let h = 0; h <= 6; h++) {
     for (let a = 0; a <= 6; a++) {
       const prob = poisson(lambdaH, h) * poisson(lambdaA, a);
       const outcome: '1' | 'X' | '2' = h > a ? '1' : h < a ? '2' : 'X';
-      
-      scores.push({
-        score: `${h}-${a}`,
-        h,
-        a,
-        prob,
-        outcome
-      });
+      scores.push({ score: `${h}-${a}`, h, a, prob, outcome });
     }
   }
-  
-  // Trier par probabilité décroissante
   return scores.sort((a, b) => b.prob - a.prob);
 }
 
 // ============================================
-// ÉTAPE 5 — SCORE PRINCIPAL & DÉTECTION DE PIÈGE
+// SCORE PRINCIPAL & DÉTECTION DE PIÈGE
 // ============================================
 
-/**
- * Détermine le score principal avec détection de piège
- */
 function determineMainScore(
   scoreMatrix: ScoreMatrix[],
   favorite: '1' | 'X' | '2',
@@ -313,31 +651,26 @@ function determineMainScore(
   let alternativeScore: ScoreMatrix | undefined;
   let isTrueTrap = false;
   let isAntiTrap = false;
-  
-  // Vérifier la cohérence avec le favori
+
   if (topScore.outcome !== favorite) {
-    // VRAI PIÈGE: Le score le plus probable ne correspond pas au favori
     isTrueTrap = true;
-    
-    // Forcer un score qui respecte le favori
     const filteredScores = scoreMatrix.filter(s => s.outcome === favorite);
     if (filteredScores.length > 0) {
       mainScore = filteredScores[0];
       isAntiTrap = true;
     }
   }
-  
-  // Score alternatif si le 2ème a >85% de la proba du 1er
+
   const secondScore = scoreMatrix[1];
   if (secondScore && secondScore.prob > topScore.prob * 0.85) {
     alternativeScore = secondScore;
   }
-  
+
   return { mainScore, alternativeScore, isTrueTrap, isAntiTrap };
 }
 
 // ============================================
-// ÉTAPE 6 — DÉTECTIONS SPÉCIALES
+// DÉTECTIONS SPÉCIALES (améliorée avec données)
 // ============================================
 
 interface SpecialDetections {
@@ -346,67 +679,145 @@ interface SpecialDetections {
   isTrueDraw: boolean;
   isFalseDraw: boolean;
   isDomination: boolean;
+  antiTrapAlerts: number;
 }
 
-/**
- * Détections spéciales basées sur les probabilités
- */
 function detectSpecialSituations(
   pH: number,
   pD: number,
   pA: number,
   favorite: '1' | 'X' | '2',
   scoreOutcome: '1' | 'X' | '2',
-  isTrueTrap: boolean
+  isTrueTrap: boolean,
+  formAgreement: number,
+  h2hAgreement: number,
+  aiAgreement: number,
+  homeForm: TeamForm,
+  awayForm: TeamForm,
+  homeStats: TeamStats | undefined,
+  awayStats: TeamStats | undefined,
 ): SpecialDetections {
   const probs = [
     { outcome: '1' as const, prob: pH },
     { outcome: 'X' as const, prob: pD },
     { outcome: '2' as const, prob: pA }
   ].sort((a, b) => b.prob - a.prob);
-  
+
   const firstProb = probs[0].prob;
   const secondProb = probs[1].prob;
   const delta = firstProb - secondProb;
-  
-  // Vrai Piège: déjà détecté
-  // Faux Piège: P_favori > 55% ET surprise > 35% MAIS pas de vrai piège
+
   const isFalseTrap = !isTrueTrap && firstProb > 0.55 && secondProb > 0.35;
-  
-  // Vrai Nul: Favori = Nul ET score = nul ≤ 2-2
   const isTrueDraw = favorite === 'X' && scoreOutcome === 'X';
-  
-  // Faux Nul: Favori = Nul MAIS score ≠ nul
   const isFalseDraw = favorite === 'X' && scoreOutcome !== 'X';
-  
-  // Domination: Delta (P_favori - P_2ème) > 0.40
   const isDomination = delta > 0.40;
-  
+
+  // Compteur d'alertes anti-trap multi-sources
+  let antiTrapAlerts = 0;
+
+  // Alerte A: favori aux cotes mais forme défavorable
+  const favoriteIsHome = favorite === '1';
+  const favForm = favoriteIsHome ? homeForm : awayForm;
+  const unfavForm = favoriteIsHome ? awayForm : homeForm;
+  if (favForm.formScores.length >= 3 && unfavForm.formScores.length >= 3) {
+    if (favForm.momentumScore < 35 && unfavForm.momentumScore > 55) antiTrapAlerts++;
+  }
+
+  // Alerte B: favori aux cotes mais attaque faible
+  const favStats = favoriteIsHome ? homeStats : awayStats;
+  if (favStats && favStats.played >= 3 && favStats.avgGoalsScored < 0.9) antiTrapAlerts++;
+
+  // Alerte C: favori aux cotes mais H2H défavorable
+  if (favoriteIsHome && h2hAgreement < 0) antiTrapAlerts++;
+  if (!favoriteIsHome && h2hAgreement > 0) antiTrapAlerts++;
+
+  // Alerte D: classement écarté mais cotes serrées
+  if (homeStats && awayStats && homeStats.played >= 3 && awayStats.played >= 3) {
+    const rankDiff = Math.abs(homeStats.position - awayStats.position);
+    if (rankDiff >= 5 && delta < 0.10) antiTrapAlerts++;
+  }
+
+  // Alerte E: IA en désaccord avec le favori
+  if (aiAgreement < 0) antiTrapAlerts++;
+
   return {
     isTrueTrap,
     isFalseTrap,
     isTrueDraw,
     isFalseDraw,
-    isDomination
+    isDomination,
+    antiTrapAlerts,
   };
 }
 
 // ============================================
-// ÉTAPE 7 — SCORE MI-TEMPS
+// NOUVEAU — CONFIANCE MULTI-FACTEURS
 // ============================================
 
-/**
- * Calcule le score de mi-temps
- * λ_HT = λ_FT × 0.46 (46% des buts en 1ère MT)
- */
+function calculateMultiFactorConfidence(
+  favoriteProb: number,
+  formAgreement: number,
+  h2hAgreement: number,
+  aiAgreement: number,
+  homeForm: TeamForm,
+  awayForm: TeamForm,
+  hasStatsData: boolean,
+  detections: SpecialDetections,
+): number {
+  // Base: probabilité implicite du favori (0-100)
+  let confidence = favoriteProb * 100;
+
+  // Bonus: les données statistiques confirment le favori
+  if (formAgreement !== 0 && hasStatsData) {
+    confidence += formAgreement * 5; // +5 si forme d'accord, -5 si pas d'accord
+  }
+
+  // Bonus: H2H confirme
+  if (h2hAgreement !== 0) {
+    confidence += h2hAgreement * 3;
+  }
+
+  // Bonus: IA confirme
+  if (aiAgreement !== 0) {
+    confidence += aiAgreement * 6;
+  }
+
+  // Bonus: données disponibles (plus de données = plus de confiance)
+  const dataRichness = Math.min(homeForm.formScores.length, 5) + Math.min(awayForm.formScores.length, 5);
+  if (dataRichness >= 6) confidence += 3;
+  else if (dataRichness >= 3) confidence += 1;
+
+  // Pénalité: alertes anti-trap
+  confidence -= detections.antiTrapAlerts * 4;
+
+  // Pénalité: cotes très serrées (match incertain)
+  const oddsGap = favoriteProb - Math.max(0, 1 - favoriteProb * 2);
+  if (oddsGap < 0.05) confidence -= 12;
+  else if (oddsGap < 0.10) confidence -= 6;
+
+  // Pénalité: pas de données du tout
+  if (!hasStatsData && homeForm.formScores.length === 0) {
+    confidence -= 10;
+  }
+
+  // Pénalité: piège détecté
+  if (detections.isTrueTrap) confidence -= 15;
+  if (detections.isFalseTrap) confidence -= 8;
+
+  return clamp(Math.round(confidence), 30, 95);
+}
+
+// ============================================
+// SCORE MI-TEMPS
+// ============================================
+
 function calculateHalfTimeScore(lambdaH: number, lambdaA: number): string {
   const lambdaHT_H = lambdaH * 0.46;
   const lambdaHT_A = lambdaA * 0.46;
-  
-  // Trouver le score MT le plus probable
+
   let bestHTScore = "0-0";
   let bestHTProb = 0;
-  
+
   for (let h = 0; h <= 3; h++) {
     for (let a = 0; a <= 3; a++) {
       const prob = poisson(lambdaHT_H, h) * poisson(lambdaHT_A, a);
@@ -416,17 +827,14 @@ function calculateHalfTimeScore(lambdaH: number, lambdaA: number): string {
       }
     }
   }
-  
+
   return bestHTScore;
 }
 
 // ============================================
-// ÉTAPE 8 — MARCHÉS ADDITIONNELS
+// MARCHÉS ADDITIONNELS
 // ============================================
 
-/**
- * Calcule les marchés additionnels
- */
 function calculateAdditionalMarkets(scoreMatrix: ScoreMatrix[], mainScore: ScoreMatrix): {
   ggResult: string;
   probGG: number;
@@ -434,35 +842,56 @@ function calculateAdditionalMarkets(scoreMatrix: ScoreMatrix[], mainScore: Score
   probOver25: number;
   parity: string;
 } {
-  // GG/NG: P(h≥1, a≥1)
   const probGG = scoreMatrix
     .filter(s => s.h >= 1 && s.a >= 1)
     .reduce((sum, s) => sum + s.prob, 0);
-  
+
   const ggResult = probGG > 0.5 ? "Oui (GG)" : "Non (NG)";
-  
-  // Over/Under 2.5: Total de buts
+
   const probOver25 = scoreMatrix
     .filter(s => s.h + s.a >= 3)
     .reduce((sum, s) => sum + s.prob, 0);
-  
+
   const overUnder25 = probOver25 > 0.5 ? "Over 2.5" : "Under 2.5";
-  
-  // Pair/Impair
+
   const totalGoals = mainScore.h + mainScore.a;
   const parity = totalGoals % 2 === 0 ? "Pair" : "Impair";
-  
-  return {
-    ggResult,
-    probGG,
-    overUnder25,
-    probOver25,
-    parity
-  };
+
+  return { ggResult, probGG, overUnder25, probOver25, parity };
 }
 
 // ============================================
-// ANALYSE PRINCIPALE
+// UTILITAIRES
+// ============================================
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function findTeamStats(statsMap: Map<string, TeamStats>, name: string): TeamStats | undefined {
+  // Recherche exacte d'abord
+  const exact = statsMap.get(name);
+  if (exact) return exact;
+
+  // Recherche insensible à la casse
+  const nameLower = name.toLowerCase().trim();
+  const keys = Array.from(statsMap.keys());
+  for (const key of keys) {
+    if (key.toLowerCase().trim() === nameLower) return statsMap.get(key);
+  }
+
+  // Recherche partielle (pour les noms légèrement différents)
+  for (const key of keys) {
+    if (key.toLowerCase().includes(nameLower) || nameLower.includes(key.toLowerCase())) {
+      return statsMap.get(key);
+    }
+  }
+
+  return undefined;
+}
+
+// ============================================
+// ANALYSE PRINCIPALE v2.0
 // ============================================
 
 export function analyzeMatch(
@@ -472,119 +901,226 @@ export function analyzeMatch(
   historicalResults?: HistoricalResult[]
 ): MatchResult {
   const { home, away, league, oddHome, oddDraw, oddAway, newSeasonMode } = input;
-  
+
   // ==========================================
   // ÉTAPE 1: Conversion des cotes en probabilités
   // ==========================================
   const { pH, pD, pA, favorite, favoriteProb } = convertOddsToProbabilities(oddHome, oddDraw, oddAway);
-  
+
   // ==========================================
-  // ÉTAPE 3: Grid Search pour les lambdas
+  // ÉTAPE 2: Grid Search pour les lambdas de base
   // ==========================================
   let { lambdaH, lambdaA } = gridSearchLambdas(pH, pD, pA);
-  
-  // Mode Nouvelle Saison: boost +0.22 pour le favori
+
+  // Mode Nouvelle Saison: boost pour le favori
   if (newSeasonMode) {
-    if (favorite === '1') {
-      lambdaH = Math.min(3.0, lambdaH + 0.22);
-    } else if (favorite === '2') {
-      lambdaA = Math.min(3.0, lambdaA + 0.22);
-    }
+    if (favorite === '1') lambdaH = Math.min(3.0, lambdaH + 0.22);
+    else if (favorite === '2') lambdaA = Math.min(3.0, lambdaA + 0.22);
   }
-  
+
   // ==========================================
-  // ÉTAPE 4: Matrice des scores 7×7
+  // ÉTAPE 3: Extraction des données contextuelles
   // ==========================================
-  const scoreMatrix = generateScoreMatrix(lambdaH, lambdaA);
-  
+  const homeForm = historicalResults ? extractTeamForm(historicalResults, home) : { formScores: [] as string[], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
+  const awayForm = historicalResults ? extractTeamForm(historicalResults, away) : { formScores: [] as string[], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
+  const h2h = historicalResults ? extractH2H(historicalResults, home, away) : { totalMatches: 0, homeWins: 0, draws: 0, awayWins: 0, avgHomeGoals: 0, avgAwayGoals: 0, avgTotalGoals: 0, homeTeamBias: 0 };
+
+  const homeStats = teamStats ? (teamStats.get(home) || findTeamStats(teamStats, home)) : undefined;
+  const awayStats = teamStats ? (teamStats.get(away) || findTeamStats(teamStats, away)) : undefined;
+
   // ==========================================
-  // ÉTAPE 5: Score principal & détection piège
+  // ÉTAPE 4: Ajustement des lambdas avec les stats d'équipe
+  // ==========================================
+  const statsAdj = adjustLambdasWithStats(lambdaH, lambdaA, teamStats, home, away);
+  lambdaH = statsAdj.lambdaH;
+  lambdaA = statsAdj.lambdaA;
+
+  // ==========================================
+  // ÉTAPE 5: Ajustement des lambdas avec forme + H2H
+  // ==========================================
+  const histAdj = adjustLambdasWithHistory(lambdaH, lambdaA, homeForm, awayForm, h2h);
+  lambdaH = histAdj.lambdaH;
+  lambdaA = histAdj.lambdaA;
+
+  // ==========================================
+  // ÉTAPE 6: Matrice des scores
+  // ==========================================
+  let scoreMatrix = generateScoreMatrix(lambdaH, lambdaA);
+
+  // ==========================================
+  // ÉTAPE 7: Fusion avec prédiction IA (si disponible)
+  // ==========================================
+  const { matrix: blendedMatrix, aiAgreement } = blendWithAI(scoreMatrix, aiPrediction, favorite);
+  scoreMatrix = blendedMatrix;
+
+  // ==========================================
+  // ÉTAPE 8: Redistribution football virtuel
+  // ==========================================
+  scoreMatrix = redistributeForVirtualFootball(scoreMatrix);
+
+  // ==========================================
+  // ÉTAPE 9: Score principal & détection piège
   // ==========================================
   const { mainScore, alternativeScore, isTrueTrap, isAntiTrap } = determineMainScore(
-    scoreMatrix,
-    favorite,
-    favoriteProb
+    scoreMatrix, favorite, favoriteProb
   );
-  
+
   // ==========================================
-  // ÉTAPE 6: Détections spéciales
+  // ÉTAPE 10: Détections spéciales (améliorées)
   // ==========================================
   const detections = detectSpecialSituations(
-    pH, pD, pA,
-    favorite,
-    mainScore.outcome,
-    isTrueTrap
+    pH, pD, pA, favorite, mainScore.outcome, isTrueTrap,
+    histAdj.formAgreement, histAdj.h2hAgreement, aiAgreement,
+    homeForm, awayForm, homeStats, awayStats
   );
-  
+
   // ==========================================
-  // ÉTAPE 7: Score mi-temps
+  // ÉTAPE 11: Score mi-temps
   // ==========================================
   const firstHalfScore = calculateHalfTimeScore(lambdaH, lambdaA);
-  
+
   // ==========================================
-  // ÉTAPE 8: Marchés additionnels
+  // ÉTAPE 12: Marchés additionnels
   // ==========================================
   const markets = calculateAdditionalMarkets(scoreMatrix, mainScore);
-  
+
+  // ==========================================
+  // ÉTAPE 13: Confiance multi-facteurs
+  // ==========================================
+  const confidence = calculateMultiFactorConfidence(
+    favoriteProb, histAdj.formAgreement, histAdj.h2hAgreement, aiAgreement,
+    homeForm, awayForm, statsAdj.hasData, detections
+  );
+
   // ==========================================
   // Génération du résultat
   // ==========================================
   const totalGoals = mainScore.h + mainScore.a;
-  const winner1X2 = mainScore.outcome === '1' 
-    ? `1 — ${home}` 
-    : mainScore.outcome === '2' 
-      ? `2 — ${away}` 
+  const winner1X2 = mainScore.outcome === '1'
+    ? `1 — ${home}`
+    : mainScore.outcome === '2'
+      ? `2 — ${away}`
       : "X (Nul)";
-  
-  // Déterminer la situation
+
+  // Situation
   let situation = "";
-  if (detections.isDomination) {
-    situation = "Domination";
-  } else if (detections.isTrueTrap) {
-    situation = "Vrai Piège ⚠️";
-  } else if (detections.isFalseTrap) {
-    situation = "Faux Piège";
-  } else if (detections.isTrueDraw) {
-    situation = "Vrai Nul";
-  } else if (detections.isFalseDraw) {
-    situation = "Faux Nul";
-  } else {
-    situation = "Standard";
+  if (detections.isDomination) situation = "Domination";
+  else if (detections.isTrueTrap) situation = "Vrai Piège";
+  else if (detections.isFalseTrap) situation = "Faux Piège";
+  else if (detections.isTrueDraw) situation = "Vrai Nul";
+  else if (detections.isFalseDraw) situation = "Faux Nul";
+  else situation = "Standard";
+
+  // Si anti-trap alertes >= 2, override situation
+  if (detections.antiTrapAlerts >= 3) situation = "Piège Fort";
+  else if (detections.antiTrapAlerts >= 2 && situation === "Standard") situation = "Suspicion";
+
+  // ── Raisonnement enrichi ──
+  const reasoningParts: string[] = [];
+
+  // Probabilités de base
+  reasoningParts.push(`Fav: ${favorite} (${(favoriteProb * 100).toFixed(0)}%)`);
+
+  // Lambda ajustés
+  reasoningParts.push(`λ: ${lambdaH}/${lambdaA}`);
+
+  // Forme
+  if (homeForm.formScores.length > 0) {
+    reasoningParts.push(`Forme ${home.substring(0, 8)}: ${homeForm.formScores.join("")} (${homeForm.momentumScore}%)`);
   }
-  
-  // Raisonnement
-  let aiReasoning = `Favori: ${favorite} (${(favoriteProb * 100).toFixed(1)}%) | λ: ${lambdaH}/${lambdaA}`;
-  if (detections.isTrueTrap) {
-    aiReasoning += " | PIÈGE DÉTECTÉ - Score forcé";
+  if (awayForm.formScores.length > 0) {
+    reasoningParts.push(`Forme ${away.substring(0, 8)}: ${awayForm.formScores.join("")} (${awayForm.momentumScore}%)`);
   }
+
+  // H2H
+  if (h2h.totalMatches >= 2) {
+    reasoningParts.push(`H2H: ${h2h.homeWins}V/${h2h.draws}N/${h2h.awayWins}D`);
+  }
+
+  // Stats
+  if (homeStats && homeStats.played >= 3) {
+    reasoningParts.push(`${home.substring(0, 8)}: att${homeStats.avgGoalsScored.toFixed(1)} def${homeStats.avgGoalsConceded.toFixed(1)}`);
+  }
+  if (awayStats && awayStats.played >= 3) {
+    reasoningParts.push(`${away.substring(0, 8)}: att${awayStats.avgGoalsScored.toFixed(1)} def${awayStats.avgGoalsConceded.toFixed(1)}`);
+  }
+
+  // Piège
+  if (detections.isTrueTrap) reasoningParts.push("PIEGE - Score force");
+  if (detections.antiTrapAlerts >= 2) reasoningParts.push(`Alertes: ${detections.antiTrapAlerts}/5`);
+
+  // IA
+  if (aiPrediction) {
+    reasoningParts.push(`IA: ${aiPrediction.scoreHome}-${aiPrediction.scoreAway}`);
+  }
+
+  // Alternative
   if (alternativeScore) {
-    aiReasoning += ` | Alternative: ${alternativeScore.score}`;
+    reasoningParts.push(`Alt: ${alternativeScore.score}`);
   }
-  
+
+  const aiReasoning = reasoningParts.join(" | ");
+
   // Danger level
   let dangerLevel: "safe" | "moderate" | "trap" = "safe";
-  if (detections.isTrueTrap || detections.isFalseTrap) {
+  if (detections.isTrueTrap || detections.antiTrapAlerts >= 3) {
     dangerLevel = "trap";
-  } else if (Math.abs(pH - pA) < 0.15 || pD > 0.3) {
+  } else if (detections.isFalseTrap || detections.antiTrapAlerts >= 2 ||
+             Math.abs(pH - pA) < 0.15 || pD > 0.3) {
     dangerLevel = "moderate";
   }
-  
-  // Confidence = probabilité du favori
-  const confidence = Math.round(favoriteProb * 100);
-  
+
   // Top 5 scores
   const topScores = scoreMatrix.slice(0, 5).map(s => ({
     score: s.score,
     probability: Math.round(s.prob * 1000) / 1000
   }));
-  
-  // First half goal prediction
+
   const firstHalfGoal = firstHalfScore !== "0-0";
-  
-  // Expected goals
   const expectedGoals = lambdaH + lambdaA;
-  
-  // Utiliser crypto.randomUUID() si disponible, sinon fallback
+
+  // System home/away basé sur les stats réelles si disponibles
+  let systemHome: string;
+  let systemAway: string;
+  if (homeStats && homeStats.played >= 3) {
+    systemHome = homeStats.avgGoalsScored > 1.6 ? "offensif" : homeStats.avgGoalsConceded > 1.5 ? "défensif" : "équilibré";
+  } else {
+    systemHome = pH > 0.5 ? "offensif" : pH < 0.3 ? "défensif" : "équilibré";
+  }
+  if (awayStats && awayStats.played >= 3) {
+    systemAway = awayStats.avgGoalsScored > 1.6 ? "offensif" : awayStats.avgGoalsConceded > 1.5 ? "défensif" : "équilibré";
+  } else {
+    systemAway = pA > 0.5 ? "offensif" : pA < 0.3 ? "défensif" : "équilibré";
+  }
+
+  // Possession basée sur les stats si disponibles
+  let possessionHome: number;
+  let possessionAway: number;
+  if (homeStats && awayStats && homeStats.played >= 3 && awayStats.played >= 3) {
+    // Basé sur le ratio d'attaque combiné
+    const totalAttack = homeStats.avgGoalsScored + awayStats.avgGoalsScored;
+    if (totalAttack > 0) {
+      possessionHome = Math.round(40 + (homeStats.avgGoalsScored / totalAttack) * 20);
+    } else {
+      possessionHome = 50;
+    }
+  } else {
+    possessionHome = Math.round(40 + pH * 25);
+  }
+  possessionAway = 100 - possessionHome;
+
+  // Form strings
+  const homeFormStr = homeForm.formScores.length > 0 ? homeForm.formScores.join("") : "N/A";
+  const awayFormStr = awayForm.formScores.length > 0 ? awayForm.formScores.join("") : "N/A";
+
+  // Ranking diff
+  const rankingDiff = (homeStats?.position || 0) > 0 && (awayStats?.position || 0) > 0
+    ? (awayStats!.position || 0) - (homeStats!.position || 0)
+    : 0;
+
+  // Home advantage
+  const homeAdvantage = Math.round((pH - pA) * 100);
+
   const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `match-${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${idCounter++}`;
@@ -627,16 +1163,15 @@ export function analyzeMatch(
     bttsProb: Math.round(markets.probGG * 1000) / 1000,
     over25Prob: Math.round(markets.probOver25 * 1000) / 1000,
     firstHalfScore,
-    systemHome: pH > 0.5 ? "offensif" : pH < 0.3 ? "défensif" : "équilibré",
-    systemAway: pA > 0.5 ? "offensif" : pA < 0.3 ? "défensif" : "équilibré",
-    possessionHome: Math.round(40 + pH * 25),
-    possessionAway: Math.round(60 - pH * 25),
-    homeForm: "N/A",
-    awayForm: "N/A",
-    homeAdvantage: Math.round((pH - pA) * 100),
-    rankingDiff: 0,
+    systemHome,
+    systemAway,
+    possessionHome,
+    possessionAway,
+    homeForm: homeFormStr,
+    awayForm: awayFormStr,
+    homeAdvantage,
+    rankingDiff,
     predictedOutcome: isAntiTrap ? `Contre-pied: ${winner1X2}` : winner1X2,
-    // Nouveaux champs
     lambdaHome: lambdaH,
     lambdaAway: lambdaA,
     favorite,
@@ -652,12 +1187,12 @@ export function analyzeMatch(
 }
 
 // ============================================
-// HELPERS
+// HELPERS (inchangés)
 // ============================================
 
 export function buildTeamStatsMap(ranking: any[]): Map<string, TeamStats> {
   const map = new Map<string, TeamStats>();
-  
+
   for (const team of ranking) {
     const stats: TeamStats = {
       name: team.team || team.name,
@@ -676,7 +1211,7 @@ export function buildTeamStatsMap(ranking: any[]): Map<string, TeamStats> {
     };
     map.set(stats.name, stats);
   }
-  
+
   return map;
 }
 
@@ -715,10 +1250,9 @@ export function evaluatePredictionQuality(
   } else {
     confidenceLevel = 'low';
   }
-  
+
   let reliabilityScore = confidence;
-  
-  // Ajustement basé sur le type
+
   if (prediction === '1') {
     reliabilityScore += 5;
   } else if (prediction === 'X') {
@@ -726,13 +1260,13 @@ export function evaluatePredictionQuality(
   } else {
     reliabilityScore -= 5;
   }
-  
+
   reliabilityScore = Math.max(0, Math.min(100, reliabilityScore));
-  
+
   let isReliable = false;
   let recommendation: 'strong' | 'moderate' | 'avoid';
   let reason: string;
-  
+
   if (confidenceLevel === 'high') {
     isReliable = true;
     recommendation = 'strong';
@@ -746,7 +1280,7 @@ export function evaluatePredictionQuality(
     recommendation = 'avoid';
     reason = `Confiance insuffisante (${confidence}%)`;
   }
-  
+
   return {
     isReliable,
     reliabilityScore: Math.round(reliabilityScore),
