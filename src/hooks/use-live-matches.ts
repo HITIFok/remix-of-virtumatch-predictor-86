@@ -32,6 +32,32 @@ function getFriendlyError(leagueName: string): string {
   return `Les données en direct pour ${leagueName} ne sont pas disponibles pour le moment. Veuillez réessayer dans quelques instants.`;
 }
 
+// Fetch QUICK-RESULTS mode — only 2 API calls for ultra-fast result detection
+// Returns playout data for betting round if available (~500ms vs ~2-3s full)
+async function fetchQuickResults(leagueId: string): Promise<{
+  hasResults: boolean;
+  playoutResults: any[];
+  bettingRound: number;
+  nextRoundStart: string | null;
+  elapsed: number;
+} | null> {
+  try {
+    const { data, error: fnError } = await supabase.functions.invoke('fetch-live', {
+      body: { leagueId, mode: 'quick-results' },
+    });
+    if (fnError || !data?.success) return null;
+    return {
+      hasResults: data.hasResults || false,
+      playoutResults: data.playoutResults || [],
+      bettingRound: data.bettingRound || 0,
+      nextRoundStart: data.nextRoundStart || null,
+      elapsed: data.elapsed || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Fetch depuis l'API via Supabase Edge Function (utilise supabase.functions.invoke pour l'auth auto)
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
@@ -323,18 +349,22 @@ export function useLiveMatches() {
     await fetchData(leagueId, newLeague.name);
   }, [fetchData]);
 
-  // ─── Auto-polling with PREDICT-AHEAD (v12) ────────────────────────
-  // Uses setTimeout with recursive scheduling. Uses matchesRef instead of
-  // matches in the dependency array to prevent flickering.
-  // v12: Also checks if nextRoundStart is within 120s → switch to RAPID
+  // ─── Auto-polling with PREDICT-AHEAD (v12) + QUICK-RESULTS (v16) ─────────
+  // v16: In RAPID mode, uses fetchQuickResults (2 API calls, ~500ms)
+  //      instead of full fetch-live (8 API calls, ~2-3s).
+  //      When playout results detected → triggers one full fetch, then back to normal.
+  // v12: Checks if nextRoundStart is within 120s → switch to RAPID
   //       to catch playout data BEFORE the round officially starts.
   const nextRoundStartRef = useRef<string | null>(null);
+  // Track when we last did a full fetch (to avoid full fetches too close together)
+  const lastFullFetchRef = useRef(0);
 
   useEffect(() => {
     if (loading) return; // Don't start polling until initial load is done
 
-    const NORMAL_INTERVAL = 5000;  // 5s normal polling
-    const RAPID_INTERVAL = 500;   // 500ms rapid polling when waiting for playout
+    const NORMAL_INTERVAL = 5000;   // 5s normal polling
+    const RAPID_INTERVAL = 200;     // 200ms ultra-rapid for quick-results
+    const FULL_RAPID_INTERVAL = 500; // 500ms rapid polling (full fetch fallback)
 
     let timeoutId: ReturnType<typeof setTimeout>;
     let cancelled = false;
@@ -359,12 +389,37 @@ export function useLiveMatches() {
 
       // RAPID mode when: (1) betting without preloaded, OR (2) next round starting soon
       const isRapid = (hasBetting && noPreloaded) || nextStartSoon;
-      const interval = isRapid ? RAPID_INTERVAL : NORMAL_INTERVAL;
+
+      // In rapid mode, use quick-results (ultra-fast) if we have betting matches
+      const useQuickResults = isRapid && hasBetting;
+      const interval = useQuickResults ? RAPID_INTERVAL : isRapid ? FULL_RAPID_INTERVAL : NORMAL_INTERVAL;
 
       timeoutId = setTimeout(async () => {
         if (cancelled) return;
-        await fetchData(selectedLeagueId, selectedLeague.name, true);
-        scheduleNextPoll(); // Schedule next after this one completes
+
+        if (useQuickResults) {
+          // ULTRA-FAST PATH: quick-results mode (2 API calls, ~500ms)
+          const qr = await fetchQuickResults(selectedLeagueId);
+          if (cancelled) return;
+
+          // Update nextRoundStart from quick-results
+          if (qr?.nextRoundStart) {
+            nextRoundStartRef.current = qr.nextRoundStart;
+          }
+
+          // If playout results detected → do one full fetch to get everything
+          if (qr?.hasResults) {
+            console.log(`[Poll] 🎯 Playout detected! ${qr.playoutResults.length} results in ${qr.elapsed}ms → full fetch`);
+            await fetchData(selectedLeagueId, selectedLeague.name, true);
+            lastFullFetchRef.current = Date.now();
+          }
+        } else {
+          // NORMAL / FULL PATH: standard fetch-live
+          await fetchData(selectedLeagueId, selectedLeague.name, true);
+          lastFullFetchRef.current = Date.now();
+        }
+
+        scheduleNextPoll();
       }, interval);
     };
 

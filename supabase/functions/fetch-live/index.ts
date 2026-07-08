@@ -1,5 +1,6 @@
-// fetch-live/index.ts — Supabase Edge Function v15
+// fetch-live/index.ts — Supabase Edge Function v16
 // Fetches live match data, ranking, results from sporty-tech.net API
+// v16: QUICK-RESULTS mode — only 2 API calls (matches+playout) for fast result detection
 // v15: CORS fix — added x-device-id header + POST method support
 // v14 FIX: predeterminedScore sent for preloaded matches → LEAK badge works
 // v14 FIX: loadFromDatabaseRaw (silent) → no Cache ↔ API flickering
@@ -182,17 +183,81 @@ Deno.serve(async (req: Request) => {
     const url = new URL(req.url);
     // Read leagueId from query params OR POST body (supabase.functions.invoke sends body)
     let leagueId = url.searchParams.get("leagueId");
+    let bodyMode = "";
     if (!leagueId) {
       try {
         const body = await req.json();
         leagueId = body?.leagueId || "8035";
+        bodyMode = body?.mode || "";
       } catch {
         leagueId = "8035";
       }
     }
     const leagueName = LEAGUES[leagueId] || "Unknown League";
-    const mode = url.searchParams.get("mode") || "";
+    const mode = url.searchParams.get("mode") || bodyMode;
     console.log(`=== fetch-live v16: ${leagueName} (${leagueId}) ===`);
+
+    // === QUICK-RESULTS MODE (v16) — Ultra-fast result detection ===
+    // Only 2 API calls: /matches (find betting round) + /playout (get results)
+    // ~500ms total vs ~2-3s for full mode. Frontend uses this during rapid polling.
+    if (mode === "quick-results") {
+      const matchesResp = await fetchAPI(`/${leagueId}/matches`, 5000);
+      if (!matchesResp?.rounds) {
+        return new Response(
+          JSON.stringify({ success: true, mode: "quick-results", league: leagueName, leagueId, playoutResults: [], bettingRound: 0, hasResults: false, elapsed: Date.now() - startTime }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Find the betting round (matches with active betting)
+      let qBettingRound = 0;
+      let qNextRoundStart: string | null = null;
+      const qBettingMatchIds = new Set<number>();
+      for (const rd of matchesResp.rounds) {
+        for (const m of rd.matches || []) {
+          const hasBetting = m.eventBetTypes?.some((bt: any) =>
+            bt.eventBetTypeItems?.some((it: any) => it.active && it.bettingAllowed)
+          );
+          if (hasBetting) {
+            qBettingMatchIds.add(m.id);
+          }
+        }
+        const hasBettingMatch = (rd.matches || []).some((m: any) => qBettingMatchIds.has(m.id));
+        if (hasBettingMatch && !qBettingRound) {
+          qBettingRound = rd.roundNumber || 0;
+          qNextRoundStart = rd.expectedStart || null;
+        }
+      }
+
+      // Fetch playout for the betting round
+      const qPlayoutData = qBettingRound > 0
+        ? await fetchPlayout(leagueId, qBettingRound)
+        : new Map<number, any>();
+
+      // Cross-reference: which betting matches have playout data? (the exploit!)
+      const qPreloaded: any[] = [];
+      for (const [matchId, pData] of qPlayoutData) {
+        if (qBettingMatchIds.has(matchId)) {
+          qPreloaded.push({ matchId, ...pData });
+        }
+      }
+
+      const hasResults = qPreloaded.length > 0;
+      console.log(`[quick-results] bettingRound=${qBettingRound}, bettingMatches=${qBettingMatchIds.size}, preloaded=${qPreloaded.length} (${Date.now() - startTime}ms)`);
+
+      return new Response(
+        JSON.stringify({
+          success: true, mode: "quick-results", league: leagueName, leagueId,
+          bettingRound: qBettingRound, bettingMatchCount: qBettingMatchIds.size,
+          nextRoundStart: qNextRoundStart,
+          playoutResults: qPreloaded, playoutCount: qPreloaded.length,
+          hasResults,
+          elapsed: Date.now() - startTime,
+          scrapedAt: new Date().toISOString(),
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // === LIGHTWEIGHT PLOAYOUT MODE ===
     if (mode === "playout") {
