@@ -764,12 +764,13 @@ function calculateMultiFactorConfidence(
   hasStatsData: boolean,
   detections: SpecialDetections,
 ): number {
-  // Base: probabilité implicite du favori (0-100)
-  let confidence = favoriteProb * 100;
+  // Base: probabilité implicite du favori, mais plafonnée pour le virtuel
+  // En virtuel, l'aléa est plus fort → confiance plus conservatrice
+  let confidence = Math.min(favoriteProb * 85, 68); // Max base ~68% (au lieu de 95)
 
   // Bonus: les données statistiques confirment le favori
   if (formAgreement !== 0 && hasStatsData) {
-    confidence += formAgreement * 5; // +5 si forme d'accord, -5 si pas d'accord
+    confidence += formAgreement * 4;
   }
 
   // Bonus: H2H confirme
@@ -779,32 +780,34 @@ function calculateMultiFactorConfidence(
 
   // Bonus: IA confirme
   if (aiAgreement !== 0) {
-    confidence += aiAgreement * 6;
+    confidence += aiAgreement * 4;
   }
 
-  // Bonus: données disponibles (plus de données = plus de confiance)
+  // Bonus: données disponibles (plus de données = légère augmentation)
   const dataRichness = Math.min(homeForm.formScores.length, 5) + Math.min(awayForm.formScores.length, 5);
-  if (dataRichness >= 6) confidence += 3;
+  if (dataRichness >= 6) confidence += 2;
   else if (dataRichness >= 3) confidence += 1;
 
-  // Pénalité: alertes anti-trap
-  confidence -= detections.antiTrapAlerts * 4;
+  // Pénalité: alertes anti-trap (plus sévère)
+  confidence -= detections.antiTrapAlerts * 5;
 
   // Pénalité: cotes très serrées (match incertain)
   const oddsGap = favoriteProb - Math.max(0, 1 - favoriteProb * 2);
-  if (oddsGap < 0.05) confidence -= 12;
-  else if (oddsGap < 0.10) confidence -= 6;
+  if (oddsGap < 0.05) confidence -= 10;
+  else if (oddsGap < 0.10) confidence -= 5;
 
   // Pénalité: pas de données du tout
   if (!hasStatsData && homeForm.formScores.length === 0) {
-    confidence -= 10;
+    confidence -= 8;
   }
 
   // Pénalité: piège détecté
-  if (detections.isTrueTrap) confidence -= 15;
-  if (detections.isFalseTrap) confidence -= 8;
+  if (detections.isTrueTrap) confidence -= 12;
+  if (detections.isFalseTrap) confidence -= 5;
 
-  return clamp(Math.round(confidence), 30, 95);
+  // Plafond virtuel: jamais plus de 82% (incertitude inhérente au virtuel)
+  // Plancher: 25% minimum
+  return clamp(Math.round(confidence), 25, 82);
 }
 
 // ============================================
@@ -1015,51 +1018,87 @@ export function analyzeMatch(
   if (detections.antiTrapAlerts >= 3) situation = "Piège Fort";
   else if (detections.antiTrapAlerts >= 2 && situation === "Standard") situation = "Suspicion";
 
-  // ── Raisonnement enrichi ──
+  // ── Raisonnement éducatif v3.0 ──
+  // Explique POURQUOI ce score est prédit, pas juste des chiffres bruts
   const reasoningParts: string[] = [];
 
-  // Probabilités de base
-  reasoningParts.push(`Fav: ${favorite} (${(favoriteProb * 100).toFixed(0)}%)`);
+  // 1. Point de départ : ce que disent les cotes
+  const favTeam = favorite === '1' ? home : favorite === '2' ? away : 'Nul';
+  reasoningParts.push(`${favTeam} favori (${(favoriteProb * 100).toFixed(0)}%)`);
 
-  // Lambda ajustés
-  reasoningParts.push(`λ: ${lambdaH}/${lambdaA}`);
-
-  // Forme
-  if (homeForm.formScores.length > 0) {
-    reasoningParts.push(`Forme ${home.substring(0, 8)}: ${homeForm.formScores.join("")} (${homeForm.momentumScore}%)`);
+  // 2. Explication des lambdas en langage clair
+  const totalXG = lambdaH + lambdaA;
+  if (totalXG > 2.5) {
+    reasoningParts.push(`Match ouvert (${totalXG.toFixed(1)} buts attendus)`);
+  } else if (totalXG < 1.5) {
+    reasoningParts.push(`Match fermé (${totalXG.toFixed(1)} buts attendus)`);
+  } else {
+    reasoningParts.push(`${totalXG.toFixed(1)} buts attendus`);
   }
-  if (awayForm.formScores.length > 0) {
-    reasoningParts.push(`Forme ${away.substring(0, 8)}: ${awayForm.formScores.join("")} (${awayForm.momentumScore}%)`);
+
+  // 3. Forme récente — expliquer l'impact
+  if (homeForm.formScores.length >= 3 && awayForm.formScores.length >= 3) {
+    const homeMomentum = homeForm.momentumScore;
+    const awayMomentum = awayForm.momentumScore;
+    const diff = homeMomentum - awayMomentum;
+    if (Math.abs(diff) > 25) {
+      const dominant = diff > 0 ? home.substring(0, 8) : away.substring(0, 8);
+      reasoningParts.push(`${dominant} en forte forme (${homeForm.formScores.join("")} vs ${awayForm.formScores.join("")})`);
+    } else {
+      reasoningParts.push(`Formes: ${home.substring(0, 8)} ${homeForm.formScores.join("")} (${homeMomentum}%) | ${away.substring(0, 8)} ${awayForm.formScores.join("")} (${awayMomentum}%)`);
+    }
   }
 
-  // H2H
+  // 4. Stats d'attaque/défense (seulement si données valides)
+  const homeHasValidStats = homeStats && homeStats.played >= 3 && homeStats.avgGoalsScored > 0;
+  const awayHasValidStats = awayStats && awayStats.played >= 3 && awayStats.avgGoalsScored > 0;
+  if (homeHasValidStats || awayHasValidStats) {
+    const parts: string[] = [];
+    if (homeHasValidStats) {
+      const attLabel = homeStats!.avgGoalsScored > 1.5 ? "bonne attaque" : homeStats!.avgGoalsScored < 0.8 ? "attaque faible" : "attaque moyenne";
+      parts.push(`${home.substring(0, 8)}: ${attLabel} (${homeStats!.avgGoalsScored.toFixed(1)} BM/mj)`);
+    }
+    if (awayHasValidStats) {
+      const attLabel = awayStats!.avgGoalsScored > 1.5 ? "bonne attaque" : awayStats!.avgGoalsScored < 0.8 ? "attaque faible" : "attaque moyenne";
+      parts.push(`${away.substring(0, 8)}: ${attLabel} (${awayStats!.avgGoalsScored.toFixed(1)} BM/mj)`);
+    }
+    reasoningParts.push(parts.join(" | "));
+  }
+
+  // 5. H2H — expliquer l'impact
   if (h2h.totalMatches >= 2) {
-    reasoningParts.push(`H2H: ${h2h.homeWins}V/${h2h.draws}N/${h2h.awayWins}D`);
+    if (Math.abs(h2h.homeTeamBias) > 30) {
+      const h2hDominant = h2h.homeTeamBias > 0 ? home.substring(0, 8) : away.substring(0, 8);
+      reasoningParts.push(`H2H: ${h2hDominant} domine (${h2h.homeWins}V/${h2h.draws}N/${h2h.awayWins}D en ${h2h.totalMatches} matchs)`);
+    } else {
+      reasoningParts.push(`H2H équilibré (${h2h.homeWins}V/${h2h.draws}N/${h2h.awayWins}D)`);
+    }
   }
 
-  // Stats
-  if (homeStats && homeStats.played >= 3) {
-    reasoningParts.push(`${home.substring(0, 8)}: att${homeStats.avgGoalsScored.toFixed(1)} def${homeStats.avgGoalsConceded.toFixed(1)}`);
+  // 6. Alertes anti-trap — expliquer le risque
+  if (detections.antiTrapAlerts >= 3) {
+    reasoningParts.push(`RISQUE ÉLEVÉ: ${detections.antiTrapAlerts}/5 alertes anti-trap`);
+  } else if (detections.antiTrapAlerts >= 2) {
+    reasoningParts.push(`Attention: ${detections.antiTrapAlerts}/5 alertes`);
   }
-  if (awayStats && awayStats.played >= 3) {
-    reasoningParts.push(`${away.substring(0, 8)}: att${awayStats.avgGoalsScored.toFixed(1)} def${awayStats.avgGoalsConceded.toFixed(1)}`);
+  if (detections.isTrueTrap) {
+    reasoningParts.push(`Le score le plus probable (${mainScore.score}) contredit le favori des cotes`);
   }
 
-  // Piège
-  if (detections.isTrueTrap) reasoningParts.push("PIEGE - Score force");
-  if (detections.antiTrapAlerts >= 2) reasoningParts.push(`Alertes: ${detections.antiTrapAlerts}/5`);
-
-  // IA
+  // 7. IA — mention si disponible
   if (aiPrediction) {
-    reasoningParts.push(`IA: ${aiPrediction.scoreHome}-${aiPrediction.scoreAway}`);
+    const aiAgrees = (favorite === '1' && aiPrediction.scoreHome > aiPrediction.scoreAway)
+      || (favorite === '2' && aiPrediction.scoreAway > aiPrediction.scoreHome)
+      || (favorite === 'X' && aiPrediction.scoreHome === aiPrediction.scoreAway);
+    reasoningParts.push(`IA suggère ${aiPrediction.scoreHome}-${aiPrediction.scoreAway} (${aiAgrees ? "confirme" : "contredit"} le favori)`);
   }
 
-  // Alternative
-  if (alternativeScore) {
-    reasoningParts.push(`Alt: ${alternativeScore.score}`);
+  // 8. Score alternative
+  if (alternativeScore && alternativeScore.prob > mainScore.prob * 0.7) {
+    reasoningParts.push(`Alternative crédible: ${alternativeScore.score} (${(alternativeScore.prob * 100).toFixed(1)}%)`);
   }
 
-  const aiReasoning = reasoningParts.join(" | ");
+  const aiReasoning = reasoningParts.join(". ");
 
   // Danger level
   let dangerLevel: "safe" | "moderate" | "trap" = "safe";
@@ -1079,33 +1118,24 @@ export function analyzeMatch(
   const firstHalfGoal = firstHalfScore !== "0-0";
   const expectedGoals = lambdaH + lambdaA;
 
-  // System home/away basé sur les stats réelles si disponibles
-  let systemHome: string;
-  let systemAway: string;
-  if (homeStats && homeStats.played >= 3) {
-    systemHome = homeStats.avgGoalsScored > 1.6 ? "offensif" : homeStats.avgGoalsConceded > 1.5 ? "défensif" : "équilibré";
-  } else {
-    systemHome = pH > 0.5 ? "offensif" : pH < 0.3 ? "défensif" : "équilibré";
-  }
-  if (awayStats && awayStats.played >= 3) {
-    systemAway = awayStats.avgGoalsScored > 1.6 ? "offensif" : awayStats.avgGoalsConceded > 1.5 ? "défensif" : "équilibré";
-  } else {
-    systemAway = pA > 0.5 ? "offensif" : pA < 0.3 ? "défensif" : "équilibré";
-  }
+  // System home/away — basé sur les lambdas (buts attendus) plutôt que les stats brutes
+  // Les lambdas intègrent déjà cotes + forme + H2H → plus représentatifs
+  const systemHome = lambdaH > 1.5 ? "offensif" : lambdaH < 0.8 ? "défensif" : "équilibré";
+  const systemAway = lambdaA > 1.5 ? "offensif" : lambdaA < 0.8 ? "défensif" : "équilibré";
 
-  // Possession basée sur les stats si disponibles
+  // Possession basée sur les probabilités 1X2 (toujours disponible, même sans stats)
+  // Formule: 35 + 30*pH pour home, le reste pour away
+  // Cela donne un écart de 0-30% reflétant la domination
   let possessionHome: number;
   let possessionAway: number;
-  if (homeStats && awayStats && homeStats.played >= 3 && awayStats.played >= 3) {
-    // Basé sur le ratio d'attaque combiné
+  if (homeStats && awayStats && homeStats.played >= 3 && awayStats.played >= 3
+      && homeStats.avgGoalsScored > 0 && awayStats.avgGoalsScored > 0) {
+    // Si on a de vraies stats d'attaque, les utiliser
     const totalAttack = homeStats.avgGoalsScored + awayStats.avgGoalsScored;
-    if (totalAttack > 0) {
-      possessionHome = Math.round(40 + (homeStats.avgGoalsScored / totalAttack) * 20);
-    } else {
-      possessionHome = 50;
-    }
+    possessionHome = Math.round(35 + (homeStats.avgGoalsScored / totalAttack) * 30);
   } else {
-    possessionHome = Math.round(40 + pH * 25);
+    // Sinon, utiliser les probabilités implicites (plus fiable que des stats vides)
+    possessionHome = Math.round(35 + pH * 30);
   }
   possessionAway = 100 - possessionHome;
 
@@ -1157,7 +1187,7 @@ export function analyzeMatch(
     aiReasoning,
     isAntiTrap,
     firstHalfGoal,
-    tendency: detections.isDomination ? "Domination nette" : isTrueTrap ? "Piège détecté" : "Match standard",
+    tendency: detections.isDomination ? "Domination nette" : isTrueTrap ? "Piège détecté" : detections.antiTrapAlerts >= 2 ? "Match risqué" : "Match standard",
     dangerLevel,
     topScores,
     bttsProb: Math.round(markets.probGG * 1000) / 1000,

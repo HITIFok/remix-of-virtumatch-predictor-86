@@ -169,7 +169,7 @@ export default function SettingsPage() {
           <div className="space-y-2 text-xs text-muted-foreground">
             <p className="text-gradient-premium font-display font-bold">VirtuL by HITIF</p>
             <p>Version 1.0.0</p>
-            <p>Prédiction de matchs virtuels garantie par algorithme</p>
+            <p>Analyse prédictive de matchs virtuels</p>
           </div>
         </div>
 

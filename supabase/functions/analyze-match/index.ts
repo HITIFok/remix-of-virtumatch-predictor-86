@@ -2,6 +2,10 @@
 // AI-powered match analysis — Groq (primary) + Mathematical fallback (no Gemini)
 // NO imports — uses Deno.serve() + native fetch
 //
+// v24: AI prompt v7.0 — educational reasoning, no guarantees, realistic confidence
+//   - Reasoning explains WHY, not just raw data
+//   - Confidence max 0.82 (virtual uncertainty)
+//   - No "guarantee" language anywhere
 // v23: Improved math algorithm v2.0 + AI prompt v6.0
 //   - mathPredict v2.0: uses teamStats, form momentum, H2H, virtual football redistribution
 //   - Multi-factor confidence (form, H2H, stats, anti-trap)
@@ -32,30 +36,39 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Mask an API key for safe logging */
 const maskKey = (key: string) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : "NOT_SET";
 
-// ─── SYSTEM PROMPT v6.0 (Groq only) ──────────────────────────────────────────
+// ─── SYSTEM PROMPT v7.0 (Groq only) ──────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Tu es FOOTBALL VIRTUEL AI PREDICTOR v6.0. Football virtuel ONLY — pas du vrai football.
-Règles virtuel: scores bas (80% sont 0-0,1-0,1-1,2-0,2-1), nul ~30%, avantage domicile ~5%, 3-0+ <8%, JAMAIS 4+.
+const SYSTEM_PROMPT = `Tu es ANALYSTE FOOTBALL VIRTUEL v7.0. Football virtuel UNIQUEMENT.
 
-ANALYSE MULTICRITERE: 1) P(1X2)=(1/cote)/Σ 2) Attaque=BM/MJ, Défense=BE/MJ 3) Momentum forme (V=3,N=1,D=0, poids 1.5→1.0) 4) H2H si dispo 5) Balance buts forme récente (marqués-encaissés) 6) Classement écart 7) Synthèse pondérée 8) Anti-trap multicritère 9) Score.
+PRINCIPE FONDAMENTAL: Aucune prédiction n'est garantie. Tu analyses des probabilités, pas des certitudes. Utilise un langage prudents: "probable", "tend à", "suggère", "envisageable". JAMAIS "garanti", "certain", "sûr", "assuré".
 
-ANTI-TRAP MULTICRITERE (5 alertes): A)fav cotes mais momentum forme ≤35% B)fav cotes mais attaque<0.9 BM/MJ C)fav cotes mais H2H défavorable (perte>60%) D)classement écarté ≥5 places mais cotes serrées (écart<10%) E)cotes proches.
-Compteur: 0→safe, 1-2→moderate, 3+→trap(isAntiTrap=true). Chaque alerte = -0.04 confiance.
+REGLES VIRTUEL: scores bas (80% sont 0-0,1-0,1-1,2-0,2-1), nul~30%, avantage domicile~5%, 3-0+<8%, JAMAIS 4+.
 
-SCORE VIRTUEL: home/away entre 0-3 (JAMAIS 4+). Distribution typique: 0-0(18%),1-0(15%),0-1(13%),1-1(14%),2-0(10%),0-2(8%),2-1(9%),1-2(7%).
-Règle: Si P(Home)>P(Away): préférer 1-0/2-0/2-1. Si P(Away)>P(Home): 0-1/0-2/1-2. Si P(Draw)>32% ou écart<5%: 0-0/1-1.
-Si forme récente montre forte attaque: pencher vers 2-0/2-1 au lieu de 1-0. Si 2 défenses fortes: pencher 0-0/1-0.
+ANALYSE MULTICRITERE: 1) P(1X2)=(1/cote)/Σ 2) Attaque=BM/MJ, Défense=BE/MJ 3) Momentum forme (V=3,N=1,D=0, poids 1.5→1.0) 4) H2H si dispo 5) Balance buts récents 6) Classement écart 7) Synthèse pondérée 8) Anti-trap multicritère 9) Score.
+
+ANTI-TRAP (5 alertes): A)fav cotes mais momentum≤35% B)fav cotes mais attaque<0.9 BM/MJ C)fav cotes mais H2H défavorable (>60%) D)classement écarté≥5 places mais cotes serrées E)cotes proches.
+0→safe, 1-2→moderate, 3+→trap(isAntiTrap=true). Chaque alerte=-0.04 confiance.
+
+SCORE VIRTUEL: 0-3 max par équipe. Distribution typique: 0-0(18%),1-0(15%),0-1(13%),1-1(14%),2-0(10%),0-2(8%),2-1(9%),1-2(7%).
+Si P(Home)>P(Away): 1-0/2-0/2-1. Si P(Away)>P(Home): 0-1/0-2/1-2. Si P(Draw)>32% ou écart<5%: 0-0/1-1.
 Mi-temps≈45% score final.
 
-MARCHÉS: BTTS≤0.65, Over2.5≤0.60 (virtuel=plus de under).
+MARCHES: BTTS≤0.65, Over2.5≤0.60.
 
-CONFIANCE MULTIFACTEURS: base=prob implicite du favori. +0.05 si forme confirme le favori. +0.03 si H2H confirme. +0.06 si classement confirme. -0.04 par alerte anti-trap. -0.10 si cotes très serrées (écart<5%). -0.08 si piège vrai. Min 0.30, max 0.95. Sans données: ≤0.65 moderate.
+CONFIANCE REALISTE: base=prob implicite favori×0.85 (max 0.68). +0.04 si forme confirme. +0.03 si H2H confirme. +0.04 si IA confirme. -0.05 par alerte anti-trap. -0.10 si cotes serrées. -0.12 si vrai piège. PLAFOND: 0.82. PLANCHER: 0.25.
+En virtuel l'incertitude est structurelle → confiance élevée reste modeste.
 
-RAISONNEMENT: 6-10 phrases FR concises mais denses: prob implicites, profil attaques/défenses équipes, forme+momentum, H2H, score prédit+pourquoi(lier aux données), alertes anti-trap si presentes, confiance avec justifications.
+POSSESSION: basée sur les probabilités 1X2. formule=35+30×P(Home) pour domicile. Toujours refléter l'écart de domination (pas 50/50 si un favori à 78%).
 
-JSON UNIQUEMENT, pas de markdown:
-{"predictions":[{"scoreHome":1,"scoreAway":0,"confidence":0.75,"reasoning":"...","isAntiTrap":false,"firstHalfGoal":true,"tendency":"...","dangerLevel":"safe","topScores":[{"score":"1-0","probability":0.25},{"score":"0-0","probability":0.20}],"bttsProb":0.38,"over25Prob":0.35,"firstHalfScore":"1-0","systemHome":"équilibré","systemAway":"défensif","possessionHome":53,"possessionAway":47}]}
-RÈGLES: possession=100, topScores somment 0.6-0.85, score prédit=top1, 3-5 scores, system∈offensif|défensif|équilibré.`;
+SYSTEME DE JEU: basé sur les buts attendus (lambda). lambda>1.5=offensif, <0.8=défensif, sinon=équilibré.
+
+RAISONNEMENT EDUCATIF (6-10 phrases FR): Explique POURQUOI ce score, pas juste des données.
+Structure: 1) Qui est favori et pourquoi (cotes+contexte). 2) Profil offensif/défensif des équipes (avec BM/mj si disponible). 3) Impact de la forme récente (momentum, tendance). 4) H2H si pertinent (qui domine historiquement). 5) Score prédit et justification (lier aux données concrètes). 6) Alertes anti-trap avec explication. 7) Niveau de confiance et ses justifications.
+Utilise des phrases complètes et informatives. Ex: "Manchester Blue domine les cotes à 78% grâce à une attaque forte (1.8 BM/mj)" au lieu de "Fav: 1 (78%)".
+
+JSON SANS MARKDOWN:
+{"predictions":[{"scoreHome":1,"scoreAway":0,"confidence":0.72,"reasoning":"...","isAntiTrap":false,"firstHalfGoal":true,"tendency":"...","dangerLevel":"safe","topScores":[{"score":"1-0","probability":0.25},{"score":"2-0","probability":0.18},{"score":"0-0","probability":0.15}],"bttsProb":0.38,"over25Prob":0.35,"firstHalfScore":"1-0","systemHome":"offensif","systemAway":"défensif","possessionHome":58,"possessionAway":42}]}
+REGLES: possession=100, topScores somment 0.6-0.85, score prédit=top1, 3-5 scores, system∈offensif|défensif|équilibré.`;
 
 // ─── BUILD USER PROMPT FOR A CHUNK ───────────────────────────────────────────
 
@@ -328,14 +341,14 @@ function mathPredict(m: any): any {
 
   const dangerLevel = trapAlerts === 0 ? "safe" : trapAlerts <= 2 ? "moderate" : "trap";
 
-  // ── 12. Confiance multi-facteurs ──
+  // ── 12. Confiance multi-facteurs (v7.0: réaliste, max 0.82) ──
   const favProb = Math.max(pH, pD, pA);
-  let confidence = favProb;
+  let confidence = Math.min(favProb * 0.85, 0.68); // Base plafonnée pour le virtuel
 
   // Form agreement
   if (momH.total >= 3 && momA.total >= 3) {
     const formAgrees = (fav === "home" && momH.score > momA.score + 0.1) || (fav === "away" && momA.score > momH.score + 0.1);
-    confidence += formAgrees ? 0.05 : -0.05;
+    confidence += formAgrees ? 0.04 : -0.04;
   }
 
   // H2H agreement
@@ -348,20 +361,21 @@ function mathPredict(m: any): any {
   if (rH && rA && mjH >= 3 && mjA >= 3) {
     const rankAgrees = (fav === "home" && (rA.position || 99) > (rH.position || 0)) ||
                        (fav === "away" && (rH.position || 99) > (rA.position || 0));
-    confidence += rankAgrees ? 0.06 : -0.04;
+    confidence += rankAgrees ? 0.04 : -0.03;
   }
 
   // Data richness
   const dataRich = Math.min(momH.total, 5) + Math.min(momA.total, 5);
-  if (dataRich >= 6) confidence += 0.03;
+  if (dataRich >= 6) confidence += 0.02;
+  else if (dataRich >= 3) confidence += 0.01;
 
-  // Penalties
-  confidence -= trapAlerts * 0.04;
+  // Penalties (plus sévères)
+  confidence -= trapAlerts * 0.05;
   if (sortedOdds[2] - sortedOdds[0] < 0.5) confidence -= 0.10;
-  if (isAntiTrap) confidence -= 0.08;
-  if (!hasStats && momH.total === 0) confidence -= 0.10;
+  if (isAntiTrap) confidence -= 0.12;
+  if (!hasStats && momH.total === 0) confidence -= 0.08;
 
-  confidence = clamp(confidence, 0.30, 0.95);
+  confidence = clamp(confidence, 0.25, 0.82); // Plafond virtuel: 82%
 
   // ── 13. Top scores ──
   const topScores = matrix.slice(0, 5).map(s => ({
@@ -388,34 +402,34 @@ function mathPredict(m: any): any {
   }
 
   // ── 16. Système et possession ──
-  function sysStyle(att: number, def: number): string {
-    if (att > 1.5) return "offensif";
-    if (def < 0.9) return "défensif";
-    return "équilibré";
-  }
-  const systemHome = mjH >= 3 ? sysStyle(attH, defH) : pH > 0.5 ? "offensif" : pH < 0.3 ? "défensif" : "équilibré";
-  const systemAway = mjA >= 3 ? sysStyle(attA, defA) : pA > 0.5 ? "offensif" : pA < 0.3 ? "défensif" : "équilibré";
+  // Systeme de jeu: basé sur les buts attendus (lambda), pas les stats brutes
+  const systemHome = expH > 1.5 ? "offensif" : expH < 0.8 ? "défensif" : "équilibré";
+  const systemAway = expA > 1.5 ? "offensif" : expA < 0.8 ? "défensif" : "équilibré";
 
+  // Possession: toujours refléter la domination (pas 50/50)
   let possH: number, possA: number;
-  if (mjH >= 3 && mjA >= 3) {
+  if (mjH >= 3 && mjA >= 3 && attH > 0 && attA > 0) {
     const tA = attH + attA;
-    possH = tA > 0 ? Math.round(40 + (attH / tA) * 20) : 50;
+    possH = Math.round(35 + (attH / tA) * 30);
   } else {
-    possH = Math.round(40 + pH * 25);
+    possH = Math.round(35 + pH * 30);
   }
   possA = 100 - possH;
 
-  // ── 17. Raisonnement enrichi ──
+  // ── 17. Raisonnement éducatif v3.0 ──
   const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
   const parts: string[] = [];
-  parts.push(`Fav: ${fav === "home" ? "1" : fav === "away" ? "2" : "X"} (${pct(favProb)})`);
-  parts.push(`λ: ${lambdaH}/${lambdaA}`);
-  if (momH.total > 0) parts.push(`Forme ${m.home.substring(0, 8)}: ${m.recentHome!.slice(0, 5).map((r: any) => r.result).join("")} (${pct(momH.score)})`);
-  if (momA.total > 0) parts.push(`Forme ${m.away.substring(0, 8)}: ${m.recentAway!.slice(0, 5).map((r: any) => r.result).join("")} (${pct(momA.score)})`);
-  if (h2hTotal >= 2) parts.push(`H2H: ${h2hHomeWins}V/${h2hDraws}N/${h2hAwayWins}D`);
-  if (mjH >= 3) parts.push(`${m.home.substring(0, 8)}: att${attH.toFixed(1)} def${defH.toFixed(1)}`);
-  if (isAntiTrap) parts.push(`PIEGE (${trapAlerts}/5 alertes)`);
-  parts.push(`Score: ${scoreH}-${scoreA} (${pct(confidence)})`);
+  const favTeam = fav === "home" ? m.home : fav === "away" ? m.away : "Nul";
+  parts.push(`${favTeam} favori (${pct(favProb)})`);
+  const totalXG = expH + expA;
+  parts.push(totalXG > 2.5 ? `Match ouvert (${totalXG.toFixed(1)} buts attendus)` : `${totalXG.toFixed(1)} buts attendus`);
+  if (momH.total >= 3 && momA.total >= 3) {
+    parts.push(`Forme: ${m.home} ${pct(momH.score)}, ${m.away} ${pct(momA.score)}`);
+  }
+  if (isAntiTrap) {
+    parts.push(`RISQUE: ${trapAlerts}/5 alertes anti-trap`);
+  }
+  parts.push(`Score estime ${scoreH}-${scoreA} (confiance ${pct(confidence)})`);
 
   const tendency = fav === "home" ? "home" : fav === "away" ? "away" : "draw";
 

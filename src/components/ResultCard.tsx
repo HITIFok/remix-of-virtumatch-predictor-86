@@ -15,6 +15,17 @@ function PremiumLock({ label }: { label: string }) {
   );
 }
 
+function ConfidenceIndicator({ confidence }: { confidence: number }) {
+  const label = confidence >= 65 ? "Estimation haute" : confidence >= 45 ? "Estimation modérée" : "Estimation basse";
+  const color = confidence >= 65 ? "text-success" : confidence >= 45 ? "text-gold" : "text-destructive";
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={`text-xs font-display font-bold ${color}`}>{confidence}%</span>
+      <span className="text-[10px] text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
 function StatRow({ label, value, premium = false }: { label: string; value: string | number; premium?: boolean }) {
   const hasPremium = isPremium();
   return (
@@ -111,7 +122,7 @@ export default function ResultCard({ result }: ResultCardProps) {
           </div>
           <div className="bg-muted/50 rounded-lg px-3 py-2 border border-border/50">
             <span className="text-[10px] text-muted-foreground block">Confiance</span>
-            <span className="font-display font-bold text-foreground">{result.aiConfidence}%</span>
+            <ConfidenceIndicator confidence={result.aiConfidence} />
           </div>
         </div>
         
@@ -120,7 +131,8 @@ export default function ResultCard({ result }: ResultCardProps) {
           <div className="flex items-center gap-2 bg-accent/10 border border-accent/30 rounded-lg px-3 py-2">
             <BarChart3 size={14} className="text-accent" />
             <span className="text-xs text-muted-foreground">
-              λ (buts attendus) : <span className="font-display font-bold text-foreground">{result.lambdaHome.toFixed(2)}</span> vs <span className="font-display font-bold text-foreground">{result.lambdaAway.toFixed(2)}</span>
+              Buts attendus : <span className="font-display font-bold text-foreground">{result.lambdaHome.toFixed(2)}</span> vs <span className="font-display font-bold text-foreground">{result.lambdaAway.toFixed(2)}</span>
+              <span className="ml-1 text-[10px]">(total {result.expectedGoals.toFixed(1)})</span>
             </span>
           </div>
         )}
@@ -189,7 +201,7 @@ export default function ResultCard({ result }: ResultCardProps) {
             <Target size={14} className="text-gold" />
             <span className="text-xs font-display text-gold uppercase tracking-wider">Premium</span>
           </div>
-          <StatRow label="⚽ Score Exact Garanti" value={result.exactScore} premium />
+          <StatRow label="⚽ Score Exact Estimé" value={result.exactScore} premium />
           <StatRow label="🕐 Score Mi-Temps" value={result.firstHalfScore || "-"} premium />
           <StatRow label="🎯 GG / GN" value={result.ggResult} premium />
           <StatRow label="📊 Total de buts" value={`${result.totalGoals} (${result.parity})`} premium />
@@ -231,14 +243,17 @@ export default function ResultCard({ result }: ResultCardProps) {
           </div>
         )}
 
-        {/* AI Reasoning */}
+        {/* AI Reasoning — now educational */}
         {result.aiReasoning && (
           <div className="space-y-1">
             <div className="flex items-center gap-1.5">
               <Brain size={14} className="text-accent" />
-              <span className="text-xs font-display text-accent uppercase tracking-wider">Analyse IA Détaillée</span>
+              <span className="text-xs font-display text-accent uppercase tracking-wider">Analyse Détaillée</span>
             </div>
             <p className="text-xs text-muted-foreground leading-relaxed">{result.aiReasoning}</p>
+            <p className="text-[10px] text-muted-foreground/60 italic">
+              Analyse statistique — aucun résultat n'est garanti en football virtuel
+            </p>
           </div>
         )}
       </div>
