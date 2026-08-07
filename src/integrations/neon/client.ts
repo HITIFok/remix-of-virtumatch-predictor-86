@@ -1,5 +1,7 @@
 // Neon PostgreSQL client initialization (migrated from Supabase)
-import postgres from 'postgres';
+// Uses @neondatabase/serverless for browser/edge compatibility (HTTP+WebSocket)
+// NOT postgres (Node.js only — doesn't work in Vite browser builds)
+import { neon } from '@neondatabase/serverless';
 import { NEON_DATABASE_URL } from '@/config/env';
 
 // Device ID helper — used for business logic tracking
@@ -26,7 +28,6 @@ if (!NEON_DATABASE_URL) {
   );
 }
 
-// Create the postgres.js SQL instance
-export const sql = postgres(NEON_DATABASE_URL, {
-  prepare: true,
-});
+// Create the Neon serverless SQL tagged template
+// Works in browser via HTTP, in edge/server via WebSocket
+export const sql = neon(NEON_DATABASE_URL);

@@ -118,6 +118,11 @@ export default defineConfig(({ mode }) => ({
     // console.error et console.warn sont conserves pour le debugging
     target: "es2020",
     minify: "esbuild",
+    rollupOptions: {
+      // Exclude Node.js-only 'postgres' package from browser bundle
+      // It's only used by api/*.js serverless functions
+      external: ['postgres'],
+    },
   },
   esbuild: {
     drop: mode === "production" ? ["console", "debugger"] : [],
