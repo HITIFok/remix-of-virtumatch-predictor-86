@@ -1,16 +1,17 @@
 // Vercel Serverless Function - Admin Login (ESM)
-// Vérifie le mot de passe admin via Supabase RPC (service_role)
+// Vérifie le mot de passe admin via Neon PostgreSQL
 // Retourne un token HMAC-SHA256 signé valable 24h
 // INCLUS : Rate limiting basé sur IP (5 tentatives / 15 minutes)
 // INCLUS : CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
 
-const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
-const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
+const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+
+const sql = postgres(NEON_DATABASE_URL);
 
 // ─── CORS dynamique : whitelist des origines autorisées ──────────────────────
 const ALLOWED_ORIGINS = [
@@ -25,7 +26,6 @@ const ALLOWED_ORIGINS = [
 
 function isOriginAllowed(origin, reqHost) {
   if (ALLOWED_ORIGINS.includes(origin)) return true;
-  // Autoriser tout domaine *.vercel.app si le host correspond
   try {
     const originHost = new URL(origin).hostname;
     if (originHost === reqHost) return true;
@@ -90,7 +90,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  // Bloquer les origines non-autorisées (bloquer les sites malveillants)
+  // Bloquer les origines non-autorisées
   const origin = req.headers.origin || '';
   const isSameHost = req.headers.host?.includes('vercel.app') || req.headers.host?.includes('localhost');
   const isAllowed = isOriginAllowed(origin, req.headers.host || '') || (!origin && isSameHost);
@@ -99,8 +99,8 @@ export default async function handler(req, res) {
   }
 
   // Validation config
-  if (!DATABASE_URL || !DATABASE_SERVICE_KEY) {
-    console.error('[admin-login] DATABASE_URL ou DATABASE_SERVICE_KEY manquant');
+  if (!NEON_DATABASE_URL) {
+    console.error('[admin-login] NEON_DATABASE_URL manquant');
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
   if (!ADMIN_TOKEN_SECRET) {
@@ -120,7 +120,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // Body parsing (Vercel parse automatiquement le JSON en objet)
+  // Body parsing
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   if (typeof req.body === 'string' && req.body.length > 0) {
     try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
@@ -132,18 +132,12 @@ export default async function handler(req, res) {
   }
 
   try {
-    const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
+    // Direct SQL query to verify admin password
+    const [result] = await sql`SELECT verify_admin_password(${password}::text)`;
 
-    const { data, error } = await supabase.rpc('verify_admin_password', {
-      input_password: password,
-    });
+    const isValid = result?.verify_admin_password === true;
 
-    if (error) {
-      console.error('[admin-login] RPC error:', error.message);
-      return res.status(200).json({ success: false, error: 'Erreur serveur' });
-    }
-
-    if (data !== true) {
+    if (!isValid) {
       return res.status(200).json({
         success: false,
         error: 'Mot de passe ou identifiants incorrects',

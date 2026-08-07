@@ -1,11 +1,12 @@
 // Vercel Serverless Function - Check Premium Status (ESM)
-// Vérifie si un device_id a un accès premium actif via RPC (service_role)
+// Vérifie si un device_id a un accès premium actif via Neon PostgreSQL
 // CORS dynamique (autorise web + APK, bloque les autres sites)
 
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
 
-const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
-const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
+const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
+
+const sql = postgres(NEON_DATABASE_URL);
 
 // CORS dynamique
 const ALLOWED_ORIGINS = [
@@ -48,7 +49,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  if (!DATABASE_URL || !DATABASE_SERVICE_KEY) {
+  if (!NEON_DATABASE_URL) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
 
@@ -62,24 +63,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'deviceId manquant ou invalide' });
   }
 
-  // Validate device_id format (must match dev-timestamp-random pattern)
+  // Validate device_id format
   if (!/^dev-\d+-[a-z0-9]+$/.test(deviceId)) {
     return res.status(400).json({ success: false, error: 'Format deviceId invalide' });
   }
 
   try {
-    const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
+    const [result] = await sql`SELECT check_premium_status(${deviceId}::text)`;
 
-    const { data, error } = await supabase.rpc('check_premium_status', {
-      p_device_id: deviceId,
-    });
-
-    if (error) {
-      console.error('[check-premium] RPC error:', error.message);
-      return res.status(200).json({ premium: false });
-    }
-
-    return res.status(200).json({ premium: data === true });
+    return res.status(200).json({ premium: result?.check_premium_status === true });
   } catch (err) {
     console.error('[check-premium] Exception:', err.message);
     return res.status(200).json({ premium: false });

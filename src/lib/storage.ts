@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { sql } from "@/integrations/neon/client";
 import { config } from "@/config/env";
 import type { MatchResult } from "./prediction-engine";
 import { getDeviceId } from "@/hooks/use-predictions";
@@ -10,74 +10,71 @@ const SETTINGS_KEY = "virtuxxs_settings";
 const ADMIN_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24h en ms
 
 // ─── History (Cloud DB) ───────────────────────────────────────────────────────
-// RLS doit filtrer par device_id côté Supabase pour éviter les fuites de données
 
 export async function getHistory(): Promise<MatchResult[]> {
   const deviceId = getDeviceId();
 
-  // ═══ SÉCURISÉ : filtrer device_id côté serveur (pas côté client) ═══
   // Si pas de deviceId, ne rien retourner (protection vie privée)
   if (!deviceId) {
     return [];
   }
 
-  const query = supabase
-    .from("predictions")
-    .select("*")
-    .eq("device_id", deviceId)
-    .order("created_at", { ascending: false })
-    .limit(200);
+  try {
+    const data = await sql
+      `SELECT * FROM predictions WHERE device_id = ${deviceId} ORDER BY created_at DESC LIMIT 200`;
 
-  const { data, error } = await query;
+    if (!data) return [];
 
-  if (error || !data) return [];
-
-  return data.map(row => ({
-    id: row.id,
-    home: row.home || row.home_team,
-    away: row.away || row.away_team,
-    league: row.league || "Instant League",
-    oddHome: Number(row.odd_home),
-    oddDraw: Number(row.odd_draw),
-    oddAway: Number(row.odd_away),
-    probHome: Number(row.prob_home),
-    probDraw: Number(row.prob_draw),
-    probAway: Number(row.prob_away),
-    winner1X2: row.winner_1x2 || (row.prediction === '1' ? `1 — ${row.home || row.home_team}` : row.prediction === '2' ? `2 — ${row.away || row.away_team}` : 'X (Nul)'),
-    firstHalfGoalProb: Number(row.first_half_goal_prob) || 0.5,
-    expectedGoals: Number(row.expected_goals) || 2.5,
-    goalsHome: Number(row.goals_home) || 1.5,
-    goalsAway: Number(row.goals_away) || 1,
-    scoreHome: row.score_home ?? row.predicted_home_score ?? 0,
-    scoreAway: row.score_away ?? row.predicted_away_score ?? 0,
-    exactScore: row.exact_score || row.predicted_score || "0-0",
-    probGG: Number(row.prob_gg) || 0.5,
-    probGN: Number(row.prob_gn) || 0.5,
-    ggResult: row.gg_result || (row.total_goals && row.total_goals > 0 ? "Oui (GG)" : "Non (NG)"),
-    totalGoals: row.total_goals || (row.score_home || 0) + (row.score_away || 0),
-    parity: row.parity || ((row.total_goals || 0) % 2 === 0 ? "Pair" : "Impair"),
-    overUnder15: row.over_under_15 || ((row.total_goals || 0) > 1.5 ? "Over 1.5" : "Under 1.5"),
-    overUnder25: row.over_under_25 || ((row.total_goals || 0) > 2.5 ? "Over 2.5" : "Under 2.5"),
-    overUnder35: row.over_under_35 || ((row.total_goals || 0) > 3.5 ? "Over 3.5" : "Under 3.5"),
-    timestamp: new Date(row.created_at).getTime(),
-    aiConfidence: Number(row.confidence) / 100 || 0,
-    aiReasoning: "",
-    isAntiTrap: false,
-    firstHalfGoal: false,
-    tendency: "",
-    dangerLevel: "safe" as const,
-    topScores: [],
-    bttsProb: Number(row.btts_prob || row.prob_gg) || 0.5,
-    over25Prob: Number(row.over25_prob) || 0.5,
-    firstHalfScore: "0-0",
-    systemHome: "équilibré",
-    systemAway: "équilibré",
-    possessionHome: 50,
-    possessionAway: 50,
-    status: row.status,
-    actualOutcome: row.actual_outcome,
-    actualScore: row.actual_score,
-  }));
+    return data.map((row: any) => ({
+      id: row.id,
+      home: row.home || row.home_team,
+      away: row.away || row.away_team,
+      league: row.league || "Instant League",
+      oddHome: Number(row.odd_home),
+      oddDraw: Number(row.odd_draw),
+      oddAway: Number(row.odd_away),
+      probHome: Number(row.prob_home),
+      probDraw: Number(row.prob_draw),
+      probAway: Number(row.prob_away),
+      winner1X2: row.winner_1x2 || (row.prediction === '1' ? `1 — ${row.home || row.home_team}` : row.prediction === '2' ? `2 — ${row.away || row.away_team}` : 'X (Nul)'),
+      firstHalfGoalProb: Number(row.first_half_goal_prob) || 0.5,
+      expectedGoals: Number(row.expected_goals) || 2.5,
+      goalsHome: Number(row.goals_home) || 1.5,
+      goalsAway: Number(row.goals_away) || 1,
+      scoreHome: row.score_home ?? row.predicted_home_score ?? 0,
+      scoreAway: row.score_away ?? row.predicted_away_score ?? 0,
+      exactScore: row.exact_score || row.predicted_score || "0-0",
+      probGG: Number(row.prob_gg) || 0.5,
+      probGN: Number(row.prob_gn) || 0.5,
+      ggResult: row.gg_result || (row.total_goals && row.total_goals > 0 ? "Oui (GG)" : "Non (NG)"),
+      totalGoals: row.total_goals || (row.score_home || 0) + (row.score_away || 0),
+      parity: row.parity || ((row.total_goals || 0) % 2 === 0 ? "Pair" : "Impair"),
+      overUnder15: row.over_under_15 || ((row.total_goals || 0) > 1.5 ? "Over 1.5" : "Under 1.5"),
+      overUnder25: row.over_under_25 || ((row.total_goals || 0) > 2.5 ? "Over 2.5" : "Under 2.5"),
+      overUnder35: row.over_under_35 || ((row.total_goals || 0) > 3.5 ? "Over 3.5" : "Under 3.5"),
+      timestamp: new Date(row.created_at).getTime(),
+      aiConfidence: Number(row.confidence) / 100 || 0,
+      aiReasoning: "",
+      isAntiTrap: false,
+      firstHalfGoal: false,
+      tendency: "",
+      dangerLevel: "safe" as const,
+      topScores: [],
+      bttsProb: Number(row.btts_prob || row.prob_gg) || 0.5,
+      over25Prob: Number(row.over25_prob) || 0.5,
+      firstHalfScore: "0-0",
+      systemHome: "équilibré",
+      systemAway: "équilibré",
+      possessionHome: 50,
+      possessionAway: 50,
+      status: row.status,
+      actualOutcome: row.actual_outcome,
+      actualScore: row.actual_score,
+    }));
+  } catch (err) {
+    console.error('getHistory error:', err);
+    return [];
+  }
 }
 
 export async function saveToHistory(result: MatchResult): Promise<{ success: boolean; error?: string }> {
@@ -90,46 +87,40 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
   const prediction = result.winner1X2.startsWith('1') ? '1' : result.winner1X2.startsWith('2') ? '2' : 'X';
   const confidence = Math.round(result.aiConfidence);
 
-  const insertData = {
-    home_team: result.home,
-    away_team: result.away,
-    league: result.league || "Instant League",
-    odd_home: result.oddHome,
-    odd_draw: result.oddDraw,
-    odd_away: result.oddAway,
-    prob_home: result.probHome,
-    prob_draw: result.probDraw,
-    prob_away: result.probAway,
-    prediction: prediction,
-    confidence: confidence,
-    winner_1x2: result.winner1X2,
-    score_home: result.scoreHome,
-    score_away: result.scoreAway,
-    exact_score: result.exactScore,
-    first_half_goal_prob: result.firstHalfGoalProb,
-    expected_goals: result.expectedGoals,
-    goals_home: result.goalsHome,
-    goals_away: result.goalsAway,
-    prob_gg: result.probGG,
-    prob_gn: result.probGN,
-    gg_result: result.ggResult,
-    total_goals: result.totalGoals,
-    parity: result.parity,
-    over_under_15: result.overUnder15,
-    over_under_25: result.overUnder25,
-    over_under_35: result.overUnder35,
-    device_id: deviceId,
-    status: 'pending',
-  };
+  try {
+    await sql`
+      INSERT INTO predictions (
+        home_team, away_team, league, odd_home, odd_draw, odd_away,
+        prob_home, prob_draw, prob_away, prediction, confidence,
+        winner_1x2, score_home, score_away, exact_score,
+        first_half_goal_prob, expected_goals, goals_home, goals_away,
+        prob_gg, prob_gn, gg_result, total_goals, parity,
+        over_under_15, over_under_25, over_under_35,
+        device_id, status, home, away
+      ) VALUES (
+        ${result.home}, ${result.away}, ${result.league || "Instant League"},
+        ${result.oddHome}, ${result.oddDraw}, ${result.oddAway},
+        ${result.probHome}, ${result.probDraw}, ${result.probAway},
+        ${prediction}, ${confidence},
+        ${result.winner1X2}, ${result.scoreHome}, ${result.scoreAway},
+        ${result.exactScore},
+        ${result.firstHalfGoalProb}, ${result.expectedGoals},
+        ${result.goalsHome}, ${result.goalsAway},
+        ${result.probGG}, ${result.probGN}, ${result.ggResult},
+        ${result.totalGoals}, ${result.parity},
+        ${result.overUnder15}, ${result.overUnder25}, ${result.overUnder35},
+        ${deviceId}, 'pending', ${result.home}, ${result.away}
+      )
+    `;
 
-  const { data, error } = await supabase.from("predictions").insert(insertData).select();
-
-  if (error) {
-    console.error('saveToHistory - Erreur:', error);
-    return { success: false, error: error.message };
+    return { success: true };
+  } catch (err: any) {
+    console.error('saveToHistory error:', err);
+    if (err?.code === '23505') {
+      return { success: false, error: 'Duplicate prediction' };
+    }
+    return { success: false, error: err.message || 'Erreur d\'insertion' };
   }
-
-  return { success: true };
 }
 
 export async function clearHistory() {
@@ -138,8 +129,11 @@ export async function clearHistory() {
     console.error('clearHistory - device_id est null, suppression annulée');
     return;
   }
-  // ═══ SÉCURISÉ : supprimer uniquement les prédictions de CE device ═══
-  await supabase.from("predictions").delete().eq("device_id", deviceId);
+  try {
+    await sql`DELETE FROM predictions WHERE device_id = ${deviceId}`;
+  } catch (err) {
+    console.error('clearHistory error:', err);
+  }
 }
 
 // ─── Premium Access (server-validated via API Route) ────────────────────────────
@@ -178,14 +172,11 @@ export function isPremium(): boolean {
 }
 
 // ═══ SÉCURISÉ : premium vérifié côté SERVEUR via API Route (Web ET APK) ═══
-// Plus d'appel direct Supabase RPC depuis le client
 export async function verifyPremium(): Promise<boolean> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    // TOUJOURS passer par l'API Route Vercel (service_role)
-    // Fonctionne pour Web ET APK (fetch cross-origin OK dans Capacitor)
     const res = await fetch(config.api.checkPremium, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -205,8 +196,6 @@ export function clearAccess() {
 }
 
 // ─── Admin (server-verified via API Routes — Web ET APK) ─────────────────────────
-// ═══ PLUS AUCUN APPEL DIRECT SUPABASE RPC POUR L'ADMIN ═══
-// Web ET APK passent par les API Routes Vercel avec HMAC token
 
 export function isAdmin(): boolean {
   const raw = localStorage.getItem(ADMIN_SESSION_KEY);
@@ -232,10 +221,8 @@ export function isAdmin(): boolean {
 }
 
 // ═══ SÉCURISÉ : login admin TOUJOURS via API Route Vercel ═══
-// Web ET APK utilisent le même endpoint
 export async function loginAdminSupabase(password: string): Promise<{ success: boolean; message: string }> {
   try {
-    // TOUJOURS via l'API Route Vercel (service_role + rate limiting)
     const res = await fetch(config.api.adminLogin, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -281,7 +268,6 @@ export async function verifyAdminSession(): Promise<boolean> {
     if (!session?.token) return false;
     if (Date.now() > (session.expiresAt || 0)) return false;
 
-    // Vérifier le token HMAC côté serveur
     const res = await fetch(config.api.adminVerify, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -327,7 +313,6 @@ export async function getGeneratedCodes(): Promise<GeneratedCode[]> {
     const session = JSON.parse(raw);
     if (!session?.token) return [];
 
-    // Appel API Route avec token HMAC dans Authorization header
     const res = await fetch(config.api.adminCodes, {
       method: 'GET',
       headers: {
@@ -399,35 +384,23 @@ export function generateRandomCode(): string {
   return code;
 }
 
-// ═══ validateCode — garde la logique directe (publique, pas admin) ═══
-// L'activation d'un code est une action utilisateur → reste via Supabase anon
-// La table access_codes DOIT avoir une RLS pour empêcher les INSERT non-autorisés
+// ═══ validateCode — activation d'un code utilisateur via Neon ═══
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
   try {
     const deviceId = getDeviceId();
 
-    const { data, error } = await supabase
-      .from("access_codes")
-      .update({
-        used: true,
-        used_at: new Date().toISOString(),
-        used_by_device: deviceId
-      })
-      .eq("code", inputCode)
-      .eq("used", false)
-      .select("id, duration_days")
-      .single();
+    const data = await sql`
+      UPDATE access_codes 
+      SET used = true, used_at = NOW(), used_by_device = ${deviceId} 
+      WHERE code = ${inputCode} AND used = false 
+      RETURNING id, duration_days
+    `;
 
-    if (error) {
-      console.error("Erreur Supabase validateCode:", error);
-      return { valid: false, days: 0, message: `Erreur de connexion: ${error.message}` };
-    }
-
-    if (!data) {
+    if (!data || data.length === 0) {
       return { valid: false, days: 0, message: "Code invalide, introuvable ou déjà utilisé" };
     }
 
-    return { valid: true, days: data.duration_days, message: `Code valide! ${data.duration_days} jours d'accès` };
+    return { valid: true, days: data[0].duration_days, message: `Code valide! ${data[0].duration_days} jours d'accès` };
   } catch (err: any) {
     console.error("Exception validateCode:", err);
     return { valid: false, days: 0, message: `Exception: ${err.message}` };
@@ -442,7 +415,6 @@ export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
     const session = JSON.parse(raw);
     if (!session?.token) return false;
 
-    // TOUJOURS via l'API Route Vercel (vérifie token HMAC + service_role)
     const res = await fetch(config.api.adminDeleteCode, {
       method: 'POST',
       headers: {

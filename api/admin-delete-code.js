@@ -1,14 +1,15 @@
 // Vercel Serverless Function - Admin Delete Access Code (ESM)
-// Vérifie le token admin, puis supprime le code via RPC (service_role)
+// Vérifie le token admin, puis supprime le code via Neon PostgreSQL
 // CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
 
-const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
-const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
+const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+
+const sql = postgres(NEON_DATABASE_URL);
 
 // CORS dynamique
 const ALLOWED_ORIGINS = [
@@ -79,7 +80,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  if (!DATABASE_URL || !DATABASE_SERVICE_KEY || !ADMIN_TOKEN_SECRET) {
+  if (!NEON_DATABASE_URL || !ADMIN_TOKEN_SECRET) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
 
@@ -104,18 +105,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
+    const [result] = await sql`SELECT admin_delete_access_code(${codeId}::uuid)`;
 
-    const { data, error } = await supabase.rpc('admin_delete_access_code', {
-      p_code_id: codeId,
-    });
-
-    if (error) {
-      console.error('[admin-delete-code] RPC error:', error.message);
-      return res.status(200).json({ success: false, error: 'Erreur lors de la suppression' });
-    }
-
-    return res.status(200).json({ success: data === true });
+    return res.status(200).json({ success: result?.admin_delete_access_code === true });
   } catch (err) {
     console.error('[admin-delete-code] Exception:', err.message);
     return res.status(200).json({ success: false, error: 'Erreur serveur' });

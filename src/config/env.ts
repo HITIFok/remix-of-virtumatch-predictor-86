@@ -2,8 +2,7 @@
 // Point d'entrée UNIQUE pour toutes les variables d'environnement
 // Ne pas dupliquer ces constantes dans d'autres fichiers
 
-export const DATABASE_URL = import.meta.env.VITE_DATABASE_URL || '';
-export const DATABASE_ANON_KEY = import.meta.env.VITE_DATABASE_ANON_KEY || '';
+export const NEON_DATABASE_URL = import.meta.env.VITE_NEON_DATABASE_URL || '';
 
 // URL Vercel de production (pour les appels API Routes depuis l'APK)
 const VERCEL_PRODUCTION_URL = 'https://virtual-match-hitifproject.vercel.app';
@@ -30,20 +29,19 @@ export const API_BASE = (() => {
 export const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || '';
 
 export const config = {
-  supabase: {
-    url: DATABASE_URL,
-    anonKey: DATABASE_ANON_KEY,
+  neon: {
+    databaseUrl: NEON_DATABASE_URL,
   },
   api: {
-    // Vercel API Routes (backend sécurisé avec service_role)
+    // Vercel API Routes (backend sécurisé)
     adminLogin: `${API_BASE}/api/admin-login`,
     adminVerify: `${API_BASE}/api/admin-verify`,
     adminDeleteCode: `${API_BASE}/api/admin-delete-code`,
     adminCodes: `${API_BASE}/api/admin-codes`,
     checkPremium: `${API_BASE}/api/check-premium`,
-    // Edge Functions Supabase
-    fetchLiveUrl: DATABASE_URL
-      ? `${DATABASE_URL}/functions/v1/fetch-live`
-      : '',
+    // API Routes replacing Supabase Edge Functions
+    fetchLiveUrl: `${API_BASE}/api/fetch-live`,
+    analyzeMatchUrl: `${API_BASE}/api/analyze-match`,
+    verifyPredictionsUrl: `${API_BASE}/api/verify-predictions`,
   },
 } as const;

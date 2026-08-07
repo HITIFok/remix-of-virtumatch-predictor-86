@@ -1,6 +1,7 @@
 // Hook pour gérer les prédictions et leur suivi de précision
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '@/integrations/supabase/client'
+import { sql } from '@/integrations/neon/client'
+import { config } from '@/config/env'
 
 // Device ID for tracking predictions per device
 export function getDeviceId(): string {
@@ -66,31 +67,31 @@ export function usePredictions() {
   const [error, setError] = useState<string | null>(null)
 
   // Vérifier automatiquement les prédictions en attente (device-scoped)
-  // v17 FIX: Use supabase.functions.invoke() instead of raw fetch
-  //   Raw fetch fails in APK (Capacitor) due to CORS — origin is capacitor://localhost
-  //   but verify-predictions may restrict ALLOWED_ORIGIN. supabase.functions.invoke()
-  //   handles auth headers + CORS automatically via the Supabase client.
   const autoVerifyPredictions = useCallback(async () => {
     try {
       const deviceId = getDeviceId()
 
-      const { data, error } = await supabase.functions.invoke('verify-predictions', {
-        body: { deviceId },
-      })
+      const res = await fetch(`${config.api.verifyPredictionsUrl}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      });
 
-      if (error) {
-        console.warn('[autoVerify] Edge Function error:', error.message)
-        return null
+      if (!res.ok) {
+        console.warn('[autoVerify] API error:', res.status);
+        return null;
       }
+
+      const data = await res.json();
 
       if (data) {
-        console.log('[autoVerify]', data.verified || 0, 'prediction(s) vérifiée(s)')
-        return data
+        console.log('[autoVerify]', data.verified || 0, 'prediction(s) vérifiée(s)');
+        return data;
       }
     } catch (err) {
-      console.warn('[autoVerify] skipped:', err)
+      console.warn('[autoVerify] skipped:', err);
     }
-    return null
+    return null;
   }, [])
 
   // Charger les prédictions (avec vérification automatique)
@@ -104,17 +105,12 @@ export function usePredictions() {
       }
 
       const deviceId = getDeviceId()
-      const { data: predData, error: predError } = await supabase
-        .from('predictions')
-        .select('*')
-        .eq('device_id', deviceId)
-        .order('created_at', { ascending: false })
-        .limit(200)
-
-      if (predError) {
-        console.error('Erreur chargement prédictions:', predError)
-        throw predError
-      }
+      const predData = await sql`
+        SELECT * FROM predictions 
+        WHERE device_id = ${deviceId} 
+        ORDER BY created_at DESC 
+        LIMIT 200
+      `;
 
       setPredictions((predData as Prediction[]) || [])
 
@@ -273,27 +269,49 @@ export function usePredictions() {
         league_id: pred.league_id || null,
       }
 
+      const data = await sql`
+        INSERT INTO predictions (
+          match_id, home_team, away_team, league, league_id, round,
+          odd_home, odd_draw, odd_away,
+          prob_home, prob_draw, prob_away,
+          prediction, confidence,
+          predicted_home_score, predicted_away_score, predicted_score,
+          gg_result, total_goals, parity,
+          over_under_15, over_under_25, over_under_35,
+          prob_gg, prob_gn, btts_prob, over25_prob,
+          first_half_goal_prob, expected_goals,
+          winner_1x2,
+          device_id, status, home, away,
+          score_home, score_away, exact_score
+        ) VALUES (
+          ${insertData.match_id || null}, ${insertData.home_team}, ${insertData.away_team}, ${insertData.league}, ${insertData.league_id || null}, ${insertData.round || null},
+          ${insertData.odd_home}, ${insertData.odd_draw}, ${insertData.odd_away},
+          ${insertData.prob_home}, ${insertData.prob_draw}, ${insertData.prob_away},
+          ${insertData.prediction}, ${insertData.confidence},
+          ${insertData.predicted_home_score || null}, ${insertData.predicted_away_score || null}, ${insertData.predicted_score || null},
+          ${insertData.gg_result || ''}, ${insertData.total_goals || 0}, ${insertData.parity || ''},
+          ${insertData.over_under_15 || ''}, ${insertData.over_under_25 || ''}, ${insertData.over_under_35 || ''},
+          ${insertData.prob_gg || 0}, ${insertData.prob_gn || 0}, ${insertData.btts_prob || 0}, ${insertData.over25_prob || 0},
+          ${insertData.first_half_goal_prob || 0}, ${insertData.expected_goals || 0},
+          ${insertData.winner_1x2},
+          ${insertData.device_id}, ${insertData.status}, ${insertData.home}, ${insertData.away},
+          ${insertData.score_home || null}, ${insertData.score_away || null}, ${insertData.exact_score || ''}
+        )
+        RETURNING *
+      `
 
-      const { data, error } = await supabase
-        .from('predictions')
-        .insert(insertData)
-        .select()
-        .single()
-
-      if (error) {
-        console.error('Erreur insertion:', error)
-        if (error.code === '23505') {
-          return null
-        }
-        throw error
+      if (!data || data.length === 0) {
+        throw new Error('No data returned from insert');
       }
-
 
       await loadPredictions(true) // Skip auto-verify after save (just saved)
 
-      return data as Prediction
-    } catch (err) {
+      return data[0] as Prediction
+    } catch (err: any) {
       console.error('Error saving prediction:', err)
+      if (err?.code === '23505') {
+        return null
+      }
       throw err
     }
   }, [loadPredictions])
@@ -301,15 +319,7 @@ export function usePredictions() {
   // Supprimer une prédiction par ID
   const deletePrediction = useCallback(async (id: string) => {
     try {
-      const { error } = await supabase
-        .from('predictions')
-        .delete()
-        .eq('id', id)
-
-      if (error) {
-        console.error('Erreur suppression:', error)
-        throw error
-      }
+      await sql`DELETE FROM predictions WHERE id = ${id}`
 
       await loadPredictions(true)
       return true
@@ -322,15 +332,7 @@ export function usePredictions() {
   // Supprimer toutes les prédictions "en attente" en une seule requête
   const deletePendingPredictions = useCallback(async () => {
     try {
-      const { error } = await supabase
-        .from('predictions')
-        .delete()
-        .eq('status', 'pending')
-
-      if (error) {
-        console.error('Erreur suppression en attente:', error)
-        throw error
-      }
+      await sql`DELETE FROM predictions WHERE status = 'pending'`
 
       await loadPredictions(true)
       return true
@@ -340,7 +342,7 @@ export function usePredictions() {
     }
   }, [loadPredictions])
 
-  // Vérifier manuellement les prédictions via Edge Function (optionnel)
+  // Vérifier manuellement les prédictions via API Route (optionnel)
   const verifyPredictions = useCallback(async () => {
     try {
       const result = await autoVerifyPredictions()

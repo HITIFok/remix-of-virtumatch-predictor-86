@@ -1,15 +1,14 @@
-// Vercel Serverless Function - Proxy API with Supabase fallback
+// Vercel Serverless Function - Proxy API with Neon PostgreSQL fallback
 // Primaire : sporty-tech API (temps réel)
-// Secondaire : Supabase scraped_data table (cache)
+// Secondaire : Neon scraped_data table (cache)
 // Supports 8 leagues via ?leagueId=8035
 
-const { createClient } = require('@supabase/supabase-js');
+const postgres = require('postgres');
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
 const SPORTY_API_BASE = process.env.SPORTY_API_BASE || '';
-const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
-const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
+const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
 const LEAGUES = {
   "8035": "English League",
@@ -118,26 +117,15 @@ function parseSportyResults(resultsData, leagueName) {
   return results;
 }
 
-// ─── Supabase fallback : lire scraped_data table ──────────────────────────
+// ─── Neon PostgreSQL fallback : lire scraped_data table ────────────────────
 
-async function fetchFromSupabaseCache(leagueName) {
-  if (!DATABASE_URL || !DATABASE_SERVICE_KEY) {
-    console.error('[matches] DATABASE_URL ou DATABASE_SERVICE_KEY manquant');
+async function fetchFromNeonCache(sql, leagueName) {
+  if (!NEON_DATABASE_URL) {
+    console.error('[matches] NEON_DATABASE_URL manquant');
     return null;
   }
 
-  const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
-
-  const { data, error } = await supabase
-    .from('scraped_data')
-    .select('*')
-    .eq('league', leagueName)
-    .order('scraped_at', { ascending: false });
-
-  if (error) {
-    console.error('[matches] Supabase cache error:', error.message);
-    return null;
-  }
+  const data = await sql`SELECT * FROM scraped_data WHERE league = ${leagueName} ORDER BY scraped_at DESC`;
 
   if (!data || data.length === 0) {
     console.warn('[matches] Aucune donnée en cache pour:', leagueName);
@@ -217,11 +205,13 @@ module.exports = async function handler(req, res) {
 
   const leagueId = req.query.leagueId || "8035";
 
-  // SSRF protection: only allow known league IDs (numeric only)
+  // SSRF protection: only allow known league IDs
   if (!LEAGUES[leagueId]) {
     return res.status(400).json({ success: false, error: "Invalid leagueId" });
   }
   const leagueName = LEAGUES[leagueId];
+
+  const sql = postgres(NEON_DATABASE_URL);
 
   try {
     // ─── Source 1 : sporty-tech API (temps réel) ────────────────────────────
@@ -237,7 +227,6 @@ module.exports = async function handler(req, res) {
         ]);
         clearTimeout(timeoutId);
 
-        // Succès API
         if (matchesRes.ok && matchesRes.status !== 403) {
           const matchesData = await matchesRes.json();
           const rankingData = rankingRes.ok ? await rankingRes.json() : { teams: [] };
@@ -271,11 +260,11 @@ module.exports = async function handler(req, res) {
         console.error(`[matches] sporty-tech échoué pour ${leagueName}:`, apiErr.message);
       }
     } else {
-      console.warn('[matches] SPORTY_API_BASE non configuré, utilisation du cache Supabase uniquement');
+      console.warn('[matches] SPORTY_API_BASE non configuré, utilisation du cache Neon uniquement');
     }
 
-    // ─── Source 2 : Supabase scraped_data (cache) ────────────────────────────
-    const cacheData = await fetchFromSupabaseCache(leagueName);
+    // ─── Source 2 : Neon scraped_data (cache) ────────────────────────────
+    const cacheData = await fetchFromNeonCache(sql, leagueName);
 
     if (cacheData && cacheData.matches.length > 0) {
       return res.status(200).json({

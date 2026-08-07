@@ -7,7 +7,7 @@ import ResultCard from "@/components/ResultCard";
 import PremiumGate from "@/components/PremiumGate";
 import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
-import { supabase } from "@/integrations/supabase/client";
+import { config } from "@/config/env";
 import { toast } from "sonner";
 import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
 import { APK_DOWNLOAD_URL } from "@/config/env";
@@ -20,23 +20,22 @@ export default function Index() {
   const handleAnalyze = async (matches: MatchInput[]) => {
     setLoading(true);
     try {
-      // Call AI edge function
-      const { data, error } = await supabase.functions.invoke("analyze-match", {
-        body: { matches },
+      // Call AI API route
+      const res = await fetch(`${config.api.analyzeMatchUrl}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matches }),
       });
+      const aiData = await res.json();
 
       let aiPredictions: (AIPrediction | undefined)[] = [];
 
-      if (error) {
-        console.warn("AI analysis failed, using math fallback:", error);
+      if (!res.ok || aiData.error) {
+        console.warn("AI analysis failed, using math fallback:", aiData.error);
         toast.error("IA indisponible, analyse mathématique utilisée");
         aiPredictions = matches.map(() => undefined);
-      } else if (data?.error) {
-        console.warn("AI error:", data.error);
-        toast.error(data.error);
-        aiPredictions = matches.map(() => undefined);
       } else {
-        aiPredictions = (data?.predictions || []) as AIPrediction[];
+        aiPredictions = (aiData?.predictions || []) as AIPrediction[];
         // Pad if AI returned fewer results
         while (aiPredictions.length < matches.length) {
           aiPredictions.push(undefined);

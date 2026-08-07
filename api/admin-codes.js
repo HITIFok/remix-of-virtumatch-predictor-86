@@ -1,15 +1,16 @@
 // Vercel Serverless Function - Admin Get/Save Codes (ESM)
-// Vérifie le token HMAC admin, puis lit/crée des codes via Supabase (service_role)
+// Vérifie le token HMAC admin, puis lit/crée des codes via Neon PostgreSQL
 // CORS dynamique (autorise web + APK, bloque les autres sites)
 // Token passé via Authorization: Bearer <token> header
 
 import crypto from 'crypto';
-import { createClient } from '@supabase/supabase-js';
+import postgres from 'postgres';
 
-const DATABASE_URL = process.env.VITE_DATABASE_URL || process.env.DATABASE_URL;
-const DATABASE_SERVICE_KEY = process.env.DATABASE_SERVICE_KEY;
+const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
+
+const sql = postgres(NEON_DATABASE_URL);
 
 // CORS dynamique
 const ALLOWED_ORIGINS = [
@@ -80,7 +81,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  if (!DATABASE_URL || !DATABASE_SERVICE_KEY || !ADMIN_TOKEN_SECRET) {
+  if (!NEON_DATABASE_URL || !ADMIN_TOKEN_SECRET) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
 
@@ -92,20 +93,10 @@ export default async function handler(req, res) {
     return res.status(401).json({ success: false, error: 'Session admin invalide ou expirée' });
   }
 
-  const supabase = createClient(DATABASE_URL, DATABASE_SERVICE_KEY);
-
   try {
     if (req.method === 'GET') {
       // ═══ LIRE tous les codes ═══
-      const { data, error } = await supabase
-        .from('access_codes')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('[admin-codes] GET error:', error.message);
-        return res.status(200).json({ success: false, error: 'Erreur lecture codes' });
-      }
+      const data = await sql`SELECT * FROM access_codes ORDER BY created_at DESC`;
 
       return res.status(200).json({
         success: true,
@@ -137,18 +128,17 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, error: 'Durée invalide (1-365 jours)' });
       }
 
-      const { data, error } = await supabase
-        .from('access_codes')
-        .insert({ code, duration_days: durationDays, used: false })
-        .select()
-        .single();
+      const data = await sql`
+        INSERT INTO access_codes (code, duration_days, used)
+        VALUES (${code}, ${durationDays}, false)
+        RETURNING *
+      `;
 
-      if (error) {
-        console.error('[admin-codes] POST error:', error.message);
-        return res.status(200).json({ success: false, error: error.message });
+      if (!data || data.length === 0) {
+        return res.status(200).json({ success: false, error: 'Erreur lors de l\'insertion' });
       }
 
-      return res.status(200).json({ success: true, code: data.code });
+      return res.status(200).json({ success: true, code: data[0].code });
     }
   } catch (err) {
     console.error('[admin-codes] Exception:', err.message);

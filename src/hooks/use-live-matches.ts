@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { sql } from "@/integrations/neon/client";
+import { config } from "@/config/env";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 
 // Liste des ligues disponibles avec codes pays pour drapeaux réels
@@ -33,7 +34,6 @@ function getFriendlyError(leagueName: string): string {
 }
 
 // Fetch QUICK-RESULTS mode — only 2 API calls for ultra-fast result detection
-// Returns playout data for betting round if available (~500ms vs ~2-3s full)
 async function fetchQuickResults(leagueId: string): Promise<{
   hasResults: boolean;
   playoutResults: any[];
@@ -42,10 +42,14 @@ async function fetchQuickResults(leagueId: string): Promise<{
   elapsed: number;
 } | null> {
   try {
-    const { data, error: fnError } = await supabase.functions.invoke('fetch-live', {
-      body: { leagueId, mode: 'quick-results' },
+    const res = await fetch(`${config.api.fetchLiveUrl}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueId, mode: 'quick-results' }),
     });
-    if (fnError || !data?.success) return null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data?.success) return null;
     return {
       hasResults: data.hasResults || false,
       playoutResults: data.playoutResults || [],
@@ -58,7 +62,7 @@ async function fetchQuickResults(leagueId: string): Promise<{
   }
 }
 
-// Fetch depuis l'API via Supabase Edge Function (utilise supabase.functions.invoke pour l'auth auto)
+// Fetch depuis l'API via Vercel API Route
 async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   matches: ScrapedMatch[];
   results: MatchResult[];
@@ -66,15 +70,18 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
   nextRoundStart: string | null;
 } | null> {
   try {
-    // supabase.functions.invoke() gère automatiquement apikey + Authorization + x-device-id
-    const { data, error: fnError } = await supabase.functions.invoke('fetch-live', {
-      body: { leagueId },
+    const res = await fetch(`${config.api.fetchLiveUrl}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leagueId }),
     });
 
-    if (fnError) {
-      console.warn(`[fetchFromAPI] Edge Function error ${fnError.code} pour ${leagueName}:`, fnError.message);
+    if (!res.ok) {
+      console.warn(`[fetchFromAPI] API error ${res.status} pour ${leagueName}`);
       return null;
     }
+
+    const data = await res.json();
 
     if (!data || !data.success) {
       console.warn(`[fetchFromAPI] Erreur API pour ${leagueName}:`, data?.error);
@@ -99,7 +106,7 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         scoreAway: m.scoreAway ?? null,
         stats: m.goals ? { goals: m.goals } : null,
         predeterminedScore: m.predeterminedScore || null,
-        prediction: m.prediction || null, // v14: Score exact odds from Sporty API
+        prediction: m.prediction || null,
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
@@ -141,19 +148,15 @@ export function useLiveMatches() {
   const [dataSource, setDataSource] = useState<"api" | "cache">("cache");
   const [currentRound, setCurrentRound] = useState<number>(0);
 
-  // Empêcher les requêtes concurrentes obsolètes (race condition au changement de ligue)
   const fetchVersionRef = useRef(0);
-  // Track if a fetch is in progress (to avoid overlapping polls)
   const fetchingRef = useRef(false);
-  // Track if we've ever received API data — prevents flicker back to cache during polls
   const apiDataReceivedRef = useRef(false);
-  // Ref for matches — used by polling loop to avoid 'matches' in useEffect deps (prevents flickering)
   const matchesRef = useRef<ScrapedMatch[]>([]);
   matchesRef.current = matches;
 
   const selectedLeague: LeagueInfo = AVAILABLE_LEAGUES.find(l => l.id === selectedLeagueId) || AVAILABLE_LEAGUES[0];
 
-  // Charger les données depuis Supabase (cache) — version silencieuse qui retourne les données sans setter le state
+  // Charger les données depuis Neon (cache)
   const loadFromDatabaseRaw = useCallback(async (leagueName?: string): Promise<{
     matches: ScrapedMatch[];
     results: MatchResult[];
@@ -163,13 +166,12 @@ export function useLiveMatches() {
     const targetLeague = leagueName || selectedLeague.name;
 
     try {
-      const { data, error: dbError } = await supabase
-        .from("scraped_data")
-        .select("*")
-        .eq("league", targetLeague)
-        .order("scraped_at", { ascending: false });
+      const data = await sql`
+        SELECT * FROM scraped_data 
+        WHERE league = ${targetLeague} 
+        ORDER BY scraped_at DESC
+      `;
 
-      if (dbError) throw new Error(dbError.message);
       if (!data || data.length === 0) return null;
 
       const rawData = data as ScrapedDataRaw[];
@@ -231,43 +233,32 @@ export function useLiveMatches() {
   }, [selectedLeague]);
 
   // Charger les données : API proxy en parallèle avec cache (silencieux)
-  // v14 FIX: loadFromDatabaseRaw ne set plus le state directement → élimine le flicker Cache ↔ API
-  // v17 FIX: fetchVersionRef used to invalidate stale fetches on league change
   const fetchData = useCallback(async (leagueId: LeagueId, leagueName: string, isPoll = false) => {
-    // v17: Allow only one non-poll fetch at a time, but ALWAYS allow polls
-    // to be interrupted by a league change (non-poll fetch).
     if (isPoll && fetchingRef.current) return;
     if (!isPoll && fetchingRef.current) {
-      // A poll is running — cancel it by resetting the flag
       fetchingRef.current = false;
     }
     fetchingRef.current = true;
 
-    // Capture the current version — if it changes (league switch), discard results
     const thisVersion = fetchVersionRef.current;
 
     try {
-      // For polling, don't show loading state
       if (!isPoll) {
         setLoading(true);
       }
       setError(null);
 
-      // Run API + cache in parallel. Cache fetch is SILENT (no setState) to prevent flicker.
-      // fetchData itself decides which data to use AFTER both resolve.
       const shouldLoadCache = !apiDataReceivedRef.current || !isPoll;
       const [apiData, cacheData] = await Promise.all([
         fetchFromAPI(leagueId, leagueName),
         shouldLoadCache ? loadFromDatabaseRaw(leagueName) : Promise.resolve(null),
       ]);
 
-      // v17: If version changed during fetch, these results are STALE — discard them
       if (fetchVersionRef.current !== thisVersion) {
         console.log(`[fetchData] Discarded stale results for ${leagueName} (version ${thisVersion} → ${fetchVersionRef.current})`);
         return;
       }
 
-      // API wins always — set state only once (no flicker)
       if (apiData && apiData.matches.length > 0) {
         setMatches(apiData.matches);
         setResults(apiData.results);
@@ -275,23 +266,19 @@ export function useLiveMatches() {
         setLastUpdate(new Date().toISOString());
         setDataSource("api");
         apiDataReceivedRef.current = true;
-        // Update nextRoundStart for PREDICT-AHEAD polling
         if (apiData.nextRoundStart) {
           nextRoundStartRef.current = apiData.nextRoundStart;
         }
       } else if (cacheData && cacheData.matches.length > 0 && !isPoll) {
-        // Fallback to cache ONLY on initial load (not during polls)
         setMatches(cacheData.matches);
         setResults(cacheData.results);
         setRanking(cacheData.ranking);
         setLastUpdate(cacheData.lastUpdate);
         setDataSource("cache");
       } else if (!apiDataReceivedRef.current && !isPoll) {
-        // Message d'erreur convivial : l'API ET le cache ont échoué
         setError(getFriendlyError(leagueName));
       }
     } finally {
-      // Only toggle loading for non-poll fetches (prevents UI flickering)
       if (!isPoll) {
         setLoading(false);
       }
@@ -299,12 +286,10 @@ export function useLiveMatches() {
     }
   }, [loadFromDatabaseRaw]);
 
-  // Charger au démarrage
   const fetchMatches = useCallback(async () => {
     await fetchData(selectedLeagueId, selectedLeague.name);
   }, [fetchData, selectedLeagueId, selectedLeague.name]);
 
-  // Alias pour compatibilité (utilisé en fallback)
   const loadFromDatabase = useCallback(async (leagueName?: string) => {
     const data = await loadFromDatabaseRaw(leagueName);
     if (data && data.matches.length > 0) {
@@ -319,19 +304,16 @@ export function useLiveMatches() {
     return false;
   }, [loadFromDatabaseRaw]);
 
-  // Refresh manuel
   const refreshData = useCallback(async () => {
     setScraping(true);
     await fetchData(selectedLeagueId, selectedLeague.name);
     setScraping(false);
   }, [fetchData, selectedLeagueId, selectedLeague.name]);
 
-  // Changer de ligue
   const changeLeague = useCallback(async (leagueId: LeagueId) => {
     const newLeague = AVAILABLE_LEAGUES.find(l => l.id === leagueId);
     if (!newLeague) return;
 
-    // v17: Increment version to invalidate any in-flight fetch
     fetchVersionRef.current++;
     fetchingRef.current = false;
 
@@ -350,21 +332,15 @@ export function useLiveMatches() {
   }, [fetchData]);
 
   // ─── Auto-polling with PREDICT-AHEAD (v12) + QUICK-RESULTS (v16) ─────────
-  // v16: In RAPID mode, uses fetchQuickResults (2 API calls, ~500ms)
-  //      instead of full fetch-live (8 API calls, ~2-3s).
-  //      When playout results detected → triggers one full fetch, then back to normal.
-  // v12: Checks if nextRoundStart is within 120s → switch to RAPID
-  //       to catch playout data BEFORE the round officially starts.
   const nextRoundStartRef = useRef<string | null>(null);
-  // Track when we last did a full fetch (to avoid full fetches too close together)
   const lastFullFetchRef = useRef(0);
 
   useEffect(() => {
-    if (loading) return; // Don't start polling until initial load is done
+    if (loading) return;
 
-    const NORMAL_INTERVAL = 5000;   // 5s normal polling
-    const RAPID_INTERVAL = 200;     // 200ms ultra-rapid for quick-results
-    const FULL_RAPID_INTERVAL = 500; // 500ms rapid polling (full fetch fallback)
+    const NORMAL_INTERVAL = 5000;
+    const RAPID_INTERVAL = 200;
+    const FULL_RAPID_INTERVAL = 500;
 
     let timeoutId: ReturnType<typeof setTimeout>;
     let cancelled = false;
@@ -372,14 +348,12 @@ export function useLiveMatches() {
     const scheduleNextPoll = () => {
       if (cancelled) return;
 
-      // Use REF to check match status (avoids 'matches' in dependency array)
       const currentMatches = matchesRef.current;
       const bettingCount = currentMatches.filter(m => m.status === "betting").length;
       const preloadedCount = currentMatches.filter(m => m.status === "preloaded").length;
       const hasBetting = bettingCount > 0;
       const noPreloaded = preloadedCount === 0;
 
-      // Check if next round start is approaching (within 120s)
       const nextStart = nextRoundStartRef.current;
       let nextStartSoon = false;
       if (nextStart) {
@@ -387,10 +361,7 @@ export function useLiveMatches() {
         nextStartSoon = timeUntil <= 120 && timeUntil >= -30;
       }
 
-      // RAPID mode when: (1) betting without preloaded, OR (2) next round starting soon
       const isRapid = (hasBetting && noPreloaded) || nextStartSoon;
-
-      // In rapid mode, use quick-results (ultra-fast) if we have betting matches
       const useQuickResults = isRapid && hasBetting;
       const interval = useQuickResults ? RAPID_INTERVAL : isRapid ? FULL_RAPID_INTERVAL : NORMAL_INTERVAL;
 
@@ -398,23 +369,19 @@ export function useLiveMatches() {
         if (cancelled) return;
 
         if (useQuickResults) {
-          // ULTRA-FAST PATH: quick-results mode (2 API calls, ~500ms)
           const qr = await fetchQuickResults(selectedLeagueId);
           if (cancelled) return;
 
-          // Update nextRoundStart from quick-results
           if (qr?.nextRoundStart) {
             nextRoundStartRef.current = qr.nextRoundStart;
           }
 
-          // If playout results detected → do one full fetch to get everything
           if (qr?.hasResults) {
             console.log(`[Poll] 🎯 Playout detected! ${qr.playoutResults.length} results in ${qr.elapsed}ms → full fetch`);
             await fetchData(selectedLeagueId, selectedLeague.name, true);
             lastFullFetchRef.current = Date.now();
           }
         } else {
-          // NORMAL / FULL PATH: standard fetch-live
           await fetchData(selectedLeagueId, selectedLeague.name, true);
           lastFullFetchRef.current = Date.now();
         }
@@ -431,7 +398,6 @@ export function useLiveMatches() {
     };
   }, [loading, selectedLeagueId, selectedLeague.name, fetchData]);
 
-  // Track current round changes
   useEffect(() => {
     const newRound = matches.find(m => m.round)?.round || 0;
     if (newRound !== currentRound) {
@@ -440,7 +406,6 @@ export function useLiveMatches() {
     }
   }, [matches, currentRound]);
 
-  // Charger au montage
   useEffect(() => {
     fetchMatches();
   }, []);

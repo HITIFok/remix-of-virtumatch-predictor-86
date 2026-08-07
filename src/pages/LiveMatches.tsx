@@ -6,7 +6,7 @@ import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
 import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
-import { supabase } from "@/integrations/supabase/client";
+import { config } from "@/config/env";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
 import { RankingTable, ResultsList } from "@/components/LeagueData";
@@ -424,10 +424,13 @@ export default function LiveMatches() {
 
     try {
       const enriched = enrichMatchesForAI(toEnrich.map(t => t.match), results, ranking);
-      const { data, error } = await supabase.functions.invoke("analyze-match", {
-        body: { matches: enriched },
+      const res = await fetch(`${config.api.analyzeMatchUrl}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ matches: enriched }),
       });
-      if (!error && data?.predictions?.length > 0) {
+      const data = await res.json();
+      if (res.ok && data?.predictions?.length > 0) {
         const aiPreds = data.predictions as AIPrediction[];
         // Mise à jour instantanée de l'affichage
         for (let i = 0; i < toEnrich.length; i++) {
@@ -450,7 +453,7 @@ export default function LiveMatches() {
         ).catch(() => {});
         console.log(`[LiveMatches] AI enhanced ${aiPreds.length} prediction(s)`);
       } else {
-        console.warn("[LiveMatches] AI unavailable:", error || data?.error);
+        console.warn("[LiveMatches] AI unavailable:", data?.error);
       }
     } catch (aiErr) {
       console.warn("[LiveMatches] AI enhancement failed:", aiErr);
