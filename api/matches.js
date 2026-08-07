@@ -224,6 +224,7 @@ export default async function handler(req, res) {
           const results = parseSportyResults(resultsData, leagueName);
 
           if (matches.length > 0) {
+            await sql.end();
             return res.status(200).json({
               success: true,
               source: 'api',
@@ -295,5 +296,8 @@ export default async function handler(req, res) {
       ranking: [],
       results: [],
     });
+  } finally {
+    // Sécurité M4 : toujours fermer la connexion PostgreSQL
+    await sql.end();
   }
 };

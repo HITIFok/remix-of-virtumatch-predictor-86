@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Lock, Key, ShieldCheck } from "lucide-react";
-import { validateCode, setAccess, isPremium, getAccess } from "@/lib/storage";
+import { Lock, Key, ShieldCheck, Loader2 } from "lucide-react";
+import { validateCode, setAccess, getAccess, verifyPremium, clearAccess } from "@/lib/storage";
 import { toast } from "sonner";
 
 interface PremiumGateProps {
@@ -13,8 +13,44 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [verifying, setVerifying] = useState(true);
+  const [serverConfirmed, setServerConfirmed] = useState(false);
 
-  if (isPremium()) {
+  // Sécurité C2 : vérification serveur au mount (pas seulement localStorage)
+  useEffect(() => {
+    const access = getAccess();
+    if (!access) {
+      setVerifying(false);
+      return;
+    }
+
+    // Vérifier auprès du serveur que le premium est réellement actif
+    verifyPremium().then((isPremiumServer) => {
+      if (isPremiumServer) {
+        setServerConfirmed(true);
+      } else {
+        clearAccess();
+        setServerConfirmed(false);
+      }
+      setVerifying(false);
+    }).catch(() => {
+      // En cas d'erreur réseau, on ne bloque pas l'utilisateur
+      // mais on n'accorde pas non plus l'accès premium sans vérification
+      setServerConfirmed(false);
+      setVerifying(false);
+    });
+  }, []);
+
+  if (verifying) {
+    return (
+      <div className="bg-gradient-card rounded-xl border border-border p-4 flex items-center justify-center gap-2">
+        <Loader2 className="animate-spin text-muted-foreground" size={18} />
+        <span className="text-xs text-muted-foreground">Vérification premium...</span>
+      </div>
+    );
+  }
+
+  if (serverConfirmed) {
     const access = getAccess();
     const daysLeft = access ? Math.ceil((access.expiresAt - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
     return (
@@ -42,6 +78,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
       setAccess(code.trim(), result.days);
       toast.success(result.message);
       setError("");
+      setServerConfirmed(true);
       onUnlocked();
     } else {
       setError(result.message);
@@ -80,7 +117,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
       
       {error && (
         <p className="text-xs text-destructive flex items-start gap-1">
-          <span>⚠️</span>
+          <span>!</span>
           <span className="break-words">{error}</span>
         </p>
       )}

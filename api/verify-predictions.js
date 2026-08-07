@@ -7,6 +7,7 @@
 //   2. If prediction.match_id NOT in active set → match is finished
 //   3. Fetch /results for that league → find by round + team names
 
+import crypto from 'crypto';
 import postgres from 'postgres';
 import { setCorsHeaders } from './_lib/cors.js';
 
@@ -36,15 +37,13 @@ const HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0',
 };
 
+// Timing-safe comparison using Node.js crypto module (same pattern as admin-verify.js)
 function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
   const encoder = new TextEncoder();
-  const aBytes = encoder.encode(a);
-  const bBytes = encoder.encode(b);
-  for (let i = 0; i < aBytes.length; i++) {
-    if (aBytes[i] !== bBytes[i]) return false;
-  }
-  return true;
+  const aBuf = Buffer.from(encoder.encode(a));
+  const bBuf = Buffer.from(encoder.encode(b));
+  if (aBuf.length !== bBuf.length) return false;
+  return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
 function norm(name) {
@@ -190,7 +189,25 @@ export default async function handler(req, res) {
         const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
         deviceId = body?.deviceId || body?.device_id;
       } catch { /* no body */ }
-      console.log(`[verify] Mode: CLIENT (device: ${deviceId || 'all'})`);
+
+      // Sécurité C3 : en mode client, un device_id est OBLIGATOIRE
+      // Sinon n'importe qui peut déclencher un scan complet de la DB + 9 appels API externes
+      if (!deviceId) {
+        return res.status(400).json({
+          success: false,
+          error: 'device_id requis en mode client',
+        });
+      }
+
+      // Valider le format du device_id
+      if (!/^dev-\d+-[a-z0-9]+$/i.test(deviceId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Format device_id invalide',
+        });
+      }
+
+      console.log(`[verify] Mode: CLIENT (device: ${deviceId})`);
     }
 
     // 1. Fetch pending predictions from Neon

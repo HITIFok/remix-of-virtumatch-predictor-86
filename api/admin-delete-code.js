@@ -62,14 +62,15 @@ export default async function handler(req, res) {
     try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
   }
 
-  const { token: tokenFromBody, codeId } = body;
+  const { codeId } = body;
 
-  // 1. Vérifier le token admin (Authorization header prioritaire, fallback body)
+  // 1. Vérifier le token admin (Authorization header UNIQUEMENT — pas de fallback body)
+  // Sécurité H3 : les tokens dans le body peuvent être loggés par proxies/CDNs
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : tokenFromBody;
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-  if (!verifyToken(token).valid) {
-    return res.status(401).json({ success: false, error: 'Session admin invalide ou expirée' });
+  if (!token || !verifyToken(token).valid) {
+    return res.status(401).json({ success: false, error: 'Session admin invalide ou expirée. Utilisez le header Authorization.' });
   }
 
   // 2. Valider codeId (UUID)

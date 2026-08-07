@@ -21,11 +21,11 @@ export async function getHistory(): Promise<MatchResult[]> {
   try {
     const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`);
     if (!res.ok) return [];
-    const { rows } = await res.json();
+    const { predictions } = await res.json();
 
-    if (!rows || !Array.isArray(rows)) return [];
+    if (!predictions || !Array.isArray(predictions)) return [];
 
-    return rows.map((row: any) => ({
+    return predictions.map((row: any) => ({
       id: row.id,
       home: row.home || row.home_team,
       away: row.away || row.away_team,
@@ -299,8 +299,11 @@ export async function verifyAdminSession(): Promise<boolean> {
       if (data.valid) return true;
     }
 
-    // API indisponible → vérification locale en fallback
-    return Date.now() <= (session.expiresAt || 0);
+    // API indisponible → refuser l'accès (pas de fallback local)
+    // Sécurité C1 : un fallback local permettrait à un attaquant de
+    // créer un token fake dans localStorage et bloquer l'API
+    localStorage.removeItem(ADMIN_SESSION_KEY);
+    return false;
   } catch {
     return false;
   }

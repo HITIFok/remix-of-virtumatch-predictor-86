@@ -92,7 +92,7 @@ export default function SettingsPage() {
               </p>
               <div className="bg-muted/30 rounded-xl p-3 border border-border/30 space-y-1">
                 <p className="text-xs text-muted-foreground break-all">
-                  Code : <span className="text-foreground font-bold">{access.code}</span>
+                  Code : <span className="text-foreground font-bold">{access.code.length > 8 ? `${access.code.slice(0, 4)}${'*'.repeat(access.code.length - 6)}${access.code.slice(-2)}` : '****'}</span>
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Expire : <span className="text-foreground font-bold">{new Date(access.expiresAt).toLocaleDateString("fr-FR")}</span>
