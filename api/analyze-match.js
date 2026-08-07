@@ -1,25 +1,7 @@
-// Vercel Serverless Function — analyze-match v24
-// Converted from Supabase Edge Function (Deno) to Vercel (Node.js)
+// Vercel Serverless Function — analyze-match v24 (ESM)
 // AI-powered match analysis — Groq (primary) + Mathematical fallback
-//
-// v24: AI prompt v7.0 — educational reasoning, no guarantees, realistic confidence
-// v23: Improved math algorithm v2.0 + AI prompt v6.0
-// v22: MATH-FIRST + 5s timeout
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'https://virtual-match-hitifproject.vercel.app';
-
-function getCorsHeaders() {
-  const h = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-device-id',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  };
-  if (process.env.ALLOWED_ORIGIN) {
-    h['Access-Control-Allow-Origin'] = ALLOWED_ORIGIN;
-    h['Vary'] = 'Origin';
-  }
-  return h;
-}
+import { setCorsHeaders } from './_lib/cors.js';
 
 const maskKey = (key) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : 'NOT_SET';
 
@@ -565,15 +547,12 @@ async function analyzeFast(matches, groqKey, groqModel) {
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
+  // CORS (shared module — no wildcard)
+  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-device-id');
+
   if (req.method === 'OPTIONS') {
-    const h = getCorsHeaders();
-    return res.status(204)
-      .setHeader('Access-Control-Allow-Origin', h['Access-Control-Allow-Origin'])
-      .setHeader('Access-Control-Allow-Headers', h['Access-Control-Allow-Headers'])
-      .setHeader('Access-Control-Allow-Methods', h['Access-Control-Allow-Methods'])
-      .setHeader('Vary', h['Vary'] || '')
-      .send('');
+    return res.status(204).end('');
   }
 
   const startTime = Date.now();

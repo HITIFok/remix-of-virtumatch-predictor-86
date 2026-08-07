@@ -1,10 +1,9 @@
-// Vercel Serverless Function — fetch-live v16
+// Vercel Serverless Function — fetch-live v16 (ESM)
 // Converted from Supabase Edge Function (Deno) to Vercel (Node.js)
 // Fetches live match data, ranking, results from sporty-tech.net API
 // v16: QUICK-RESULTS mode — only 2 API calls (matches+playout) for fast result detection
-// v15: CORS fix — added x-device-id header + POST method support
-// v14 FIX: predeterminedScore sent for preloaded matches → LEAK badge works
-// v13: CORRECT SCORE ODDS PREDICTION
+
+import { setCorsHeaders } from './_lib/cors.js';
 
 const SPORTY_API_BASE = process.env.SPORTY_API_BASE || '';
 
@@ -33,15 +32,6 @@ const CONF_BEARER = process.env.SPORTY_BEARER || '';
 const API_HEADERS = CONF_BEARER
   ? { ...HEADERS, 'Authorization': `Bearer ${CONF_BEARER}` }
   : HEADERS;
-
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-device-id, accept, cache-control',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Content-Type': 'application/json',
-  };
-}
 
 async function fetchAPI(path, timeoutMs = 8000) {
   try {
@@ -151,12 +141,12 @@ async function fetchPlayout(leagueId, round) {
   return playoutMatches;
 }
 
-module.exports = async function handler(req, res) {
+export default async function handler(req, res) {
+  // CORS (shared module — no wildcard)
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization, x-device-id');
+
   if (req.method === 'OPTIONS') {
-    return res.status(204).setHeader('Access-Control-Allow-Origin', '*')
-      .setHeader('Access-Control-Allow-Headers', 'authorization, x-client-info, apikey, content-type, x-device-id, accept, cache-control')
-      .setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-      .send('');
+    return res.status(204).end('');
   }
 
   const startTime = Date.now();

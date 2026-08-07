@@ -2,8 +2,6 @@
 // Point d'entrée UNIQUE pour toutes les variables d'environnement
 // Ne pas dupliquer ces constantes dans d'autres fichiers
 
-export const NEON_DATABASE_URL = import.meta.env.VITE_NEON_DATABASE_URL || '';
-
 // URL Vercel de production (pour les appels API Routes depuis l'APK)
 const VERCEL_PRODUCTION_URL = 'https://virtual-match-hitifproject.vercel.app';
 
@@ -29,9 +27,6 @@ export const API_BASE = (() => {
 export const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || '';
 
 export const config = {
-  neon: {
-    databaseUrl: NEON_DATABASE_URL,
-  },
   api: {
     // Vercel API Routes (backend sécurisé)
     adminLogin: `${API_BASE}/api/admin-login`,
@@ -43,5 +38,9 @@ export const config = {
     fetchLiveUrl: `${API_BASE}/api/fetch-live`,
     analyzeMatchUrl: `${API_BASE}/api/analyze-match`,
     verifyPredictionsUrl: `${API_BASE}/api/verify-predictions`,
+    // API Routes replacing direct Neon SQL
+    predictions: `${API_BASE}/api/predictions`,
+    premiumActivate: `${API_BASE}/api/premium-activate`,
+    scrapedData: `${API_BASE}/api/scraped-data`,
   },
 } as const;

@@ -1,4 +1,4 @@
-// Vercel Serverless Function — verify-predictions v20
+// Vercel Serverless Function — verify-predictions v20 (ESM)
 // Converted from Supabase Edge Function (Deno) to Vercel (Node.js)
 // Verifies pending predictions using MATCH ID (no confusion)
 //
@@ -7,7 +7,8 @@
 //   2. If prediction.match_id NOT in active set → match is finished
 //   3. Fetch /results for that league → find by round + team names
 
-const postgres = require('postgres');
+import postgres from 'postgres';
+import { setCorsHeaders } from './_lib/cors.js';
 
 const API_BASE = 'https://hg-event-api-prod.sporty-tech.net/api/instantleagues';
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
@@ -141,12 +142,25 @@ async function fetchLeagueResults(leagueId) {
   return roundResults;
 }
 
-module.exports = async function handler(req, res) {
+function patchPrediction(sql, id, match, status) {
+  return sql`
+    UPDATE predictions SET
+      actual_home_score = ${match.homeScore},
+      actual_away_score = ${match.awayScore},
+      actual_outcome = ${match.outcome},
+      actual_score = ${match.score},
+      status = ${status},
+      verified_at = NOW()
+    WHERE id = ${id}
+  `;
+}
+
+export default async function handler(req, res) {
+  // CORS (uses shared module — no wildcard)
+  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-cron-key');
+
   if (req.method === 'OPTIONS') {
-    return res.status(204).setHeader('Access-Control-Allow-Origin', '*')
-      .setHeader('Access-Control-Allow-Headers', 'authorization, x-client-info, apikey, content-type, x-device-id, accept, cache-control')
-      .setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
-      .send('');
+    return res.status(204).end('');
   }
 
   const startTime = Date.now();
@@ -361,17 +375,4 @@ module.exports = async function handler(req, res) {
     console.error(`[verify] Error (${elapsed}ms):`, error);
     return res.status(500).json({ error: error.message, elapsed });
   }
-};
-
-function patchPrediction(sql, id, match, status) {
-  return sql`
-    UPDATE predictions SET
-      actual_home_score = ${match.homeScore},
-      actual_away_score = ${match.awayScore},
-      actual_outcome = ${match.outcome},
-      actual_score = ${match.score},
-      status = ${status},
-      verified_at = NOW()
-    WHERE id = ${id}
-  `;
 }

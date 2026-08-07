@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { sql } from "@/integrations/neon/client";
 import { config } from "@/config/env";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
 
@@ -166,13 +165,12 @@ export function useLiveMatches() {
     const targetLeague = leagueName || selectedLeague.name;
 
     try {
-      const data = await sql`
-        SELECT * FROM scraped_data 
-        WHERE league = ${targetLeague} 
-        ORDER BY scraped_at DESC
-      `;
+      const res = await fetch(`${config.api.scrapedData}?league=${encodeURIComponent(targetLeague)}`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const data = json.rows;
 
-      if (!data || data.length === 0) return null;
+      if (!data || !Array.isArray(data) || data.length === 0) return null;
 
       const rawData = data as ScrapedDataRaw[];
       const matchesEntry = rawData.find(d => d.data_type === "matches");

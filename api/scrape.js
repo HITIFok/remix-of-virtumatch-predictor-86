@@ -1,6 +1,8 @@
 // Vercel Serverless Function - Scraper
 // Correct field names: shortName ("1", "X", "2") and odds (number)
 
+import { setCorsHeaders } from './_lib/cors.js';
+
 const API_BASE = process.env.SPORTY_API_BASE || "";
 const LEAGUE_ID = "8035";
 
@@ -13,23 +15,8 @@ const HEADERS = {
   "App-Version": process.env.API_APP_VERSION || "",
 };
 
-// CORS: restrict to configured origin
-const ALLOWED_ORIGINS = [
-  "https://virtual-match-hitifproject.vercel.app",
-  "https://remix-of-virtumatch-predictor-86.vercel.app",
-];
-
-
-module.exports = async function handler(req, res) {
-  // Dynamic CORS: allow configured origins + same-host
-  const origin = req.headers.origin || "";
-  const reqHost = req.headers.host || "";
-  const isAllowed = ALLOWED_ORIGINS.includes(origin) || (origin && (() => { try { return new URL(origin).hostname === reqHost; } catch { return false; } })());
-  if (isAllowed) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+export default async function handler(req, res) {
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization');
 
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {

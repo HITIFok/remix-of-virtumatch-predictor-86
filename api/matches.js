@@ -3,7 +3,8 @@
 // Secondaire : Neon scraped_data table (cache)
 // Supports 8 leagues via ?leagueId=8035
 
-const postgres = require('postgres');
+import postgres from 'postgres';
+import { setCorsHeaders } from './_lib/cors.js';
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -28,12 +29,6 @@ const SPORTY_HEADERS = {
   "Accept": "application/json",
   "App-Version": process.env.API_APP_VERSION || '',
 };
-
-const ALLOWED_ORIGINS = [
-  "https://virtual-match-hitifproject.vercel.app",
-  "https://remix-of-virtumatch-predictor-86.vercel.app",
-];
-
 
 // ─── Parsing : sporty-tech API response → app format ────────────────────────
 
@@ -184,16 +179,8 @@ async function fetchFromNeonCache(sql, leagueName) {
 
 // ─── Handler principal ─────────────────────────────────────────────────────
 
-module.exports = async function handler(req, res) {
-  // Dynamic CORS: only allow configured origins + same-host
-  const origin = req.headers.origin || "";
-  const reqHost = req.headers.host || "";
-  const isAllowed = ALLOWED_ORIGINS.includes(origin) || (origin && (() => { try { return new URL(origin).hostname === reqHost; } catch { return false; } })());
-  if (isAllowed) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+export default async function handler(req, res) {
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');

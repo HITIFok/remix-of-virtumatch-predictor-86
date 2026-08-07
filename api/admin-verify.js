@@ -3,39 +3,12 @@
 // CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
+import { setCorsHeaders } from './_lib/cors.js';
 
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-// CORS dynamique : whitelist des origines autorisées
-const ALLOWED_ORIGINS = [
-  'https://virtual-match-hitifproject.vercel.app',
-  'https://remix-of-virtumatch-predictor-86.vercel.app',
-  'https://localhost',
-  'capacitor://localhost',
-  'http://localhost',
-  'http://localhost:5173',
-  'http://localhost:4173',
-];
-
-function isOriginAllowed(origin, reqHost) {
-  if (ALLOWED_ORIGINS.includes(origin)) return true;
-  try {
-    const originHost = new URL(origin).hostname;
-    if (originHost === reqHost) return true;
-  } catch {}
-  return false;
-}
-
-function setCorsHeaders(req, res) {
-  const origin = req.headers.origin || '';
-  if (isOriginAllowed(origin, req.headers.host || '')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Max-Age', '86400');
-}
+// CORS : importé depuis _lib/cors.js
 
 // Vérification timing-safe du token
 function verifyToken(token) {

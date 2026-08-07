@@ -1,17 +1,7 @@
 // Hook pour gérer les prédictions et leur suivi de précision
 import { useState, useEffect, useCallback } from 'react'
-import { sql } from '@/integrations/neon/client'
 import { config } from '@/config/env'
-
-// Device ID for tracking predictions per device
-export function getDeviceId(): string {
-  let id = localStorage.getItem("virtuxxs_device_id");
-  if (!id) {
-    id = `dev-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    localStorage.setItem("virtuxxs_device_id", id);
-  }
-  return id;
-}
+export { getDeviceId } from '@/lib/device'
 
 export interface Prediction {
   id: string
@@ -105,14 +95,17 @@ export function usePredictions() {
       }
 
       const deviceId = getDeviceId()
-      const predData = await sql`
-        SELECT * FROM predictions 
-        WHERE device_id = ${deviceId} 
-        ORDER BY created_at DESC 
-        LIMIT 200
-      `;
+      const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`);
+      if (!res.ok) {
+        console.warn('[loadPredictions] API error:', res.status);
+        setPredictions([]);
+        setStats(null);
+        return;
+      }
+      const { rows } = await res.json();
+      const predData = (Array.isArray(rows) ? rows : []) as Prediction[];
 
-      setPredictions((predData as Prediction[]) || [])
+      setPredictions(predData)
 
       if (predData && predData.length > 0) {
         const total = predData.length
@@ -269,44 +262,25 @@ export function usePredictions() {
         league_id: pred.league_id || null,
       }
 
-      const data = await sql`
-        INSERT INTO predictions (
-          match_id, home_team, away_team, league, league_id, round,
-          odd_home, odd_draw, odd_away,
-          prob_home, prob_draw, prob_away,
-          prediction, confidence,
-          predicted_home_score, predicted_away_score, predicted_score,
-          gg_result, total_goals, parity,
-          over_under_15, over_under_25, over_under_35,
-          prob_gg, prob_gn, btts_prob, over25_prob,
-          first_half_goal_prob, expected_goals,
-          winner_1x2,
-          device_id, status, home, away,
-          score_home, score_away, exact_score
-        ) VALUES (
-          ${insertData.match_id || null}, ${insertData.home_team}, ${insertData.away_team}, ${insertData.league}, ${insertData.league_id || null}, ${insertData.round || null},
-          ${insertData.odd_home}, ${insertData.odd_draw}, ${insertData.odd_away},
-          ${insertData.prob_home}, ${insertData.prob_draw}, ${insertData.prob_away},
-          ${insertData.prediction}, ${insertData.confidence},
-          ${insertData.predicted_home_score || null}, ${insertData.predicted_away_score || null}, ${insertData.predicted_score || null},
-          ${insertData.gg_result || ''}, ${insertData.total_goals || 0}, ${insertData.parity || ''},
-          ${insertData.over_under_15 || ''}, ${insertData.over_under_25 || ''}, ${insertData.over_under_35 || ''},
-          ${insertData.prob_gg || 0}, ${insertData.prob_gn || 0}, ${insertData.btts_prob || 0}, ${insertData.over25_prob || 0},
-          ${insertData.first_half_goal_prob || 0}, ${insertData.expected_goals || 0},
-          ${insertData.winner_1x2},
-          ${insertData.device_id}, ${insertData.status}, ${insertData.home}, ${insertData.away},
-          ${insertData.score_home || null}, ${insertData.score_away || null}, ${insertData.exact_score || ''}
-        )
-        RETURNING *
-      `
+      const res = await fetch(config.api.predictions, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(insertData),
+      });
 
-      if (!data || data.length === 0) {
-        throw new Error('No data returned from insert');
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        if (res.status === 409 || errBody?.code === '23505') {
+          return null;
+        }
+        throw new Error(errBody?.error || `HTTP ${res.status}`);
       }
+
+      const savedData = await res.json();
 
       await loadPredictions(true) // Skip auto-verify after save (just saved)
 
-      return data[0] as Prediction
+      return (savedData?.row || savedData) as Prediction
     } catch (err: any) {
       console.error('Error saving prediction:', err)
       if (err?.code === '23505') {
@@ -319,7 +293,15 @@ export function usePredictions() {
   // Supprimer une prédiction par ID
   const deletePrediction = useCallback(async (id: string) => {
     try {
-      await sql`DELETE FROM predictions WHERE id = ${id}`
+      const deviceId = getDeviceId();
+      const res = await fetch(config.api.predictions, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId, prediction_id: id }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       await loadPredictions(true)
       return true
@@ -332,7 +314,15 @@ export function usePredictions() {
   // Supprimer toutes les prédictions "en attente" en une seule requête
   const deletePendingPredictions = useCallback(async () => {
     try {
-      await sql`DELETE FROM predictions WHERE status = 'pending'`
+      const deviceId = getDeviceId();
+      const res = await fetch(config.api.predictions, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id: deviceId, status: 'pending' }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       await loadPredictions(true)
       return true

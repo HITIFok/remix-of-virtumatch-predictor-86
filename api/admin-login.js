@@ -6,6 +6,7 @@
 
 import crypto from 'crypto';
 import postgres from 'postgres';
+import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
@@ -13,35 +14,7 @@ const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
 const sql = postgres(NEON_DATABASE_URL);
 
-// ─── CORS dynamique : whitelist des origines autorisées ──────────────────────
-const ALLOWED_ORIGINS = [
-  'https://virtual-match-hitifproject.vercel.app',
-  'https://remix-of-virtumatch-predictor-86.vercel.app',
-  'https://localhost',           // Capacitor Android (HTTPS)
-  'capacitor://localhost',      // Capacitor Android (custom scheme)
-  'http://localhost',           // Dev local
-  'http://localhost:5173',       // Vite dev
-  'http://localhost:4173',       // Vite preview
-];
-
-function isOriginAllowed(origin, reqHost) {
-  if (ALLOWED_ORIGINS.includes(origin)) return true;
-  try {
-    const originHost = new URL(origin).hostname;
-    if (originHost === reqHost) return true;
-  } catch {}
-  return false;
-}
-
-function setCorsHeaders(req, res) {
-  const origin = req.headers.origin || '';
-  if (isOriginAllowed(origin, req.headers.host || '')) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-  }
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24h cache preflight
-}
+// ─── CORS : importé depuis _lib/cors.js ─────────────────────────────────────
 
 // ─── Rate Limiting (in-memory, par instance serverless) ───────────────────────
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
@@ -80,7 +53,7 @@ function signToken(timestamp) {
 
 export default async function handler(req, res) {
   // CORS dynamique (autorise web + APK uniquement)
-  setCorsHeaders(req, res);
+  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');

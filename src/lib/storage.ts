@@ -1,7 +1,6 @@
-import { sql } from "@/integrations/neon/client";
 import { config } from "@/config/env";
 import type { MatchResult } from "./prediction-engine";
-import { getDeviceId } from "@/hooks/use-predictions";
+import { getDeviceId } from "@/lib/device";
 
 const ACCESS_KEY = "virtuxxs_access";
 const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
@@ -20,12 +19,13 @@ export async function getHistory(): Promise<MatchResult[]> {
   }
 
   try {
-    const data = await sql
-      `SELECT * FROM predictions WHERE device_id = ${deviceId} ORDER BY created_at DESC LIMIT 200`;
+    const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`);
+    if (!res.ok) return [];
+    const { rows } = await res.json();
 
-    if (!data) return [];
+    if (!rows || !Array.isArray(rows)) return [];
 
-    return data.map((row: any) => ({
+    return rows.map((row: any) => ({
       id: row.id,
       home: row.home || row.home_team,
       away: row.away || row.away_team,
@@ -88,37 +88,54 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
   const confidence = Math.round(result.aiConfidence);
 
   try {
-    await sql`
-      INSERT INTO predictions (
-        home_team, away_team, league, odd_home, odd_draw, odd_away,
-        prob_home, prob_draw, prob_away, prediction, confidence,
-        winner_1x2, score_home, score_away, exact_score,
-        first_half_goal_prob, expected_goals, goals_home, goals_away,
-        prob_gg, prob_gn, gg_result, total_goals, parity,
-        over_under_15, over_under_25, over_under_35,
-        device_id, status, home, away
-      ) VALUES (
-        ${result.home}, ${result.away}, ${result.league || "Instant League"},
-        ${result.oddHome}, ${result.oddDraw}, ${result.oddAway},
-        ${result.probHome}, ${result.probDraw}, ${result.probAway},
-        ${prediction}, ${confidence},
-        ${result.winner1X2}, ${result.scoreHome}, ${result.scoreAway},
-        ${result.exactScore},
-        ${result.firstHalfGoalProb}, ${result.expectedGoals},
-        ${result.goalsHome}, ${result.goalsAway},
-        ${result.probGG}, ${result.probGN}, ${result.ggResult},
-        ${result.totalGoals}, ${result.parity},
-        ${result.overUnder15}, ${result.overUnder25}, ${result.overUnder35},
-        ${deviceId}, 'pending', ${result.home}, ${result.away}
-      )
-    `;
+    const res = await fetch(config.api.predictions, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        home_team: result.home,
+        away_team: result.away,
+        league: result.league || 'Instant League',
+        odd_home: result.oddHome,
+        odd_draw: result.oddDraw,
+        odd_away: result.oddAway,
+        prob_home: result.probHome,
+        prob_draw: result.probDraw,
+        prob_away: result.probAway,
+        prediction,
+        confidence,
+        winner_1x2: result.winner1X2,
+        score_home: result.scoreHome,
+        score_away: result.scoreAway,
+        exact_score: result.exactScore,
+        first_half_goal_prob: result.firstHalfGoalProb,
+        expected_goals: result.expectedGoals,
+        goals_home: result.goalsHome,
+        goals_away: result.goalsAway,
+        prob_gg: result.probGG,
+        prob_gn: result.probGN,
+        gg_result: result.ggResult,
+        total_goals: result.totalGoals,
+        parity: result.parity,
+        over_under_15: result.overUnder15,
+        over_under_25: result.overUnder25,
+        over_under_35: result.overUnder35,
+        device_id: deviceId,
+        home: result.home,
+        away: result.away,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      if (res.status === 409 || errBody?.code === '23505') {
+        return { success: false, error: 'Duplicate prediction' };
+      }
+      return { success: false, error: errBody?.error || `Erreur serveur (HTTP ${res.status})` };
+    }
 
     return { success: true };
   } catch (err: any) {
     console.error('saveToHistory error:', err);
-    if (err?.code === '23505') {
-      return { success: false, error: 'Duplicate prediction' };
-    }
     return { success: false, error: err.message || 'Erreur d\'insertion' };
   }
 }
@@ -130,7 +147,11 @@ export async function clearHistory() {
     return;
   }
   try {
-    await sql`DELETE FROM predictions WHERE device_id = ${deviceId}`;
+    await fetch(config.api.predictions, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_id: deviceId }),
+    });
   } catch (err) {
     console.error('clearHistory error:', err);
   }
@@ -384,25 +405,31 @@ export function generateRandomCode(): string {
   return code;
 }
 
-// ═══ validateCode — activation d'un code utilisateur via Neon ═══
+// ═══ validateCode — activation d'un code utilisateur via API Route ═══
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
   try {
     const deviceId = getDeviceId();
 
-    const data = await sql`
-      UPDATE access_codes 
-      SET used = true, used_at = NOW(), used_by_device = ${deviceId} 
-      WHERE code = ${inputCode} AND used = false 
-      RETURNING id, duration_days
-    `;
+    const res = await fetch(config.api.premiumActivate, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: inputCode, device_id: deviceId }),
+    });
 
-    if (!data || data.length === 0) {
-      return { valid: false, days: 0, message: "Code invalide, introuvable ou déjà utilisé" };
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      return { valid: false, days: 0, message: errBody?.error || 'Code invalide, introuvable ou déjà utilisé' };
     }
 
-    return { valid: true, days: data[0].duration_days, message: `Code valide! ${data[0].duration_days} jours d'accès` };
+    const data = await res.json();
+
+    if (!data.valid) {
+      return { valid: false, days: 0, message: data.message || 'Code invalide, introuvable ou déjà utilisé' };
+    }
+
+    return { valid: true, days: data.days || 0, message: data.message || `Code valide! ${data.days || 0} jours d'accès` };
   } catch (err: any) {
-    console.error("Exception validateCode:", err);
+    console.error('Exception validateCode:', err);
     return { valid: false, days: 0, message: `Exception: ${err.message}` };
   }
 }
