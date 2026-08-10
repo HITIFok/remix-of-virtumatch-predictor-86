@@ -102,8 +102,8 @@ export function usePredictions() {
         setStats(null);
         return;
       }
-      const { rows } = await res.json();
-      const predData = (Array.isArray(rows) ? rows : []) as Prediction[];
+      const { predictions } = await res.json();
+      const predData = (Array.isArray(predictions) ? predictions : []) as Prediction[];
 
       setPredictions(predData)
 
