@@ -41,6 +41,6 @@ export const config = {
     // API Routes replacing direct Neon SQL
     predictions: `${API_BASE}/api/predictions`,
     premiumActivate: `${API_BASE}/api/premium-activate`,
-    scrapedData: `${API_BASE}/api/scraped-data`,
+    scrapedData: `${API_BASE}/api/matches?mode=cache`,
   },
 } as const;

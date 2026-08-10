@@ -177,6 +177,58 @@ async function fetchFromNeonCache(sql, leagueName) {
   return { matches, results, ranking, scrapedAt };
 }
 
+// ─── Scraped-data endpoint (fusionné) ──────────────────────────────────────
+// Remplace api/scraped-data.js — mode=cache avec paramètre league (nom)
+const VALID_DATA_TYPES = ['matches', 'results', 'ranking'];
+
+async function handleCacheMode(req, res, sql) {
+  const league = req.query.league || '';
+  if (!league || typeof league !== 'string' || league.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'League query parameter is required' });
+  }
+  if (league.length > 100) {
+    return res.status(400).json({ success: false, error: 'League name too long' });
+  }
+
+  try {
+    const rows = await sql`
+      SELECT DISTINCT ON (data_type)
+        id, data_type, league, payload, scraped_at, created_at
+      FROM scraped_data
+      WHERE league = ${league}
+        AND data_type = ANY(${VALID_DATA_TYPES})
+      ORDER BY data_type, scraped_at DESC
+    `;
+
+    if (!rows || rows.length === 0) {
+      return res.status(200).json({
+        success: true, league,
+        matches: null, results: null, ranking: null, lastUpdate: null,
+      });
+    }
+
+    const matchesEntry = rows.find(r => r.data_type === 'matches');
+    const resultsEntry = rows.find(r => r.data_type === 'results');
+    const rankingEntry = rows.find(r => r.data_type === 'ranking');
+
+    const allScrapedAt = [matchesEntry, resultsEntry, rankingEntry]
+      .filter(Boolean).map(r => r.scraped_at);
+    const lastUpdate = allScrapedAt.length > 0
+      ? allScrapedAt.sort().reverse()[0] : null;
+
+    return res.status(200).json({
+      success: true, league,
+      matches: matchesEntry?.payload || null,
+      results: resultsEntry?.payload || null,
+      ranking: rankingEntry?.payload || null,
+      lastUpdate,
+    });
+  } catch (err) {
+    console.error('[matches/cache] Error:', err.message);
+    return res.status(500).json({ success: false, error: 'Failed to fetch scraped data' });
+  }
+}
+
 // ─── Handler principal ─────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -191,6 +243,11 @@ export default async function handler(req, res) {
   }
 
   const leagueId = req.query.leagueId || "8035";
+
+  // ─── Mode cache : remplace api/scraped-data.js (fusion) ────────────────────
+  if (req.query.mode === 'cache') {
+    return handleCacheMode(req, res, sql);
+  }
 
   // SSRF protection: only allow known league IDs
   if (!LEAGUES[leagueId]) {
