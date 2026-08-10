@@ -87,28 +87,20 @@ export function usePredictions() {
     return null;
   }, [])
 
-  // Charger les prédictions (vérification auto en parallèle, non bloquante)
-  const loadPredictions = useCallback(async (skipAutoVerify = false) => {
+  // Charger les prédictions (rapide — pas d'auto-vérif)
+  const loadPredictions = useCallback(async () => {
     try {
       setLoading(true)
 
-      // Lancer la vérification en parallèle (sans bloquer le chargement)
-      const verifyPromise = skipAutoVerify ? null : autoVerifyPredictions()
-
       const deviceId = getDeviceId()
-      console.log('[loadPredictions] deviceId:', deviceId);
       const url = `${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`;
       const res = await fetch(url);
-      console.log('[loadPredictions] status:', res.status, res.statusText);
       if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        console.error('[loadPredictions] API error body:', errText);
         setPredictions([]);
         setStats(null);
         return;
       }
       const json = await res.json();
-      console.log('[loadPredictions] response keys:', Object.keys(json), 'predictions count:', json.predictions?.length);
       const { predictions } = json;
       const predData = (Array.isArray(predictions) ? predictions : []) as Prediction[];
 
@@ -207,16 +199,10 @@ export function usePredictions() {
       }
 
       setError(null)
-
-      // Si vérification en cours, attendre et rafraîchir une fois terminée
-      if (verifyPromise) {
-        verifyPromise.then(() => loadPredictions(true)).catch(() => {})
-      }
     } catch (err) {
   console.error('Error loading predictions:', err)
   const msg = err instanceof Error ? err.message : 'Erreur de chargement'
   setError(msg)
-  console.error('PREDICTIONS ERROR DETAIL:', JSON.stringify(err))
 } finally {
   setLoading(false)
 }
@@ -290,7 +276,7 @@ export function usePredictions() {
 
       const savedData = await res.json();
 
-      await loadPredictions(true) // Skip auto-verify after save (just saved)
+      await loadPredictions() // Skip auto-verify after save (just saved)
 
       return (savedData?.row || savedData) as Prediction
     } catch (err: any) {
@@ -315,7 +301,7 @@ export function usePredictions() {
         throw new Error(`HTTP ${res.status}`);
       }
 
-      await loadPredictions(true)
+      await loadPredictions()
       return true
     } catch (err) {
       console.error('Error deleting prediction:', err)
@@ -336,7 +322,7 @@ export function usePredictions() {
         throw new Error(`HTTP ${res.status}`);
       }
 
-      await loadPredictions(true)
+      await loadPredictions()
       return true
     } catch (err) {
       console.error('Error deleting pending predictions:', err)
@@ -348,7 +334,7 @@ export function usePredictions() {
   const verifyPredictions = useCallback(async () => {
     try {
       const result = await autoVerifyPredictions()
-      await loadPredictions(true)
+      await loadPredictions()
       
       return {
         success: true,
@@ -378,6 +364,6 @@ export function usePredictions() {
     deletePrediction,
     deletePendingPredictions,
     verifyPredictions,
-    refresh: () => loadPredictions(false)
+    refresh: () => loadPredictions()
   }
 }
