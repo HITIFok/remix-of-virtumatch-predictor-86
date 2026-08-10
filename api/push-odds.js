@@ -64,24 +64,28 @@ export default async function handler(req, res) {
     }
 
     const leagueSlug = league || '';
+    const leagueId = body.leagueId || '';
     const now = new Date().toISOString();
     const upsertResults = [];
+
+    // Helper: DELETE old data then INSERT fresh (no UNIQUE constraint on scraped_data)
+    async function upsertScrapedData(dataType, payload) {
+      await sql`
+        DELETE FROM scraped_data
+        WHERE data_type = ${dataType} AND league = ${leagueSlug}
+      `;
+      if (payload.length > 0) {
+        await sql`
+          INSERT INTO scraped_data (data_type, league, league_id, payload, scraped_at)
+          VALUES (${dataType}, ${leagueSlug}, ${leagueId}, ${JSON.stringify(payload)}, ${now})
+        `;
+      }
+    }
 
     // Upsert matches
     if (Array.isArray(matches)) {
       try {
-        await sql`
-          DELETE FROM scraped_data
-          WHERE data_type = 'matches' AND league = ${leagueSlug}
-        `;
-        if (matches.length > 0) {
-          await sql`
-            INSERT INTO scraped_data (data_type, league, payload, scraped_at)
-            VALUES ('matches', ${leagueSlug}, ${JSON.stringify(matches)}, ${now})
-            ON CONFLICT (data_type, league)
-            DO UPDATE SET payload = ${JSON.stringify(matches)}, scraped_at = ${now}
-          `;
-        }
+        await upsertScrapedData('matches', matches);
         upsertResults.push(true);
       } catch (e) {
         console.error('[push-odds] Error upserting matches:', e.message);
@@ -92,18 +96,7 @@ export default async function handler(req, res) {
     // Upsert results
     if (Array.isArray(results)) {
       try {
-        await sql`
-          DELETE FROM scraped_data
-          WHERE data_type = 'results' AND league = ${leagueSlug}
-        `;
-        if (results.length > 0) {
-          await sql`
-            INSERT INTO scraped_data (data_type, league, payload, scraped_at)
-            VALUES ('results', ${leagueSlug}, ${JSON.stringify(results)}, ${now})
-            ON CONFLICT (data_type, league)
-            DO UPDATE SET payload = ${JSON.stringify(results)}, scraped_at = ${now}
-          `;
-        }
+        await upsertScrapedData('results', results);
         upsertResults.push(true);
       } catch (e) {
         console.error('[push-odds] Error upserting results:', e.message);
@@ -114,18 +107,7 @@ export default async function handler(req, res) {
     // Upsert ranking
     if (Array.isArray(ranking)) {
       try {
-        await sql`
-          DELETE FROM scraped_data
-          WHERE data_type = 'ranking' AND league = ${leagueSlug}
-        `;
-        if (ranking.length > 0) {
-          await sql`
-            INSERT INTO scraped_data (data_type, league, payload, scraped_at)
-            VALUES ('ranking', ${leagueSlug}, ${JSON.stringify(ranking)}, ${now})
-            ON CONFLICT (data_type, league)
-            DO UPDATE SET payload = ${JSON.stringify(ranking)}, scraped_at = ${now}
-          `;
-        }
+        await upsertScrapedData('ranking', ranking);
         upsertResults.push(true);
       } catch (e) {
         console.error('[push-odds] Error upserting ranking:', e.message);
