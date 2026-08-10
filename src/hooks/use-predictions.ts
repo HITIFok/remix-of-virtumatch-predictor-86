@@ -87,15 +87,13 @@ export function usePredictions() {
     return null;
   }, [])
 
-  // Charger les prédictions (avec vérification automatique)
+  // Charger les prédictions (vérification auto en parallèle, non bloquante)
   const loadPredictions = useCallback(async (skipAutoVerify = false) => {
     try {
       setLoading(true)
 
-      // D'abord vérifier automatiquement les prédictions en attente
-      if (!skipAutoVerify) {
-        await autoVerifyPredictions()
-      }
+      // Lancer la vérification en parallèle (sans bloquer le chargement)
+      const verifyPromise = skipAutoVerify ? null : autoVerifyPredictions()
 
       const deviceId = getDeviceId()
       console.log('[loadPredictions] deviceId:', deviceId);
@@ -209,6 +207,11 @@ export function usePredictions() {
       }
 
       setError(null)
+
+      // Si vérification en cours, attendre et rafraîchir une fois terminée
+      if (verifyPromise) {
+        verifyPromise.then(() => loadPredictions(true)).catch(() => {})
+      }
     } catch (err) {
   console.error('Error loading predictions:', err)
   const msg = err instanceof Error ? err.message : 'Erreur de chargement'
