@@ -2,7 +2,7 @@
 
 Application de prédiction de matchs virtuels Instant League avec analyses statistiques avancées.
 
-> Dernière mise à jour : Mai 2026
+> Dernière mise à jour : Août 2026
 
 ## Fonctionnalités
 
@@ -15,7 +15,7 @@ Application de prédiction de matchs virtuels Instant League avec analyses stati
 
 - **Frontend**: React + TypeScript + Vite
 - **UI**: shadcn-ui + Tailwind CSS
-- **Backend**: Supabase (PostgreSQL + Edge Functions)
+- **Backend**: Neon PostgreSQL + Vercel Serverless Functions
 - **Scraper**: Python
 
 ## Installation
@@ -32,7 +32,7 @@ npm install
 
 # Configurer les variables d'environnement
 cp .env.example .env
-# Éditer .env avec vos identifiants Supabase
+# Éditer .env avec vos identifiants (voir .env.example)
 
 # Lancer le serveur de développement
 npm run dev
@@ -40,14 +40,9 @@ npm run dev
 
 ## Variables d'environnement
 
-Créez un fichier `.env` avec :
+Créez un fichier `.env` à partir de `.env.example`.
 
-```
-VITE_DATABASE_URL=https://votre-projet.redacted.example.com
-VITE_DATABASE_ANON_KEY=votre-anon-key
-```
-
-Voir `.env.example` pour la liste complète des variables requises.
+Les variables sensibles (NEON_DATABASE_URL, ADMIN_TOKEN_SECRET) sont configurées côté serveur uniquement (Vercel Environment Variables). Elles ne sont **jamais** exposées au client.
 
 ## Scraper (Termux/Android)
 
@@ -63,7 +58,7 @@ Les variables d'environnement suivantes sont requises pour les scripts :
 - `SPORTY_API_BASE` — URL de base de l'API
 - `API_ORIGIN` / `API_REFERER` — Headers d'authentification API
 - `API_APP_VERSION` — Version de l'API
-- `DATABASE_URL` / `PUSH_KEY` / `ANON_KEY` — Connexion Supabase
+- `PUSH_URL` / `PUSH_KEY` — Endpoint Vercel pour les scrapers
 
 ## Déploiement
 
@@ -82,11 +77,10 @@ Le projet peut être déployé sur Vercel :
 │   ├── pages/          # Pages de l'application
 │   ├── hooks/          # Hooks personnalisés
 │   ├── lib/            # Utilitaires et logique
-│   └── integrations/   # Intégration Supabase
-├── supabase/
-│   └── functions/      # Edge Functions Deno
+│   └── config/         # Configuration API
 ├── api/                # Vercel Serverless Functions
 ├── scripts/            # Scrapers Python
+├── legacy/             # Archives (ancienne config Supabase)
 └── public/             # Assets statiques
 ```
 
