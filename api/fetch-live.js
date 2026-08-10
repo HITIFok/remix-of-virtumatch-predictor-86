@@ -166,6 +166,11 @@ export default async function handler(req, res) {
       }
     }
 
+    // Validate leagueId against known leagues (same as api/matches.js)
+    if (!LEAGUES[leagueId]) {
+      return res.status(400).json({ success: false, error: 'Invalid leagueId' });
+    }
+
     const leagueName = LEAGUES[leagueId] || 'Unknown League';
     const mode = req.query.mode || bodyMode;
     console.log(`=== fetch-live v16: ${leagueName} (${leagueId}) ===`);
