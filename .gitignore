@@ -43,3 +43,10 @@ keystore.properties
 # APK build outputs
 android/app/build/
 
+# Work artifacts (not part of the app)
+download/
+upload/
+tool-results/
+virtumatch-repo/
+skills/
+
