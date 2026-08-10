@@ -125,7 +125,8 @@ export default defineConfig(({ mode }) => ({
     },
   },
   esbuild: {
-    drop: mode === "production" ? ["console", "debugger"] : [],
+    // Keep console.log/warn/error for production debugging
+    drop: mode === "production" ? ["debugger"] : [],
     dropLabels: mode === "production" ? ["dev"] : [],
   },
 }));
