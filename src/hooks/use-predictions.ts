@@ -1,7 +1,8 @@
 // Hook pour gérer les prédictions et leur suivi de précision
 import { useState, useEffect, useCallback } from 'react'
 import { config } from '@/config/env'
-export { getDeviceId } from '@/lib/device'
+import { getDeviceId } from '@/lib/device'
+export { getDeviceId }
 
 // camelCase — matches api/predictions.js mapToCamelCase() output
 export interface Prediction {
