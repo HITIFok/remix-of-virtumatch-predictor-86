@@ -27,16 +27,23 @@ Contrairement à Supabase où la clé `anon` publique permettait au client de fa
 
 ## Rôle Postgres utilisé
 
-Le rôle Postgres configuré dans `NEON_DATABASE_URL` doit être vérifié avec :
+Rôle utilisé par `NEON_DATABASE_URL` (vérifié le 10 août 2026) :
 
-```sql
-SELECT current_user, session_user;
-SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user;
-```
+| Propriété | Valeur |
+|-----------|--------|
+| `current_user` | `neondb_owner` |
+| `session_user` | `neondb_owner` |
+| `rolsuper` | **false** |
+| `rolbypassrls` | **true** |
 
-- Si `rolbypassrls = true` ou `rolsuper = true` : RLS est **sans effet** pour ce rôle
-- La protection repose **entièrement** sur le fait que la connection string ne fuit jamais
-- Pas de clé anon publique, pas d'API REST directe
+**Conclusion : `rolbypassrls = true` signifie que RLS est complètement contourné.**
+
+Le rôle `neondb_owner` contourne TOUTES les policies RLS. Cela signifie :
+
+- Les policies RLS des anciens fichiers Supabase (`auth.role() = 'service_role'`) sont **doublement inopérantes** : la fonction `auth.role()` n'existe pas sur Neon, ET même si elle existait, `neondb_owner` contournerait la policy
+- La protection repose **entièrement** sur le fait que `NEON_DATABASE_URL` ne fuit jamais du serveur
+- Pas de clé anon publique, pas d'API REST directe côté client
+- La seule porte d'entrée vers la BDD est les API Routes Vercel (qui sont les seules à détenir la connection string)
 
 ## Secrets critiques
 
