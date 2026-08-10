@@ -199,6 +199,11 @@ export function usePredictions() {
       }
 
       setError(null)
+
+      // Auto-vérif en arrière-plan : rafraîchir les statuts si changements
+      autoVerifyPredictions().then(result => {
+        if (result && result.verified > 0) loadPredictions()
+      }).catch(() => {})
     } catch (err) {
   console.error('Error loading predictions:', err)
   const msg = err instanceof Error ? err.message : 'Erreur de chargement'
