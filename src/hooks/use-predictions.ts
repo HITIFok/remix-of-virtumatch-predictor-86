@@ -3,30 +3,32 @@ import { useState, useEffect, useCallback } from 'react'
 import { config } from '@/config/env'
 export { getDeviceId } from '@/lib/device'
 
+// camelCase — matches api/predictions.js mapToCamelCase() output
 export interface Prediction {
-  id: string
-  match_id: number | null
-  home_team: string
-  away_team: string
+  id: number
+  matchId: number | null
+  homeTeam: string
+  awayTeam: string
   league: string
-  odd_home: number
-  odd_draw: number
-  odd_away: number
-  prob_home: number
-  prob_draw: number
-  prob_away: number
+  leagueId: string | null
+  oddHome: number
+  oddDraw: number
+  oddAway: number
+  probHome: number
+  probDraw: number
+  probAway: number
   prediction: '1' | 'X' | '2'
   confidence: number
-  predicted_home_score: number | null
-  predicted_away_score: number | null
-  predicted_score: string | null
-  actual_home_score: number | null
-  actual_away_score: number | null
-  actual_outcome: '1' | 'X' | '2' | null
-  actual_score: string | null
+  predictedHomeScore: number | null
+  predictedAwayScore: number | null
+  predictedScore: string | null
+  actualHomeScore: number | null
+  actualAwayScore: number | null
+  actualOutcome: '1' | 'X' | '2' | null
+  actualScore: string | null
   status: 'pending' | 'correct' | 'incorrect'
-  verified_at: string | null
-  created_at: string
+  verifiedAt: string | null
+  createdAt: string
 }
 
 export interface AggregatedStats {
@@ -95,14 +97,20 @@ export function usePredictions() {
       }
 
       const deviceId = getDeviceId()
-      const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`);
+      console.log('[loadPredictions] deviceId:', deviceId);
+      const url = `${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`;
+      const res = await fetch(url);
+      console.log('[loadPredictions] status:', res.status, res.statusText);
       if (!res.ok) {
-        console.warn('[loadPredictions] API error:', res.status);
+        const errText = await res.text().catch(() => '');
+        console.error('[loadPredictions] API error body:', errText);
         setPredictions([]);
         setStats(null);
         return;
       }
-      const { predictions } = await res.json();
+      const json = await res.json();
+      console.log('[loadPredictions] response keys:', Object.keys(json), 'predictions count:', json.predictions?.length);
+      const { predictions } = json;
       const predData = (Array.isArray(predictions) ? predictions : []) as Prediction[];
 
       setPredictions(predData)
@@ -144,7 +152,7 @@ export function usePredictions() {
         // Précision récente (7 derniers jours)
         const weekAgo = new Date()
         weekAgo.setDate(weekAgo.getDate() - 7)
-        const recentPreds = predData.filter(p => new Date(p.created_at) >= weekAgo)
+        const recentPreds = predData.filter(p => new Date(p.createdAt) >= weekAgo)
         const recentVerified = recentPreds.filter(p => p.status !== 'pending')
         const recentCorrect = recentVerified.filter(p => p.status === 'correct').length
         const recentAccuracy = recentVerified.length > 0 
@@ -291,7 +299,7 @@ export function usePredictions() {
   }, [loadPredictions])
 
   // Supprimer une prédiction par ID
-  const deletePrediction = useCallback(async (id: string) => {
+  const deletePrediction = useCallback(async (id: number) => {
     try {
       const deviceId = getDeviceId();
       const res = await fetch(config.api.predictions, {

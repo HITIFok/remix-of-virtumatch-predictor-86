@@ -18,7 +18,7 @@ import {
   BarChart3, Sparkles, Trash2
 } from "lucide-react";
 
-function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDelete?: (id: string) => void }) {
+function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDelete?: (id: number) => void }) {
   const statusColor = 
     prediction.status === "correct" ? "card-glow-success border-success/30" :
     prediction.status === "incorrect" ? "card-glow-fire border-destructive/30" :
@@ -29,12 +29,12 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
     prediction.status === "incorrect" ? <XCircle size={16} className="text-destructive" /> :
     <Clock size={16} className="text-muted-foreground" />;
 
-  const predictedOutcome = prediction.prediction === '1' ? prediction.home_team :
-                          prediction.prediction === '2' ? prediction.away_team : 'Nul';
+  const predictedOutcome = prediction.prediction === '1' ? prediction.homeTeam :
+                          prediction.prediction === '2' ? prediction.awayTeam : 'Nul';
 
-  const actualOutcome = prediction.actual_outcome === '1' ? prediction.home_team :
-                       prediction.actual_outcome === '2' ? prediction.away_team :
-                       prediction.actual_outcome === 'X' ? 'Nul' : null;
+  const actualOutcome = prediction.actualOutcome === '1' ? prediction.homeTeam :
+                       prediction.actualOutcome === '2' ? prediction.awayTeam :
+                       prediction.actualOutcome === 'X' ? 'Nul' : null;
 
   const confidenceColor = 
     prediction.confidence >= 70 ? "text-success" :
@@ -69,7 +69,7 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
                   </AlertDialogTitle>
                   <AlertDialogDescription className="text-muted-foreground text-sm leading-relaxed">
                     Cette action est irréversible. La prédiction de
-                    <span className="text-foreground font-semibold"> {prediction.home_team} vs {prediction.away_team} </span>
+                    <span className="text-foreground font-semibold"> {prediction.homeTeam} vs {prediction.awayTeam} </span>
                     sera définitivement supprimée.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
@@ -94,7 +94,7 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
       <div className="flex items-center justify-between">
         <div className="flex-1">
           <p className="text-sm font-display font-bold text-foreground">
-            {prediction.home_team} vs {prediction.away_team}
+            {prediction.homeTeam} vs {prediction.awayTeam}
           </p>
         </div>
       </div>
@@ -104,7 +104,7 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
         <div className="bg-muted/30 rounded-xl p-2.5 border border-border/30">
           <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1 font-display">Prédiction</p>
           <p className="text-sm font-display font-bold text-gradient-fire">
-            {prediction.predicted_score || `${prediction.predicted_home_score}-${prediction.predicted_away_score}`}
+            {prediction.predictedScore || `${prediction.predictedHomeScore ?? 0}-${prediction.predictedAwayScore ?? 0}`}
           </p>
           <p className="text-xs text-foreground font-bold">{predictedOutcome}</p>
           <p className={`text-[10px] ${confidenceColor} font-bold`}>
@@ -115,9 +115,9 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
         {/* Résultat réel */}
         <div className="bg-muted/30 rounded-xl p-2.5 border border-border/30">
           <p className="text-[9px] text-muted-foreground uppercase tracking-wider mb-1 font-display">Résultat</p>
-          {prediction.actual_score ? (
+          {prediction.actualScore ? (
             <>
-              <p className="text-sm font-display font-bold text-gradient-ice">{prediction.actual_score}</p>
+              <p className="text-sm font-display font-bold text-gradient-ice">{prediction.actualScore}</p>
               <p className="text-xs text-foreground font-bold">{actualOutcome}</p>
             </>
           ) : (
@@ -130,22 +130,22 @@ function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDe
       <div className="grid grid-cols-3 gap-1 mt-2 text-center text-[9px]">
         <div className="bg-muted/20 rounded-lg py-1.5 border border-border/20">
           <span className="text-muted-foreground">1:</span>
-          <span className="font-bold ml-1 text-foreground">{prediction.odd_home}</span>
+          <span className="font-bold ml-1 text-foreground">{prediction.oddHome}</span>
         </div>
         <div className="bg-muted/20 rounded-lg py-1.5 border border-border/20">
           <span className="text-muted-foreground">X:</span>
-          <span className="font-bold ml-1 text-foreground">{prediction.odd_draw}</span>
+          <span className="font-bold ml-1 text-foreground">{prediction.oddDraw}</span>
         </div>
         <div className="bg-muted/20 rounded-lg py-1.5 border border-border/20">
           <span className="text-muted-foreground">2:</span>
-          <span className="font-bold ml-1 text-foreground">{prediction.odd_away}</span>
+          <span className="font-bold ml-1 text-foreground">{prediction.oddAway}</span>
         </div>
       </div>
 
       <div className="flex items-center justify-between mt-2 text-[9px] text-muted-foreground">
-        <span>{new Date(prediction.created_at).toLocaleDateString("fr-FR")}</span>
-        {prediction.verified_at && (
-          <span className="text-success">Vérifié: {new Date(prediction.verified_at).toLocaleDateString("fr-FR")}</span>
+        <span>{new Date(prediction.createdAt).toLocaleDateString("fr-FR")}</span>
+        {prediction.verifiedAt && (
+          <span className="text-success">Vérifié: {new Date(prediction.verifiedAt).toLocaleDateString("fr-FR")}</span>
         )}
       </div>
     </div>
@@ -276,8 +276,8 @@ export default function History() {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<string | null>(null);
 
-  const handleDelete = async (id: string) => {
-    setDeletingId(id);
+  const handleDelete = async (id: number) => {
+    setDeletingId(String(id));
     try {
       await deletePrediction(id);
     } catch (err) {
