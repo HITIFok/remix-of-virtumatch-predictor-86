@@ -2,12 +2,11 @@
 """
 Scraper Multi-Ligues
 =====================
-Scrape TOUTES les 8 ligues et envoie vers Supabase.
+Scrape TOUTES les 8 ligues et envoie vers Vercel.
 
 Variables d'environnement requises:
-  export DATABASE_URL='https://your-project.redacted.example.com'
+  export PUSH_URL='https://your-app.vercel.app/api/push-odds'
   export PUSH_KEY='your-push-key'
-  export ANON_KEY='your-anon-key'
   export SPORTY_API_BASE='your-api-base-url'
   export API_ORIGIN='your-origin'
   export API_REFERER='your-referer'
@@ -19,20 +18,22 @@ import os
 from datetime import datetime
 
 # ============ CONFIGURATION ============
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-FUNCTION_URL = f"{DATABASE_URL}/functions/v1/push-odds"
+PUSH_URL = os.environ.get("PUSH_URL", "")
+FUNCTION_URL = PUSH_URL
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
-ANON_KEY = os.environ.get("ANON_KEY", "")
 
 SPORTY_API_BASE = os.environ.get("SPORTY_API_BASE", "")
 if not SPORTY_API_BASE:
     print("ERREUR: SPORTY_API_BASE non définie.")
     sys.exit(1)
 
-if not PUSH_KEY or not ANON_KEY:
-    print("ERREUR: Variables d'environnement PUSH_KEY et ANON_KEY requises.")
+if not PUSH_KEY:
+    print("ERREUR: PUSH_KEY non définie. Exportez-la :")
     print("  export PUSH_KEY='votre_cle'")
-    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
+if not PUSH_URL:
+    print("ERREUR: PUSH_URL non définie. Exportez-la :")
+    print("  export PUSH_URL='https://votre-app.vercel.app/api/push-odds'")
     sys.exit(1)
 
 # Les 8 ligues
@@ -149,7 +150,7 @@ def get_results(lid, name):
 
 
 def send_data(league, matches, ranking, results):
-    """Send data to Supabase"""
+    """Send data to Vercel"""
     if not matches and not ranking and not results:
         return False, 0, 0, 0
 
@@ -165,8 +166,6 @@ def send_data(league, matches, ranking, results):
             headers={
                 "Content-Type": "application/json",
                 "x-push-key": PUSH_KEY,
-                "apikey": ANON_KEY,
-                "Authorization": f"Bearer {ANON_KEY}",
             },
             timeout=60,
         )

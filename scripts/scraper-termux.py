@@ -5,9 +5,8 @@ Scraper - Version Termux (Android)
 A exécuter dans Termux avec connexion 4G
 
 Variables d'environnement requises:
-  export DATABASE_URL='https://your-project.redacted.example.com'
+  export PUSH_URL='https://your-app.vercel.app/api/push-odds'
   export PUSH_KEY='your-push-key'
-  export ANON_KEY='your-anon-key'
   export SCRAPER_TARGET_URL='your-target-url'
 """
 
@@ -21,24 +20,19 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 # Toutes les clés doivent être définies via des variables d'environnement
 # Ne JAMAIS hardcoder de secrets dans le code source
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
+PUSH_URL = os.environ.get("PUSH_URL", "")
+PUSH_ENDPOINT = PUSH_URL
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
-ANON_KEY = os.environ.get("ANON_KEY", "")
 TARGET_URL = os.environ.get("SCRAPER_TARGET_URL", "")
 REFRESH_INTERVAL = 120
 
-if not DATABASE_URL:
-    print("ERREUR: DATABASE_URL non definie. Exportez-la :")
-    print("  export DATABASE_URL='https://votre-projet.redacted.example.com'")
-    sys.exit(1)
 if not PUSH_KEY:
     print("ERREUR: PUSH_KEY non definie. Exportez-la :")
     print("  export PUSH_KEY='votre_cle'")
     sys.exit(1)
-if not ANON_KEY:
-    print("ERREUR: ANON_KEY non definie. Exportez-la :")
-    print("  export ANON_KEY='votre_cle_anon'")
+if not PUSH_URL:
+    print("ERREUR: PUSH_URL non definie. Exportez-la :")
+    print("  export PUSH_URL='https://votre-app.vercel.app/api/push-odds'")
     sys.exit(1)
 if not TARGET_URL:
     print("ERREUR: SCRAPER_TARGET_URL non definie. Exportez-la :")
@@ -180,7 +174,7 @@ def parse_int(s):
 
 
 def push_data(data):
-    """Envoie les données vers Supabase"""
+    """Envoie les données vers Vercel"""
     import requests
     
     total = len(data.get('matches', [])) + len(data.get('results', [])) + len(data.get('ranking', []))
@@ -193,7 +187,6 @@ def push_data(data):
             headers={
                 "Content-Type": "application/json",
                 "x-push-key": PUSH_KEY,
-                "apikey": ANON_KEY,
             },
             timeout=30,
         )
@@ -214,7 +207,7 @@ def main():
     print("=" * 50)
     print("SCRAPER - Version Termux")
     print("=" * 50)
-    print(f"📍 Supabase: {DATABASE_URL}")
+    print(f"📍 Push URL: {PUSH_URL}")
     print(f"⏱️  Intervalle: {REFRESH_INTERVAL}s")
     print()
     

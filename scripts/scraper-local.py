@@ -2,12 +2,11 @@
 """
 Scraper local - A exécuter depuis Madagascar
 =============================================
-Scrape les données Instant League et les envoie vers Supabase.
+Scrape les données Instant League et les envoie vers Vercel.
 
 Variables d'environnement requises:
-  export DATABASE_URL='https://your-project.redacted.example.com'
+  export PUSH_URL='https://your-app.vercel.app/api/push-odds'
   export PUSH_KEY='your-push-key'
-  export ANON_KEY='your-anon-key'
   export SCRAPER_TARGET_URL='your-target-url'
 """
 
@@ -20,20 +19,20 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 import os
 
-# URL de votre projet Supabase
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
+# URL du push endpoint Vercel
+PUSH_URL = os.environ.get("PUSH_URL", "")
+PUSH_ENDPOINT = PUSH_URL
 
 # Clé d'authentification
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
 
-# Publishable key (anon) pour l'en-tête apikey
-ANON_KEY = os.environ.get("ANON_KEY", "")
-
-if not PUSH_KEY or not ANON_KEY:
-    print("ERREUR: Variables d'environnement PUSH_KEY et ANON_KEY requises.")
+if not PUSH_KEY:
+    print("ERREUR: PUSH_KEY non définie. Exportez-la :")
     print("  export PUSH_KEY='votre_cle'")
-    print("  export ANON_KEY='votre_cle_anon'")
+    sys.exit(1)
+if not PUSH_URL:
+    print("ERREUR: PUSH_URL non définie. Exportez-la :")
+    print("  export PUSH_URL='https://votre-app.vercel.app/api/push-odds'")
     sys.exit(1)
 
 # Intervalle de rafraîchissement (secondes)
@@ -310,7 +309,6 @@ def push_data(data):
         headers={
             "Content-Type": "application/json",
             "x-push-key": PUSH_KEY,
-            "apikey": ANON_KEY,
         },
         timeout=15,
     )
@@ -329,7 +327,7 @@ def push_data(data):
 def main():
     if PUSH_KEY == "VOTRE_CLE_ICI":
         print("⚠️  Configurez d'abord PUSH_KEY dans ce script!")
-        print("   Utilisez la même valeur que SCRAPER_PUSH_KEY dans les secrets de l'app.")
+        print("   Utilisez la même valeur que SCRAPER_PUSH_KEY dans les variables d'environnement Vercel.")
         sys.exit(1)
 
     print("=" * 50)

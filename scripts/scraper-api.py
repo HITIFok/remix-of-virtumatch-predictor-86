@@ -14,9 +14,8 @@ Usage:
   python scraper-api.py
 
 Variables d'environnement requises:
-  export DATABASE_URL='https://your-project.redacted.example.com'
+  export PUSH_URL='https://your-app.vercel.app/api/push-odds'
   export PUSH_KEY='your-push-key'
-  export ANON_KEY='your-anon-key'
   export SPORTY_API_BASE='your-api-base-url'
   export API_ORIGIN='your-origin'
   export API_REFERER='your-referer'
@@ -29,10 +28,9 @@ from datetime import datetime
 # ============ CONFIGURATION ============
 import os
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-PUSH_ENDPOINT = f"{DATABASE_URL}/functions/v1/push-odds"
+PUSH_URL = os.environ.get("PUSH_URL", "")
+PUSH_ENDPOINT = PUSH_URL
 PUSH_KEY = os.environ.get("PUSH_KEY", "")
-ANON_KEY = os.environ.get("ANON_KEY", "")
 
 SPORTY_API_BASE = os.environ.get("SPORTY_API_BASE", "")
 if not SPORTY_API_BASE:
@@ -43,9 +41,9 @@ if not PUSH_KEY:
     print("ERREUR: PUSH_KEY non définie. Exportez-la :")
     print("  export PUSH_KEY='votre_cle'")
     sys.exit(1)
-if not ANON_KEY:
-    print("ERREUR: ANON_KEY non définie. Exportez-la :")
-    print("  export ANON_KEY='votre_cle_anon'")
+if not PUSH_URL:
+    print("ERREUR: PUSH_URL non définie. Exportez-la :")
+    print("  export PUSH_URL='https://votre-app.vercel.app/api/push-odds'")
     sys.exit(1)
 
 LEAGUE_ID = "8035"
@@ -201,10 +199,10 @@ def scrape():
 
 
 def push_data(data):
-    """Envoie les données vers Supabase"""
+    """Envoie les données vers Vercel"""
     import requests
     
-    print(f"\n📤 Envoi vers Supabase...")
+    print(f"\n📤 Envoi vers Vercel...")
     
     try:
         resp = requests.post(
@@ -213,8 +211,6 @@ def push_data(data):
             headers={
                 "Content-Type": "application/json",
                 "x-push-key": PUSH_KEY,
-                "apikey": ANON_KEY,
-                "Authorization": f"Bearer {ANON_KEY}",
             },
             timeout=30,
         )
@@ -241,7 +237,7 @@ def main():
     print("=" * 50)
     print("SCRAPER Instant League")
     print("=" * 50)
-    print(f"📍 Supabase: {DATABASE_URL}")
+    print(f"📍 Push URL: {PUSH_URL}")
     print(f"⏱️  Intervalle: {REFRESH_INTERVAL}s")
     print()
     
