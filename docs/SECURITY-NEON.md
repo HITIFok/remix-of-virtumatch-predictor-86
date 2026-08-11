@@ -50,7 +50,7 @@ Le rôle `neondb_owner` contourne TOUTES les policies RLS. Cela signifie :
 | Secret | Où | Protection |
 |--------|-----|-----------|
 | `NEON_DATABASE_URL` | Vercel Environment Variables | Jamais dans le bundle client |
-| `ADMIN_TOKEN_SECRET` | Vercel Environment Variables (variable `n`) | Signe les JWT HMAC-SHA256 pour les opérations admin |
+| `ADMIN_TOKEN_SECRET` | Vercel Environment Variables | Signe les JWT HMAC-SHA256 pour les opérations admin |
 | `SCRAPER_PUSH_KEY` | Vercel Environment Variables + env var scraper Python | Authentifie les scrapers externes vers `api/push-odds` |
 
 ## Flux d'authentification admin
