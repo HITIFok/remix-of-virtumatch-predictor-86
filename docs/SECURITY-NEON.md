@@ -51,7 +51,6 @@ Le rôle `neondb_owner` contourne TOUTES les policies RLS. Cela signifie :
 |--------|-----|-----------|
 | `NEON_DATABASE_URL` | Vercel Environment Variables | Jamais dans le bundle client |
 | `ADMIN_TOKEN_SECRET` | Vercel Environment Variables | Signe les JWT HMAC-SHA256 pour les opérations admin |
-| `SCRAPER_PUSH_KEY` | Vercel Environment Variables + env var scraper Python | Authentifie les scrapers externes vers `api/push-odds` |
 
 ## Flux d'authentification admin
 
@@ -83,11 +82,11 @@ Les policies RLS basées sur `auth.role() = 'service_role'` des anciens fichiers
 ## Ce qui a été fait (10 août 2026)
 
 1. ✅ Rotation du mot de passe admin (nouveau hash bcrypt dans Neon)
-2. ✅ Rotation de SCRAPER_PUSH_KEY
-3. ✅ Rotation de ADMIN_TOKEN_SECRET
-4. ✅ Purge de l'historique git (secrets + refs Supabase)
-5. ✅ Migration des scrapers : Supabase Edge Functions → Vercel API (`api/push-odds.js`)
-6. ✅ Dossier `supabase/` déplacé vers `legacy/supabase-pre-migration/`
+2. ✅ Rotation de ADMIN_TOKEN_SECRET
+3. ✅ Purge de l'historique git (secrets + refs Supabase)
+4. ✅ Suppression du système de scraping (push-odds, scrapers Python, table scraped_data)
+5. ✅ Dossier `supabase/` déplacé vers `legacy/supabase-pre-migration/`
+6. ✅ Nettoyage des tables inutilisées dans Neon (6 tables supprimées)
 7. ✅ Tous les fichiers de config (README, CI/CD, .env.example) mis à jour
 8. ✅ Demande de purge des refs PR auprès de GitHub Support
 

@@ -4,10 +4,6 @@
   "framework": "vite",
   "rewrites": [
     {
-      "source": "/api/scrape",
-      "destination": "/api/scrape"
-    },
-    {
       "source": "/((?!api/.*).*)",
       "destination": "/index.html"
     }

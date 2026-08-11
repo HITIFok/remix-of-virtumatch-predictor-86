@@ -44,22 +44,6 @@ Créez un fichier `.env` à partir de `.env.example`.
 
 Les variables sensibles (NEON_DATABASE_URL, ADMIN_TOKEN_SECRET) sont configurées côté serveur uniquement (Vercel Environment Variables). Elles ne sont **jamais** exposées au client.
 
-## Scraper (Termux/Android)
-
-Les scrapers Python récupèrent les données depuis l'API :
-
-```bash
-# Dans Termux avec connexion 4G
-pip install requests
-python scripts/scraper-api.py
-```
-
-Les variables d'environnement suivantes sont requises pour les scripts :
-- `SPORTY_API_BASE` — URL de base de l'API
-- `API_ORIGIN` / `API_REFERER` — Headers d'authentification API
-- `API_APP_VERSION` — Version de l'API
-- `PUSH_URL` / `PUSH_KEY` — Endpoint Vercel pour les scrapers
-
 ## Déploiement
 
 Le projet peut être déployé sur Vercel :
