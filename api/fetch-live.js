@@ -109,12 +109,14 @@ function extractScoreExactPrediction(match) {
   return null;
 }
 
-// Fetch playout for a specific round
-async function fetchPlayout(leagueId, round) {
+// Fetch playout for a specific round (requires eventCategoryId from matches data)
+async function fetchPlayout(leagueId, round, eventCategoryId) {
   const playoutMatches = new Map();
   try {
+    const params = `parentEventCategoryId=${leagueId}`;
+    const catParams = eventCategoryId ? `&eventCategoryId=${eventCategoryId}` : '';
     const data = await fetchAPI(
-      `/round/${round}/playout?parentEventCategoryId=${leagueId}`,
+      `/round/${round}/playout?${params}${catParams}`,
       3000
     );
     if (data?.matches && Array.isArray(data.matches)) {
@@ -203,8 +205,16 @@ export default async function handler(req, res) {
         }
       }
 
+      // Extract eventCategoryId from the betting round for playout API
+      let qEventCategoryId = null;
+      for (const rd of matchesResp.rounds) {
+        if (rd.roundNumber === qBettingRound) {
+          qEventCategoryId = rd.eventCategoryId || null;
+          break;
+        }
+      }
       const qPlayoutData = qBettingRound > 0
-        ? await fetchPlayout(leagueId, qBettingRound)
+        ? await fetchPlayout(leagueId, qBettingRound, qEventCategoryId)
         : new Map();
 
       const qPreloaded = [];
@@ -239,7 +249,19 @@ export default async function handler(req, res) {
         return res.status(200).json({ success: false, error: 'invalid round', playoutResults: [] });
       }
 
-      const playoutData = await fetchPlayout(leagueId, round);
+      // For standalone playout mode, eventCategoryId must come from matches data
+      // We fetch matches first to get it
+      let standaloneEventCategoryId = null;
+      const matchesForCat = await fetchAPI(`/${leagueId}/matches`, 5000);
+      if (matchesForCat?.rounds) {
+        for (const rd of matchesForCat.rounds) {
+          if (rd.roundNumber === round) {
+            standaloneEventCategoryId = rd.eventCategoryId || null;
+            break;
+          }
+        }
+      }
+      const playoutData = await fetchPlayout(leagueId, round, standaloneEventCategoryId);
       const playoutResults = [];
       for (const [id, data] of playoutData) {
         playoutResults.push({ matchId: id, ...data });
@@ -313,12 +335,22 @@ export default async function handler(req, res) {
     }
     console.log(`[Sporty] Score Exact predictions: ${oddsPredictions.size} matches`);
 
-    // Step 3: Fetch playout for active rounds (Tier 2)
+    // Step 3: Build round→eventCategoryId map from matches data
+    const roundEventCatMap = new Map();
+    if (matchesData?.rounds) {
+      for (const rd of matchesData.rounds) {
+        if (rd.roundNumber && rd.eventCategoryId) {
+          roundEventCatMap.set(rd.roundNumber, rd.eventCategoryId);
+        }
+      }
+    }
+
+    // Step 4: Fetch playout for active rounds (Tier 2)
     const roundList = [...allRoundNumbers].sort((a, b) => b - a).slice(0, 5);
     const allPlayoutMatches = new Map();
     if (roundList.length > 0) {
       const playoutResults = await Promise.allSettled(
-        roundList.map(r => fetchPlayout(leagueId, r))
+        roundList.map(r => fetchPlayout(leagueId, r, roundEventCatMap.get(r)))
       );
       for (const result of playoutResults) {
         if (result.status === 'fulfilled') {
@@ -330,7 +362,7 @@ export default async function handler(req, res) {
     }
     console.log(`[Sporty] Total playout results available: ${allPlayoutMatches.size}`);
 
-    // Step 4: Cross-reference playout with betting matches (EXPLOIT)
+    // Step 5: Cross-reference playout with betting matches (EXPLOIT)
     const preloadedMatches = new Map();
     for (const [matchId, playoutData] of allPlayoutMatches) {
       if (bettingMatchIds.has(matchId)) {
@@ -339,7 +371,7 @@ export default async function handler(req, res) {
     }
     const preloadedCount = preloadedMatches.size;
 
-    // Step 5: Build matches array
+    // Step 6: Build matches array
     const matches = [];
     let liveCount = 0, bettingCount = 0, finishedCount = 0;
 
