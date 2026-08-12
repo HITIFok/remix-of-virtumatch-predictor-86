@@ -207,9 +207,9 @@ export default async function handler(req, res) {
     const sql = postgres(NEON_DATABASE_URL);
 
     // Mode detection: CRON vs CLIENT
-    // CRON = valid x-cron-key header (works with GET or POST)
+    // CRON = valid x-cron-key header OR ?cron_key=xxx query param (works with GET or POST)
     // CLIENT = POST with device_id in body
-    const cronKey = req.headers['x-cron-key'] || '';
+    const cronKey = req.headers['x-cron-key'] || req.query.cron_key || '';
     const expectedCronKey = process.env.CRON_SECRET || '';
     const isCron = !!(cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey));
 
