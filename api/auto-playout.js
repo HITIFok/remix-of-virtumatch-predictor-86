@@ -1,11 +1,15 @@
-// Vercel Serverless Function — auto-playout v1 (ESM)
-// Cron job: fetches playout results at expectedStart + 100s for each round
+// Vercel Serverless Function — auto-playout v2 (ESM)
+// Cron job: fetches playout results at multiple intervals after expectedStart
 //
-// Strategy:
-//   1. Fetch /matches for ALL leagues → discover rounds + their expectedStart timestamps
-//   2. Compare expectedStart with now → find rounds that started 60-180s ago
-//   3. For qualifying rounds → fetch /playout → store results in match_results table
-//   4. Also triggers verify-predictions after storing results
+// Strategy (v2 — multi-fetch):
+//   Virtual matches last ~3-4 real minutes (90 virtual minutes).
+//   Goals happen throughout, so we need multiple fetches:
+//     Phase 1: expectedStart + 100s  → early score (captures fast goals)
+//     Phase 2: expectedStart + 180s  → mid-match score
+//     Phase 3: expectedStart + 260s  → final score (triggers verification)
+//
+//   Each phase UPSERTs into match_results (latest scores win).
+//   verify-predictions is triggered ONLY after phase 3 succeeds.
 //
 // Vercel Cron: runs every minute via vercel.json crons config
 
@@ -28,6 +32,14 @@ const LEAGUES = [
   { id: '8065', name: 'Coupe du monde' },
 ];
 
+// Fetch phases: offset in seconds after expectedStart
+// Phase 1 = early, Phase 2 = mid-match, Phase 3 = final
+const FETCH_PHASES = [
+  { phase: 1, offset: 100 },  // +1m40s — match just started
+  { phase: 2, offset: 180 },  // +3m00s — mid-match
+  { phase: 3, offset: 260 },  // +4m20s — end of match (final score)
+];
+
 const HEADERS = {
   'Origin': process.env.API_ORIGIN || '',
   'Referer': process.env.API_REFERER || '',
@@ -42,7 +54,7 @@ const API_HEADERS = CONF_BEARER
   ? { ...HEADERS, 'Authorization': `Bearer ${CONF_BEARER}` }
   : HEADERS;
 
-// Timing-safe comparison (same pattern as admin-verify.js, verify-predictions.js)
+// Timing-safe comparison
 function timingSafeEqual(a, b) {
   const encoder = new TextEncoder();
   const aBuf = Buffer.from(encoder.encode(a));
@@ -77,7 +89,7 @@ async function fetchAPI(path, timeoutMs = 6000) {
 
 /**
  * Fetch matches for a league, extract rounds with their expectedStart
- * and eventCategoryId, plus match details (team names, IDs).
+ * and eventCategoryId.
  */
 async function discoverRounds(leagueId) {
   const data = await fetchAPI(`/${leagueId}/matches`, 6000);
@@ -88,22 +100,12 @@ async function discoverRounds(leagueId) {
     const roundNum = rd.roundNumber || 0;
     if (roundNum <= 0) continue;
 
-    const matches = [];
-    for (const m of rd.matches || []) {
-      matches.push({
-        id: m.id,
-        homeTeam: m.homeTeam?.name || '',
-        awayTeam: m.awayTeam?.name || '',
-      });
-    }
-
     rounds.push({
       leagueId,
       leagueName: LEAGUES.find(l => l.id === leagueId)?.name || 'Unknown',
       roundNumber: roundNum,
       eventCategoryId: rd.eventCategoryId || null,
       expectedStart: rd.expectedStart || null,
-      matches,
     });
   }
   return rounds;
@@ -150,9 +152,10 @@ async function fetchPlayoutResults(leagueId, roundNumber, eventCategoryId) {
 // ─── Database operations ───────────────────────────────────────────────────
 
 /**
- * Ensure the match_results and scheduled_fetches tables exist.
+ * Ensure tables exist (v2: fetch_phase column, updated UNIQUE constraint).
  */
 async function ensureTables(sql) {
+  // match_results: same as v1
   await sql`
     CREATE TABLE IF NOT EXISTS match_results (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -171,6 +174,8 @@ async function ensureTables(sql) {
       UNIQUE(league_id, round_number, match_id)
     )
   `;
+
+  // scheduled_fetches: v2 — supports multiple phases per round
   await sql`
     CREATE TABLE IF NOT EXISTS scheduled_fetches (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -179,26 +184,56 @@ async function ensureTables(sql) {
       event_category_id TEXT,
       expected_start TIMESTAMPTZ,
       fetch_after TIMESTAMPTZ NOT NULL,
+      fetch_phase INTEGER NOT NULL DEFAULT 1,
       fetched BOOLEAN NOT NULL DEFAULT FALSE,
       fetched_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE(league_id, round_number)
+      UNIQUE(league_id, round_number, fetch_phase)
     )
   `;
-  // Index for quick lookups
+
+  // Indexes
   await sql`CREATE INDEX IF NOT EXISTS idx_match_results_round ON match_results(league_id, round_number)`;
-  await sql`CREATE INDEX IF NOT EXISTS idx_scheduled_fetches_pending ON scheduled_fetches(fetched) WHERE fetched = FALSE`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_scheduled_fetches_pending ON scheduled_fetches(fetch_after) WHERE fetched = FALSE`;
+
+  // ── Migration from v1 → v2 ──
+  // If the v1 table exists without fetch_phase column, add it
+  try {
+    await sql`ALTER TABLE scheduled_fetches ADD COLUMN IF NOT EXISTS fetch_phase INTEGER NOT NULL DEFAULT 1`;
+    // Drop old v1 constraint and add new v2 constraint
+    await sql`
+      ALTER TABLE scheduled_fetches
+      DROP CONSTRAINT IF EXISTS scheduled_fetches_league_id_round_number_key
+    `;
+    await sql`
+      ALTER TABLE scheduled_fetches
+      ADD CONSTRAINT scheduled_fetches_league_round_phase_uniq
+      UNIQUE (league_id, round_number, fetch_phase)
+    `;
+  } catch (e) {
+    console.log(`[auto-playout] Migration note: ${e.message}`);
+  }
 }
 
 /**
- * Check if a round already has results in match_results.
+ * Schedule ALL 3 phases for a round (expectedStart + offsets).
  */
-async function hasExistingResults(sql, leagueId, roundNumber) {
-  const rows = await sql`
-    SELECT COUNT(*)::int AS cnt FROM match_results
-    WHERE league_id = ${leagueId} AND round_number = ${roundNumber}
-  `;
-  return (rows[0]?.cnt || 0) > 0;
+async function scheduleRoundPhases(sql, leagueId, roundNumber, eventCategoryId, expectedStart) {
+  let scheduled = 0;
+  for (const { phase, offset } of FETCH_PHASES) {
+    const fetchAfter = new Date(new Date(expectedStart).getTime() + offset * 1000);
+    try {
+      await sql`
+        INSERT INTO scheduled_fetches (league_id, round_number, event_category_id, expected_start, fetch_after, fetch_phase)
+        VALUES (${leagueId}, ${roundNumber}, ${eventCategoryId}, ${expectedStart}, ${fetchAfter}, ${phase})
+        ON CONFLICT (league_id, round_number, fetch_phase) DO NOTHING
+      `;
+      scheduled++;
+    } catch {
+      // Already scheduled (normal)
+    }
+  }
+  return scheduled;
 }
 
 /**
@@ -208,27 +243,9 @@ async function getDueFetches(sql) {
   return sql`
     SELECT * FROM scheduled_fetches
     WHERE fetched = FALSE AND fetch_after <= NOW()
-    ORDER BY fetch_after ASC
-    LIMIT 20
+    ORDER BY fetch_after ASC, fetch_phase ASC
+    LIMIT 30
   `;
-}
-
-/**
- * Schedule a fetch for a round at expectedStart + offsetSeconds.
- */
-async function scheduleFetch(sql, leagueId, roundNumber, eventCategoryId, expectedStart, offsetSeconds = 100) {
-  const fetchAfter = new Date(new Date(expectedStart).getTime() + offsetSeconds * 1000);
-  try {
-    await sql`
-      INSERT INTO scheduled_fetches (league_id, round_number, event_category_id, expected_start, fetch_after)
-      VALUES (${leagueId}, ${roundNumber}, ${eventCategoryId}, ${expectedStart}, ${fetchAfter})
-      ON CONFLICT (league_id, round_number) DO NOTHING
-    `;
-    return true;
-  } catch (e) {
-    console.log(`[auto-playout] Schedule conflict for ${leagueId}/${roundNumber} (already scheduled)`);
-    return false;
-  }
 }
 
 /**
@@ -243,7 +260,7 @@ async function markFetchDone(sql, id) {
 }
 
 /**
- * Store playout results in match_results (UPSERT).
+ * Store playout results in match_results (UPSERT — latest scores win).
  */
 async function storeResults(sql, leagueId, leagueName, roundNumber, results) {
   let stored = 0;
@@ -268,18 +285,29 @@ async function storeResults(sql, leagueId, leagueName, roundNumber, results) {
   return stored;
 }
 
+/**
+ * Check if phase 3 (final) has been fetched for a given round.
+ */
+async function isFinalPhaseDone(sql, leagueId, roundNumber) {
+  const rows = await sql`
+    SELECT fetched FROM scheduled_fetches
+    WHERE league_id = ${leagueId} AND round_number = ${roundNumber} AND fetch_phase = 3
+    LIMIT 1
+  `;
+  return rows.length > 0 && rows[0].fetched === true;
+}
+
 // ─── Main handler ───────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
   const startTime = Date.now();
-  console.log('=== auto-playout v1 ===');
+  console.log('=== auto-playout v2 (multi-fetch) ===');
 
   try {
     // ── Auth: CRON key required ──
     const cronKey = req.headers['x-cron-key'] || '';
     const expectedCronKey = process.env.CRON_SECRET || '';
 
-    // Also allow manual trigger via ?manual=true (for testing from dashboard)
     const isManual = req.query.manual === 'true';
     if (!isManual) {
       if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
@@ -304,7 +332,7 @@ export default async function handler(req, res) {
 
     console.log(`[auto-playout] Discovered ${allRounds.length} rounds across ${LEAGUES.length} leagues`);
 
-    // ── Phase 2: Schedule new rounds (expectedStart + 100s) ──
+    // ── Phase 2: Schedule new rounds (3 phases each) ──
     const now = Date.now();
     let scheduledCount = 0;
 
@@ -312,20 +340,21 @@ export default async function handler(req, res) {
       if (!round.expectedStart) continue;
 
       const expectedMs = new Date(round.expectedStart).getTime();
-      // Only schedule rounds that haven't started yet (expectedStart > now - 60s)
-      // and that start within the next 30 minutes
-      const startsSoon = expectedMs > now - 60_000 && expectedMs < now + 30 * 60_000;
+      // Schedule rounds that start within the next 30 minutes (and haven't expired)
+      const startsSoon = expectedMs > now - 30_000 && expectedMs < now + 30 * 60_000;
 
       if (startsSoon) {
-        const scheduled = await scheduleFetch(
+        const count = await scheduleRoundPhases(
           sql,
           round.leagueId,
           round.roundNumber,
           round.eventCategoryId,
-          round.expectedStart,
-          100 // fetch 100 seconds after expectedStart
+          round.expectedStart
         );
-        if (scheduled) scheduledCount++;
+        if (count > 0) {
+          scheduledCount += count;
+          console.log(`[auto-playout] Scheduled ${count} phases for ${round.leagueId}/${round.roundNumber} (starts ${round.expectedStart})`);
+        }
       }
     }
 
@@ -334,17 +363,10 @@ export default async function handler(req, res) {
     console.log(`[auto-playout] ${dueFetches.length} due fetches, ${scheduledCount} newly scheduled`);
 
     let totalStored = 0;
-    let totalFetched = 0;
+    let phase3Done = [];  // Track which (league, round) completed phase 3
     const fetchDetails = [];
 
     for (const fetch of dueFetches) {
-      // Skip if results already exist
-      const existing = await hasExistingResults(sql, fetch.league_id, fetch.round_number);
-      if (existing) {
-        await markFetchDone(sql, fetch.id);
-        continue;
-      }
-
       const results = await fetchPlayoutResults(
         fetch.league_id,
         fetch.round_number,
@@ -355,33 +377,41 @@ export default async function handler(req, res) {
         const leagueName = LEAGUES.find(l => l.id === fetch.league_id)?.name || 'Unknown';
         const stored = await storeResults(sql, fetch.league_id, leagueName, fetch.round_number, results);
         totalStored += stored;
+
+        const avgMinute = results.reduce((s, r) => s + (r.minute || 0), 0) / results.length;
         fetchDetails.push({
           league: fetch.league_id,
           round: fetch.round_number,
+          phase: fetch.fetch_phase,
           results: results.length,
           stored,
+          avgMinute: Math.round(avgMinute),
         });
-        console.log(`[auto-playout] ${fetch.league_id}/${fetch.round_number}: ${results.length} results, ${stored} stored`);
+        console.log(`[auto-playout] ${fetch.league_id}/${fetch.round_number} phase ${fetch.fetch_phase}: ${results.length} results (${stored} stored, avg minute: ${Math.round(avgMinute)})`);
+
+        await markFetchDone(sql, fetch.id);
+
+        // Track phase 3 completions for verification trigger
+        if (fetch.fetch_phase === 3) {
+          phase3Done.push({ leagueId: fetch.league_id, roundNumber: fetch.round_number });
+        }
       } else {
         // No results yet — don't mark as done, retry next minute
-        console.log(`[auto-playout] ${fetch.league_id}/${fetch.round_number}: no results yet, retry later`);
+        console.log(`[auto-playout] ${fetch.league_id}/${fetch.round_number} phase ${fetch.fetch_phase}: no results, retry later`);
         continue;
       }
-
-      await markFetchDone(sql, fetch.id);
-      totalFetched++;
     }
 
-    // ── Phase 4: Auto-verify predictions if new results stored ──
+    // ── Phase 4: Trigger verify-predictions ONLY after phase 3 completions ──
     let verifyResult = null;
-    if (totalStored > 0) {
+    if (phase3Done.length > 0) {
       try {
         const verifyUrl = process.env.VERCEL_URL
           ? `https://${process.env.VERCEL_URL}/api/verify-predictions`
           : null;
 
         if (verifyUrl && expectedCronKey) {
-          console.log(`[auto-playout] Triggering verify-predictions (${totalStored} new results)`);
+          console.log(`[auto-playout] Triggering verify-predictions (${phase3Done.length} rounds completed phase 3)`);
           const verifyRes = await fetch(verifyUrl, {
             method: 'POST',
             headers: {
@@ -392,7 +422,7 @@ export default async function handler(req, res) {
             signal: AbortSignal.timeout(30000),
           });
           verifyResult = verifyRes.ok ? await verifyRes.json() : { error: verifyRes.status };
-          console.log(`[auto-playout] verify-predictions: ${JSON.stringify(verifyResult)}`);
+          console.log(`[auto-playout] verify-predictions result: ${JSON.stringify(verifyResult)}`);
         }
       } catch (e) {
         console.log(`[auto-playout] verify trigger error: ${e.message}`);
@@ -408,17 +438,17 @@ export default async function handler(req, res) {
     await sql.end();
 
     const elapsed = Date.now() - startTime;
-    console.log(`[auto-playout] Done in ${elapsed}ms: ${scheduledCount} scheduled, ${totalFetched} fetched, ${totalStored} results stored`);
+    console.log(`[auto-playout] Done in ${elapsed}ms: ${scheduledCount} scheduled, ${dueFetches.length} due, ${totalStored} results stored, ${phase3Done.length} phase3 done`);
 
     return res.status(200).json({
       success: true,
-      version: 'v1',
+      version: 'v2-multi-fetch',
       elapsed,
       roundsDiscovered: allRounds.length,
       newlyScheduled: scheduledCount,
       dueFetches: dueFetches.length,
-      fetched: totalFetched,
       resultsStored: totalStored,
+      phase3Completed: phase3Done.length,
       fetchDetails,
       verifyResult,
     });
