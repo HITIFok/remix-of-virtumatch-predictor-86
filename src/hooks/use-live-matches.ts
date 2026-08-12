@@ -404,6 +404,21 @@ export function useLiveMatches() {
     }
   }, [matches, currentRound]);
 
+  // ─── Auto-trigger auto-playout on mount (Hobby plan: no Vercel cron) ───
+  // When user opens Live Matches page, triggers the backend auto-playout
+  // endpoint to discover rounds, schedule fetches, and store playout results.
+  useEffect(() => {
+    if (!config.api.autoPlayoutUrl) return;
+    fetch(config.api.autoPlayoutUrl, { signal: AbortSignal.timeout(60000) })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.resultsStored) {
+          console.log(`[auto-playout] ${data.resultsStored} results stored on backend`);
+        }
+      })
+      .catch(() => { /* silent — non-critical */ });
+  }, []);
+
   useEffect(() => {
     fetchMatches();
   }, []);

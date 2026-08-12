@@ -11,11 +11,11 @@
   "crons": [
     {
       "path": "/api/auto-playout",
-      "schedule": "* * * * *"
+      "schedule": "0 6 * * *"
     },
     {
       "path": "/api/verify-predictions",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 6 * * *"
     }
   ],
   "headers": [
