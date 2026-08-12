@@ -190,7 +190,7 @@ function patchPrediction(sql, id, match, status) {
 
 export default async function handler(req, res) {
   // CORS (uses shared module — no wildcard)
-  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-cron-key');
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization, x-cron-key');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
@@ -207,9 +207,11 @@ export default async function handler(req, res) {
     const sql = postgres(NEON_DATABASE_URL);
 
     // Mode detection: CRON vs CLIENT
-    const cronKey = req.headers['x-cron-key'];
-    const expectedCronKey = process.env.CRON_SECRET;
-    const isCron = cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey);
+    // CRON = valid x-cron-key header (works with GET or POST)
+    // CLIENT = POST with device_id in body
+    const cronKey = req.headers['x-cron-key'] || '';
+    const expectedCronKey = process.env.CRON_SECRET || '';
+    const isCron = !!(cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey));
 
     let deviceId;
     let callerMode;
