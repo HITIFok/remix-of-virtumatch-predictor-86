@@ -42,9 +42,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const [result] = await sql`SELECT check_premium_status(${deviceId}::text)`;
-
-    return res.status(200).json({ premium: result?.check_premium_status === true });
+    const rows = await sql`
+      SELECT check_premium_status(${deviceId}::text) as is_premium,
+             (SELECT expires_at FROM premium_activations WHERE device_id = ${deviceId}) as expires_at
+    `;
+    const result = rows[0];
+    const isPremium = result?.is_premium === true;
+    return res.status(200).json({
+      premium: isPremium,
+      expires_at: isPremium ? result?.expires_at || null : null,
+    });
   } catch (err) {
     console.error('[check-premium] Exception:', err.message);
     return res.status(200).json({ premium: false });

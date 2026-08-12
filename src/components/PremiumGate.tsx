@@ -17,6 +17,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
   const [serverConfirmed, setServerConfirmed] = useState(false);
 
   // Sécurité C2 : vérification serveur au mount (pas seulement localStorage)
+  // Mode 'offline' = réseau indisponible → garder l'accès (période de grâce)
   useEffect(() => {
     const access = getAccess();
     if (!access) {
@@ -25,18 +26,24 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
     }
 
     // Vérifier auprès du serveur que le premium est réellement actif
-    verifyPremium().then((isPremiumServer) => {
-      if (isPremiumServer) {
+    verifyPremium().then((result) => {
+      if (result === true) {
+        setServerConfirmed(true);
+      } else if (result === 'offline') {
+        // Réseau indisponible → garder l'accès premium (période de grâce)
+        // On fait confiance au localStorage tant que le serveur répond pas
+        console.log('[PremiumGate] Serveur indisponible, accès premium conservé (grace period)');
         setServerConfirmed(true);
       } else {
+        // Serveur a explicitement dit NON premium → révoquer
         clearAccess();
         setServerConfirmed(false);
       }
       setVerifying(false);
     }).catch(() => {
-      // En cas d'erreur réseau, on ne bloque pas l'utilisateur
-      // mais on n'accorde pas non plus l'accès premium sans vérification
-      setServerConfirmed(false);
+      // Erreur réseau → période de grâce, ne pas bloquer
+      console.log('[PremiumGate] Erreur vérification, accès premium conservé (grace period)');
+      setServerConfirmed(true);
       setVerifying(false);
     });
   }, []);
@@ -75,7 +82,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
     
     const result = await validateCode(code.trim());
     if (result.valid) {
-      setAccess(code.trim(), result.days);
+      setAccess(code.trim(), result.days, result.expiresAt);
       toast.success(result.message);
       setError("");
       setServerConfirmed(true);

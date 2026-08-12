@@ -162,6 +162,7 @@ export interface AccessData {
   code: string;
   activatedAt: number;
   expiresAt: number;
+  serverExpiresAt?: string; // ISO date from server (authoritative)
 }
 
 export function getAccess(): AccessData | null {
@@ -169,7 +170,11 @@ export function getAccess(): AccessData | null {
     const data = localStorage.getItem(ACCESS_KEY);
     if (!data) return null;
     const access: AccessData = JSON.parse(data);
-    if (Date.now() > access.expiresAt) {
+    // Check expiry: prefer server date, fallback to client timestamp
+    const expiresAt = access.serverExpiresAt
+      ? new Date(access.serverExpiresAt).getTime()
+      : access.expiresAt;
+    if (Date.now() > expiresAt) {
       localStorage.removeItem(ACCESS_KEY);
       return null;
     }
@@ -177,13 +182,18 @@ export function getAccess(): AccessData | null {
   } catch { return null; }
 }
 
-export function setAccess(code: string, daysValid: number) {
+export function setAccess(code: string, daysValid: number, serverExpiresAt?: string) {
   const now = Date.now();
   const access: AccessData = {
     code,
     activatedAt: now,
-    expiresAt: now + daysValid * 24 * 60 * 60 * 1000,
+    expiresAt: serverExpiresAt
+      ? new Date(serverExpiresAt).getTime()
+      : now + daysValid * 24 * 60 * 60 * 1000,
   };
+  if (serverExpiresAt) {
+    access.serverExpiresAt = serverExpiresAt;
+  }
   localStorage.setItem(ACCESS_KEY, JSON.stringify(access));
 }
 
@@ -193,7 +203,11 @@ export function isPremium(): boolean {
 }
 
 // ═══ SÉCURISÉ : premium vérifié côté SERVEUR via API Route (Web ET APK) ═══
-export async function verifyPremium(): Promise<boolean> {
+// Returns:
+//   true  → server confirmed premium is active
+//   false → server explicitly said premium is NOT active (localStorage cleaned)
+//   'offline' → network error / server unreachable (don't clear localStorage!)
+export async function verifyPremium(): Promise<boolean | 'offline'> {
   try {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
@@ -203,12 +217,26 @@ export async function verifyPremium(): Promise<boolean> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deviceId }),
     });
-    if (!res.ok) { clearAccess(); return false; }
+
+    // Server error (500, 502, etc.) → don't clear, treat as offline
+    if (!res.ok) return 'offline';
+
     const data = await res.json();
+    // Server explicitly says NOT premium → clear localStorage
     if (!data.premium) { clearAccess(); return false; }
+
+    // Sync server expiry date if provided
+    if (data.expires_at) {
+      const access = getAccess();
+      if (access) {
+        setAccess(access.code, 0, data.expires_at);
+      }
+    }
+
     return true;
   } catch {
-    return false;
+    // Network error → don't clear, treat as offline (grace period)
+    return 'offline';
   }
 }
 
@@ -409,7 +437,7 @@ export function generateRandomCode(): string {
 }
 
 // ═══ validateCode — activation d'un code utilisateur via API Route ═══
-export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string }> {
+export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string; expiresAt?: string }> {
   try {
     const deviceId = getDeviceId();
 
@@ -430,7 +458,12 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
       return { valid: false, days: 0, message: data.message || 'Code invalide, introuvable ou déjà utilisé' };
     }
 
-    return { valid: true, days: data.days || 0, message: data.message || `Code valide! ${data.days || 0} jours d'accès` };
+    return {
+      valid: true,
+      days: data.days || 0,
+      message: data.message || `Code valide! ${data.days || 0} jours d'accès`,
+      expiresAt: data.expires_at || undefined, // Server-calculated expiry (authoritative)
+    };
   } catch (err: any) {
     console.error('Exception validateCode:', err);
     return { valid: false, days: 0, message: `Exception: ${err.message}` };

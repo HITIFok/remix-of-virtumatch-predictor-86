@@ -132,17 +132,19 @@ export default async function handler(req, res) {
 
       // 3. Upsert premium activation with correct expiration
       const durationDays = codeRow.duration_days || 30;
-      await tx`
+      const [activation] = await tx`
         INSERT INTO premium_activations (device_id, activated_at, expires_at)
         VALUES (${deviceId}, NOW(), NOW() + INTERVAL '1 day' * ${durationDays})
         ON CONFLICT (device_id) DO UPDATE
           SET activated_at = NOW(), expires_at = NOW() + INTERVAL '1 day' * ${durationDays}
+        RETURNING expires_at
       `;
 
       return {
         success: true,
         duration_days: durationDays,
         activated_at: new Date().toISOString(),
+        expires_at: activation?.expires_at || null,
       };
     });
 
@@ -153,6 +155,7 @@ export default async function handler(req, res) {
         success: true,
         valid: true,
         days: result.duration_days,
+        expires_at: result.expires_at,
         message: `Premium activated for ${result.duration_days} days`,
       });
     } else {
