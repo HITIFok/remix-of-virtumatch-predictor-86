@@ -9,30 +9,9 @@ const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
 const DEVICE_ID_RE = /^dev-\d+-[a-z0-9]+$/;
 
-// Rate limiting (very strict for activation): 5 attempts per 15 minutes per IP
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const RATE_LIMIT_MAX = 5;
-const rateLimitStore = new Map();
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  const windowKey = Math.floor(now / RATE_LIMIT_WINDOW_MS);
-  const key = `${ip}:${windowKey}`;
-  const record = rateLimitStore.get(key);
-
-  if (!record || now - record.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    rateLimitStore.set(key, { count: 1, firstAttempt: now });
-    return { allowed: true, remaining: RATE_LIMIT_MAX - 1 };
-  }
-
-  if (record.count >= RATE_LIMIT_MAX) {
-    const retryAfter = Math.ceil((record.firstAttempt + RATE_LIMIT_WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter };
-  }
-
-  record.count++;
-  return { allowed: true, remaining: RATE_LIMIT_MAX - record.count };
-}
+// Note: No per-endpoint rate limiting here.
+// The global Edge middleware (middleware.js) already limits to 30 req/min per IP.
+// Keeping this endpoint free of additional limits so users can try multiple codes.
 
 export default async function handler(req, res) {
   // CORS (supports both GET and POST)
@@ -40,15 +19,8 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
-  }
+}
 
-  // Rate limiting
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
-  const rateLimit = checkRateLimit(ip);
-  if (!rateLimit.allowed) {
-    res.setHeader('Retry-After', String(rateLimit.retryAfter));
-    return res.status(429).json({ success: false, error: 'Too many attempts. Please try again later.' });
-  }
 
   if (!NEON_DATABASE_URL) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
