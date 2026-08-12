@@ -1,7 +1,10 @@
-// Vercel Serverless Function — auto-playout v2 (ESM)
+// Vercel Serverless Function — auto-playout v3 (ESM)
 // Cron job: fetches playout results at multiple intervals after expectedStart
 //
-// Strategy (v2 — multi-fetch):
+// Strategy (v3 — async fire-and-forget):
+//   Responds 202 Accepted immediately, then runs all work in background
+//   using Vercel's waitUntil. This prevents cron-job.org timeouts.
+//
 //   Virtual matches last ~3-4 real minutes (90 virtual minutes).
 //   Goals happen throughout, so we need multiple fetches:
 //     Phase 1: expectedStart + 100s  → early score (captures fast goals)
@@ -12,6 +15,7 @@
 //   verify-predictions is triggered ONLY after phase 3 succeeds.
 //
 // Vercel Cron: runs every minute via vercel.json crons config
+// External: cron-job.org calls this endpoint every minute
 
 import crypto from 'crypto';
 import { createSql } from './_lib/db.js';
@@ -297,24 +301,13 @@ async function isFinalPhaseDone(sql, leagueId, roundNumber) {
   return rows.length > 0 && rows[0].fetched === true;
 }
 
-// ─── Main handler ───────────────────────────────────────────────────────
+// ─── Background worker (all the heavy lifting) ───────────────────────
 
-export default async function handler(req, res) {
+async function runPlayout(expectedCronKey) {
   const startTime = Date.now();
-  console.log('=== auto-playout v2 (multi-fetch) ===');
+  console.log('=== auto-playout v3 (background worker started) ===');
 
   try {
-    // ── Auth: CRON key required ──
-    const cronKey = req.headers['x-cron-key'] || '';
-    const expectedCronKey = process.env.CRON_SECRET || '';
-
-    const isManual = req.query.manual === 'true';
-    if (!isManual) {
-      if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
-    }
-
     const sql = createSql();
     await ensureTables(sql);
 
@@ -403,7 +396,6 @@ export default async function handler(req, res) {
     }
 
     // ── Phase 4: Trigger verify-predictions ONLY after phase 3 completions ──
-    let verifyResult = null;
     if (phase3Done.length > 0) {
       try {
         const verifyUrl = process.env.VERCEL_URL
@@ -421,7 +413,7 @@ export default async function handler(req, res) {
             body: JSON.stringify({}),
             signal: AbortSignal.timeout(30000),
           });
-          verifyResult = verifyRes.ok ? await verifyRes.json() : { error: verifyRes.status };
+          const verifyResult = verifyRes.ok ? await verifyRes.json() : { error: verifyRes.status };
           console.log(`[auto-playout] verify-predictions result: ${JSON.stringify(verifyResult)}`);
         }
       } catch (e) {
@@ -438,24 +430,45 @@ export default async function handler(req, res) {
     await sql.end();
 
     const elapsed = Date.now() - startTime;
-    console.log(`[auto-playout] Done in ${elapsed}ms: ${scheduledCount} scheduled, ${dueFetches.length} due, ${totalStored} results stored, ${phase3Done.length} phase3 done`);
-
-    return res.status(200).json({
-      success: true,
-      version: 'v2-multi-fetch',
-      elapsed,
-      roundsDiscovered: allRounds.length,
-      newlyScheduled: scheduledCount,
-      dueFetches: dueFetches.length,
-      resultsStored: totalStored,
-      phase3Completed: phase3Done.length,
-      fetchDetails,
-      verifyResult,
-    });
+    console.log(`[auto-playout] Background worker done in ${elapsed}ms: ${scheduledCount} scheduled, ${dueFetches.length} due, ${totalStored} results stored, ${phase3Done.length} phase3 done`);
 
   } catch (error) {
     const elapsed = Date.now() - startTime;
-    console.error(`[auto-playout] Error (${elapsed}ms):`, error);
-    return res.status(500).json({ error: error.message, elapsed });
+    console.error(`[auto-playout] Background worker error (${elapsed}ms):`, error);
+  }
+}
+
+// ─── Main handler (responds immediately, runs work in background) ──────
+
+export default async function handler(req, res) {
+  console.log('=== auto-playout v3 (fire-and-forget) ===');
+
+  try {
+    // ── Auth: CRON key required (unless ?manual=true) ──
+    const cronKey = req.headers['x-cron-key'] || '';
+    const expectedCronKey = process.env.CRON_SECRET || '';
+
+    const isManual = req.query.manual === 'true';
+    if (!isManual) {
+      if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
+
+    // ── Respond 202 Accepted immediately ──
+    res.status(202).json({
+      accepted: true,
+      version: 'v3-fire-and-forget',
+      message: 'Playout processing started in background',
+    });
+
+    // ── Run heavy work in background using Vercel waitUntil ──
+    // This keeps the function alive after the response is sent
+    // Supports up to ~60s of background execution on Hobby plan
+    res.unstable_waitUntil(runPlayout(expectedCronKey));
+
+  } catch (error) {
+    console.error('[auto-playout] Handler error:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
