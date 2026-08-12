@@ -111,14 +111,52 @@ export default async function handler(req, res) {
       `;
 
       if (!codeRow) {
-        return { success: false, error: 'Code not found or already used' };
+        return { success: false, error: 'Code not found' };
+      }
+
+      // ── Reactivation: code already used by SAME device → restore access ──
+      if (codeRow.used && codeRow.used_by_device === deviceId) {
+        // Check if there's still a valid activation for this device
+        const [existing] = await tx`
+          SELECT expires_at FROM premium_activations
+          WHERE device_id = ${deviceId}
+          ORDER BY activated_at DESC LIMIT 1
+        `;
+
+        if (existing && new Date(existing.expires_at) > new Date()) {
+          // Activation still valid → just return it (no reset)
+          return {
+            success: true,
+            duration_days: codeRow.duration_days || 30,
+            activated_at: new Date().toISOString(),
+            expires_at: existing.expires_at,
+            reactivated: true,
+          };
+        }
+
+        // Activation expired or missing → reactivate (reset duration)
+        const durationDays = codeRow.duration_days || 30;
+        const [activation] = await tx`
+          INSERT INTO premium_activations (device_id, activated_at, expires_at)
+          VALUES (${deviceId}, NOW(), NOW() + INTERVAL '1 day' * ${durationDays})
+          ON CONFLICT (device_id) DO UPDATE
+            SET activated_at = NOW(), expires_at = NOW() + INTERVAL '1 day' * ${durationDays}
+          RETURNING expires_at
+        `;
+        return {
+          success: true,
+          duration_days: durationDays,
+          activated_at: new Date().toISOString(),
+          expires_at: activation?.expires_at || null,
+          reactivated: true,
+        };
       }
 
       if (codeRow.used) {
         return { success: false, error: 'Code already used' };
       }
 
-      // 2. Mark as used (atomic — the FOR UPDATE lock guarantees exclusivity)
+      // 2. First activation: mark as used (atomic — the FOR UPDATE lock guarantees exclusivity)
       const [updated] = await tx`
         UPDATE access_codes
         SET used = true, used_at = NOW(), used_by_device = ${deviceId}
@@ -156,7 +194,10 @@ export default async function handler(req, res) {
         valid: true,
         days: result.duration_days,
         expires_at: result.expires_at,
-        message: `Premium activated for ${result.duration_days} days`,
+        reactivated: result.reactivated || false,
+        message: result.reactivated
+          ? `Premium restauré pour ${result.duration_days} jours`
+          : `Premium activated for ${result.duration_days} days`,
       });
     } else {
       return res.status(400).json({
