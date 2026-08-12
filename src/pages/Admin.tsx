@@ -13,7 +13,7 @@ import {
   verifyAdminSession,
   type GeneratedCode,
 } from "@/lib/storage";
-import { Shield, Plus, Copy, Check, Trash2, Loader2 } from "lucide-react";
+import { Shield, Plus, Copy, Check, Trash2, Loader2, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 
 // ─── Validation côté serveur ───────────────────────────────────────────────────
@@ -29,6 +29,12 @@ export default function Admin() {
   const [loading, setLoading] = useState(true);
   // État de vérification serveur en cours (bloque les boutons pendant la vérif)
   const [verifying, setVerifying] = useState(false);
+
+  // ── Migration state ──
+  const [fromDevice, setFromDevice] = useState("");
+  const [toDevice, setToDevice] = useState("");
+  const [migrating, setMigrating] = useState(false);
+  const [migrateResult, setMigrateResult] = useState<string | null>(null);
 
   // ── Garde d'accès au montage ────────────────────────────────────────────────
   useEffect(() => {
@@ -130,6 +136,52 @@ export default function Admin() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // ── Migration device_id ──
+  const handleMigrate = useCallback(async () => {
+    if (!fromDevice.trim() || !toDevice.trim()) {
+      toast.error("Remplissez les deux device_id");
+      return;
+    }
+    if (fromDevice === toDevice) {
+      toast.error("Les device_id doivent être différents");
+      return;
+    }
+
+    setMigrating(true);
+    setMigrateResult(null);
+    try {
+      const valid = await verifyAdminSession();
+      if (!valid) {
+        toast.error("Session expirée.");
+        navigate("/settings");
+        return;
+      }
+
+      const adminToken = localStorage.getItem("virtuxxs_admin_session");
+      const token = adminToken ? JSON.parse(adminToken).token : "";
+
+      const res = await fetch("/api/admin-migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ from_device_id: fromDevice.trim(), to_device_id: toDevice.trim(), migrate_premium: true }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        toast.error(data.error || "Erreur de migration");
+        return;
+      }
+
+      const r = data.result;
+      setMigrateResult(`${r.migrated} prédictions migrées, ${r.conflicts} conflits ignorés. Premium: ${r.premium_action || 'non migré'}`);
+      toast.success(`Migration réussie: ${r.migrated} prédictions`);
+    } catch (err: any) {
+      toast.error(`Erreur: ${err.message}`);
+    } finally {
+      setMigrating(false);
+    }
+  }, [fromDevice, toDevice, navigate]);
+
   // Garde client (double check au rendu)
   if (!isAdmin()) return null;
 
@@ -224,6 +276,63 @@ export default function Admin() {
           </div>
         )}
       </div>
+
+      {/* ── Migration Device ID ── */}
+      <div className="mt-8 bg-gradient-card rounded-xl border border-gold/30 p-4 sm:p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <ArrowRightLeft className="text-gold" size={18} />
+          <h3 className="font-display text-xs text-gold tracking-widest uppercase">
+            Migration Device ID
+          </h3>
+        </div>
+        <p className="text-[10px] text-muted-foreground leading-relaxed">
+          Migrez les prédictions et le premium d'un ancien device_id vers le nouveau.
+          Utile quand l'utilisateur a perdu son device_id (redémarrage PC, cache vidé).
+        </p>
+        <div className="space-y-2">
+          <div>
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-display block mb-1">
+              Ancien device_id (source)
+            </label>
+            <input
+              type="text"
+              value={fromDevice}
+              onChange={(e) => setFromDevice(e.target.value)}
+              placeholder="dev-1234567890-abcdef12"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50"
+            />
+          </div>
+          <div>
+            <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-display block mb-1">
+              Nouveau device_id (destination)
+            </label>
+            <input
+              type="text"
+              value={toDevice}
+              onChange={(e) => setToDevice(e.target.value)}
+              placeholder="dev-abcdef1234"
+              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50"
+            />
+          </div>
+          <Button
+            onClick={handleMigrate}
+            disabled={migrating || verifying || !fromDevice.trim() || !toDevice.trim()}
+            className="w-full bg-gradient-premium text-background font-display text-xs tracking-wider"
+          >
+            {migrating
+              ? <Loader2 size={14} className="mr-1 animate-spin" />
+              : <ArrowRightLeft size={14} className="mr-1" />
+            }
+            Migrer les données
+          </Button>
+          {migrateResult && (
+            <p className="text-[10px] text-success font-display bg-success/10 rounded-lg p-2 border border-success/20">
+              {migrateResult}
+            </p>
+          )}
+        </div>
+      </div>
+
       <BottomNav />
     </div>
   );
