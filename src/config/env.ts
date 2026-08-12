@@ -30,10 +30,9 @@ export const config = {
   api: {
     // Vercel API Routes (backend sécurisé)
     adminLogin: `${API_BASE}/api/admin-login`,
-    adminVerify: `${API_BASE}/api/admin-verify`,
-    adminDeleteCode: `${API_BASE}/api/admin-delete-code`,
+    adminVerify: `${API_BASE}/api/admin-login`,
+    adminDeleteCode: `${API_BASE}/api/admin-codes`,
     adminCodes: `${API_BASE}/api/admin-codes`,
-    checkPremium: `${API_BASE}/api/check-premium`,
     // API Routes replacing Supabase Edge Functions
     fetchLiveUrl: `${API_BASE}/api/fetch-live`,
     analyzeMatchUrl: `${API_BASE}/api/analyze-match`,

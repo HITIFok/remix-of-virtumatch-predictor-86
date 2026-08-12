@@ -212,10 +212,8 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
-    const res = await fetch(config.api.checkPremium, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
+    const res = await fetch(`${config.api.premiumActivate}?device_id=${encodeURIComponent(deviceId)}`, {
+      method: 'GET',
     });
 
     // Server error (500, 502, etc.) → don't clear, treat as offline

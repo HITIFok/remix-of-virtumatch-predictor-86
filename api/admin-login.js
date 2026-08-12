@@ -1,7 +1,8 @@
-// Vercel Serverless Function - Admin Login (ESM)
-// Vérifie le mot de passe admin via Neon PostgreSQL
-// Retourne un token HMAC-SHA256 signé valable 24h
-// INCLUS : Rate limiting basé sur IP (5 tentatives / 15 minutes)
+// Vercel Serverless Function - Admin Login & Verify (ESM)
+// Route unifiée : login (body { password }) + verify (body { token })
+// Login vérifie le mot de passe admin via Neon PostgreSQL, retourne un token HMAC-SHA256 valable 24h
+// Verify vérifie un token HMAC-SHA256 signé par login
+// INCLUS : Rate limiting basé sur IP (5 tentatives / 15 minutes) — login uniquement
 // INCLUS : CORS dynamique (autorise web + APK, bloque les autres sites)
 
 import crypto from 'crypto';
@@ -51,6 +52,55 @@ function signToken(timestamp) {
   return `${payload}.${signature}`;
 }
 
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return { valid: false };
+
+  const parts = token.split('.');
+  if (parts.length !== 2) return { valid: false };
+
+  const [payload, signature] = parts;
+
+  let timestamp;
+  try {
+    timestamp = parseInt(Buffer.from(payload, 'base64url').toString(), 10);
+  } catch {
+    return { valid: false };
+  }
+
+  if (isNaN(timestamp)) return { valid: false };
+
+  // Vérifier l'expiration
+  if (Date.now() - timestamp > SESSION_DURATION_MS) return { valid: false };
+
+  // Recalculer la signature
+  const expected = crypto
+    .createHmac('sha256', ADMIN_TOKEN_SECRET)
+    .update(payload)
+    .digest('base64url');
+
+  // Comparaison timing-safe
+  try {
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+    if (sigBuf.length !== expBuf.length) return { valid: false };
+    if (!crypto.timingSafeEqual(sigBuf, expBuf)) return { valid: false };
+  } catch {
+    return { valid: false };
+  }
+
+  return { valid: true, timestamp };
+}
+
+// ─── Body helper ─────────────────────────────────────────────────────────────
+
+function parseBody(req) {
+  const body = req.body && typeof req.body === 'object' ? { ...req.body } : {};
+  if (typeof req.body === 'string' && req.body.length > 0) {
+    try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
+  }
+  return body;
+}
+
 export default async function handler(req, res) {
   // CORS dynamique (autorise web + APK uniquement)
   setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type');
@@ -72,16 +122,35 @@ export default async function handler(req, res) {
   }
 
   // Validation config
-  if (!NEON_DATABASE_URL) {
-    console.error('[admin-login] NEON_DATABASE_URL manquant');
-    return res.status(500).json({ success: false, error: 'Server not configured' });
-  }
   if (!ADMIN_TOKEN_SECRET) {
     console.error('[admin-login] ADMIN_TOKEN_SECRET manquant');
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
 
-  // ─── Rate Limiting ─────────────────────────────────────────────────────────
+  // Body parsing
+  const body = parseBody(req);
+
+  // ─── Dispatch : verify vs login ────────────────────────────────────────────
+  if (body.token && !body.password) {
+    return handleVerify(req, res, body.token);
+  }
+  return handleLogin(req, res, body);
+}
+
+// ─── Verify handler (pas de rate limiting) ───────────────────────────────────
+async function handleVerify(req, res, token) {
+  const result = verifyToken(token);
+  return res.status(200).json({ valid: result.valid });
+}
+
+// ─── Login handler (avec rate limiting + DB) ─────────────────────────────────
+async function handleLogin(req, res, body) {
+  if (!NEON_DATABASE_URL) {
+    console.error('[admin-login] NEON_DATABASE_URL manquant');
+    return res.status(500).json({ success: false, error: 'Server not configured' });
+  }
+
+  // ─── Rate Limiting ───────────────────────────────────────────────────────
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
   const rateLimit = checkRateLimit(clientIp);
 
@@ -91,12 +160,6 @@ export default async function handler(req, res) {
       success: false,
       error: `Trop de tentatives. Réessayez dans ${rateLimit.retryAfter} secondes.`,
     });
-  }
-
-  // Body parsing
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
-  if (typeof req.body === 'string' && req.body.length > 0) {
-    try { Object.assign(body, JSON.parse(req.body)); } catch { /* ignore */ }
   }
 
   const { password } = body;
@@ -134,4 +197,4 @@ export default async function handler(req, res) {
     console.error('[admin-login] Exception:', err.message);
     return res.status(200).json({ success: false, error: 'Erreur serveur' });
   }
-};
+}

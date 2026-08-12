@@ -63,9 +63,16 @@ export default async function handler(req, res) {
 
     try {
       const sql = postgres(NEON_DATABASE_URL);
-      const [result] = await sql`SELECT check_premium_status(${deviceId}::text) as is_premium`;
+      const [result] = await sql`
+        SELECT check_premium_status(${deviceId}::text) as is_premium,
+               (SELECT expires_at FROM premium_activations WHERE device_id = ${deviceId}) as expires_at
+      `;
       await sql.end();
-      return res.status(200).json({ premium: result?.is_premium === true });
+      const isPremium = result?.is_premium === true;
+      return res.status(200).json({
+        premium: isPremium,
+        expires_at: isPremium ? (result?.expires_at || null) : null,
+      });
     } catch (err) {
       console.error('[premium-activate GET] Error:', err.message);
       return res.status(500).json({ premium: false, error: 'Failed to check premium status' });

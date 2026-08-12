@@ -160,7 +160,7 @@ export default function Admin() {
       const adminToken = localStorage.getItem("virtuxxs_admin_session");
       const token = adminToken ? JSON.parse(adminToken).token : "";
 
-      const res = await fetch("/api/admin-migrate", {
+      const res = await fetch("/api/admin-codes", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ from_device_id: fromDevice.trim(), to_device_id: toDevice.trim(), migrate_premium: true }),
