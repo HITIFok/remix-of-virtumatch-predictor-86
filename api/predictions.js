@@ -7,7 +7,10 @@ import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
-const DEVICE_ID_RE = /^dev-\d+-[a-z0-9]+$/;
+// Accept both formats:
+//   dev-<8-hex>         (current client fingerprint: dev-a3f1b2c4)
+//   dev-<number>-<hex>  (legacy format)
+const DEVICE_ID_RE = /^dev-[a-z0-9]+$/;
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
 // Rate limiting: 30 requests per minute per IP
@@ -59,7 +62,7 @@ function validatePrediction(body) {
     errors.push('prediction must be 1, X, or 2');
   }
   if (!body.device_id || !DEVICE_ID_RE.test(body.device_id)) {
-    errors.push('device_id is required and must match format dev-\d+-[a-z0-9]+');
+    errors.push('device_id is required and must match format dev-<hex>');
   }
 
   return {

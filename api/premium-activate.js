@@ -7,7 +7,10 @@ import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
-const DEVICE_ID_RE = /^dev-\d+-[a-z0-9]+$/;
+// Accept both formats:
+//   dev-<8-hex>         (current client fingerprint: dev-a3f1b2c4)
+//   dev-<number>-<hex>  (legacy format)
+const DEVICE_ID_RE = /^dev-[a-z0-9]+$/;
 
 // Note: No per-endpoint rate limiting here.
 // The global Edge middleware (middleware.js) already limits to 30 req/min per IP.
@@ -19,8 +22,7 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
-}
-
+  }
 
   if (!NEON_DATABASE_URL) {
     return res.status(500).json({ success: false, error: 'Server not configured' });

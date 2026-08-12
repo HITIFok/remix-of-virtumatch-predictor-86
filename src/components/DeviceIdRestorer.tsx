@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { restoreDeviceId, getDeviceId } from '@/lib/device';
+import { Loader2 } from 'lucide-react';
 
 interface DeviceIdRestorerProps {
   children: React.ReactNode;
@@ -13,13 +14,26 @@ interface DeviceIdRestorerProps {
  * 2. Restores it to localStorage
  * 3. Calls onRestored() so the parent can reload data (predictions, premium, etc.)
  *
- * Non-blocking: renders children immediately, restores in background.
+ * IMPORTANT: This component is BLOCKING — it waits for restoreDeviceId()
+ * before rendering children. This prevents PremiumGate from calling verifyPremium()
+ * with a temporary fingerprint instead of the real stored device_id.
  */
 export function DeviceIdRestorer({ children, onRestored }: DeviceIdRestorerProps) {
-  const [done, setDone] = useState(false);
+  const [ready, setReady] = useState(false);
 
   const doRestore = useCallback(async () => {
     try {
+      // Check localStorage first — if it has an ID, no need to wait for IDB
+      const lsId = localStorage.getItem("virtuxxs_device_id");
+      if (lsId && lsId.startsWith('dev-')) {
+        // localStorage already has device_id — good to go
+        getDeviceId(); // warm the cache
+        setReady(true);
+        return;
+      }
+
+      // localStorage is empty — try to restore from IndexedDB
+      // This MUST complete before any API calls happen
       const restoredId = await restoreDeviceId();
       if (restoredId) {
         console.log(`[DeviceIdRestorer] Restored device ID, reloading data...`);
@@ -28,22 +42,23 @@ export function DeviceIdRestorer({ children, onRestored }: DeviceIdRestorerProps
     } catch (err) {
       console.warn('[DeviceIdRestorer] Restore failed:', err);
     } finally {
-      setDone(true);
+      setReady(true);
     }
   }, [onRestored]);
 
   useEffect(() => {
-    // Only restore if localStorage is empty (no cached ID)
-    try {
-      const lsId = localStorage.getItem("virtuxxs_device_id");
-      if (lsId) {
-        setDone(true); // localStorage has ID, no need to restore
-        return;
-      }
-    } catch { /* no localStorage — definitely need restore */ }
-
     doRestore();
   }, [doRestore]);
+
+  // Block rendering until device_id is resolved
+  // This prevents PremiumGate from calling verifyPremium() with a wrong device_id
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="animate-spin text-muted-foreground" size={24} />
+      </div>
+    );
+  }
 
   return <>{children}</>;
 }

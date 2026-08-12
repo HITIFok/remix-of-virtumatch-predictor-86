@@ -236,7 +236,7 @@ export default async function handler(req, res) {
       }
 
       // Valider le format du device_id
-      if (!/^dev-\d+-[a-z0-9]+$/i.test(deviceId)) {
+      if (!/^dev-[a-z0-9]+$/i.test(deviceId)) {
         return res.status(400).json({
           success: false,
           error: 'Format device_id invalide',
