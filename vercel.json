@@ -8,6 +8,16 @@
       "destination": "/index.html"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/auto-playout",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/verify-predictions",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
