@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Loader2 } from "lucide-react";
+import { DeviceIdRestorer } from "@/components/DeviceIdRestorer";
 
 const Index = lazy(() => import("./pages/Index"));
 const LiveMatches = lazy(() => import("./pages/LiveMatches"));
@@ -33,23 +34,25 @@ function PageLoader() {
 
 const App = () => (
   <ErrorBoundary>
-    <TooltipProvider>
-      <Sonner />
-      <BrowserRouter>
-        <Suspense fallback={<PageLoader />}>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/live" element={<LiveMatches />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/shop" element={<Shop />} />
-            <Route path="/guide" element={<Guide />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </BrowserRouter>
-    </TooltipProvider>
+    <DeviceIdRestorer>
+      <TooltipProvider>
+        <Sonner />
+        <BrowserRouter>
+          <Suspense fallback={<PageLoader />}>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/live" element={<LiveMatches />} />
+              <Route path="/history" element={<History />} />
+              <Route path="/shop" element={<Shop />} />
+              <Route path="/guide" element={<Guide />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </BrowserRouter>
+      </TooltipProvider>
+    </DeviceIdRestorer>
   </ErrorBoundary>
 );
 
