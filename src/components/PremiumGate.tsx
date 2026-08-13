@@ -16,34 +16,28 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
   const [verifying, setVerifying] = useState(true);
   const [serverConfirmed, setServerConfirmed] = useState(false);
 
-  // Sécurité C2 : vérification serveur au mount (pas seulement localStorage)
-  // Mode 'offline' = réseau indisponible → garder l'accès (période de grâce)
+  // ALWAYS check the server — even if localStorage is empty.
+  // This handles: browser clears data on close, new device, etc.
+  // The server is the source of truth for premium status.
   useEffect(() => {
-    const access = getAccess();
-    if (!access) {
-      setVerifying(false);
-      return;
-    }
-
-    // Vérifier auprès du serveur que le premium est réellement actif
     verifyPremium().then((result) => {
       if (result === true) {
+        // Server confirmed premium → grant access (even if localStorage was empty)
         setServerConfirmed(true);
       } else if (result === 'offline') {
-        // Réseau indisponible → garder l'accès premium (période de grâce)
-        // On fait confiance au localStorage tant que le serveur répond pas
-        console.log('[PremiumGate] Serveur indisponible, accès premium conservé (grace period)');
-        setServerConfirmed(true);
+        // Network unreachable → trust localStorage if it has data (grace period)
+        const access = getAccess();
+        setServerConfirmed(!!access);
       } else {
-        // Serveur a explicitement dit NON premium → révoquer
+        // Server explicitly said NOT premium → show code form
         clearAccess();
         setServerConfirmed(false);
       }
       setVerifying(false);
     }).catch(() => {
-      // Erreur réseau → période de grâce, ne pas bloquer
-      console.log('[PremiumGate] Erreur vérification, accès premium conservé (grace period)');
-      setServerConfirmed(true);
+      // Network error → trust localStorage if it has data (grace period)
+      const access = getAccess();
+      setServerConfirmed(!!access);
       setVerifying(false);
     });
   }, []);
@@ -65,7 +59,7 @@ export default function PremiumGate({ onUnlocked }: PremiumGateProps) {
         <ShieldCheck className="text-success" size={20} />
         <div>
           <p className="text-sm font-semibold text-success">Premium Actif</p>
-          <p className="text-xs text-muted-foreground">{daysLeft} jours restants</p>
+          <p className="text-xs text-muted-foreground">{daysLeft > 0 ? `${daysLeft} jours restants` : 'Premium actif (vérifié par serveur)'}</p>
         </div>
       </div>
     );

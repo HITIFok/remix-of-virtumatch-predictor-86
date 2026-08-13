@@ -224,10 +224,17 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
     if (!data.premium) { clearAccess(); return false; }
 
     // Sync server expiry date if provided
+    // This ALSO auto-restores access when localStorage was cleared (browser clears on close)
     if (data.expires_at) {
       const access = getAccess();
       if (access) {
+        // localStorage has data — just sync the server expiry
         setAccess(access.code, 0, data.expires_at);
+      } else {
+        // localStorage is empty but server says premium is active!
+        // Auto-restore access so the user doesn't need to re-enter their code
+        // (happens when browser clears cookies/data on close)
+        setAccess('server-restore', 0, data.expires_at);
       }
     }
 
