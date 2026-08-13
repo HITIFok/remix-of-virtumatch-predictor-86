@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Loader2 } from "lucide-react";
 import { DeviceIdRestorer } from "@/components/DeviceIdRestorer";
+import EarlyAlertBanner from "@/components/EarlyAlertBanner";
 
 const Index = lazy(() => import("./pages/Index"));
 const LiveMatches = lazy(() => import("./pages/LiveMatches"));
@@ -36,6 +37,7 @@ const App = () => (
   <ErrorBoundary>
     <DeviceIdRestorer>
       <TooltipProvider>
+        <EarlyAlertBanner />
         <Sonner />
         <BrowserRouter>
           <Suspense fallback={<PageLoader />}>

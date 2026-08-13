@@ -42,5 +42,7 @@ export const config = {
     predictions: `${API_BASE}/api/predictions`,
     premiumActivate: `${API_BASE}/api/premium-activate`,
     scrapedData: `${API_BASE}/api/matches?mode=cache`,
+    // Early alerts (results detected before match start)
+    earlyAlertsUrl: `${API_BASE}/api/early-alerts`,
   },
 } as const;
