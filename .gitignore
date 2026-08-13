@@ -50,3 +50,6 @@ tool-results/
 virtumatch-repo/
 skills/
 
+# Test outputs
+api-exploration.txt
+

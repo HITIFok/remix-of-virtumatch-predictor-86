@@ -333,10 +333,10 @@ async function runPlayout(expectedCronKey) {
       if (!round.expectedStart) continue;
 
       const expectedMs = new Date(round.expectedStart).getTime();
-      // Schedule rounds that start within the next 30 minutes (and haven't expired)
+      // Schedule rounds that start within the next 30 minutes (skip timing gate in manual mode)
       const startsSoon = expectedMs > now - 30_000 && expectedMs < now + 30 * 60_000;
 
-      if (startsSoon) {
+      if (startsSoon || isManual) {
         const count = await scheduleRoundPhases(
           sql,
           round.leagueId,
@@ -444,16 +444,17 @@ export default async function handler(req, res) {
   console.log('=== auto-playout v3 (fire-and-forget) ===');
 
   try {
-    // ── Auth: CRON key required (unless ?manual=true) ──
+    // ── Auth: CRON key ALWAYS required (no bypass, even in manual mode) ──
     const cronKey = req.headers['x-cron-key'] || '';
     const expectedCronKey = process.env.CRON_SECRET || '';
 
-    const isManual = req.query.manual === 'true';
-    if (!isManual) {
-      if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    // ?manual=true only skips timing gates (e.g. "starts within 30 min"), never auth.
+    // CRON key is mandatory in ALL cases (cron-job.org, Vercel Cron, manual, dev).
+    if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
+
+    const isManual = req.query.manual === 'true';
 
     // ── Respond 202 Accepted immediately ──
     res.status(202).json({

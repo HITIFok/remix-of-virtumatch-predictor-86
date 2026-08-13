@@ -7,7 +7,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 
-const OUTPUT_FILE = '/home/z/my-project/download/api-exploration.txt';
+const OUTPUT_FILE = './api-exploration.txt';
 let output = '';
 
 function log(msg) {
