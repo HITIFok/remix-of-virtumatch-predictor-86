@@ -579,6 +579,25 @@ async function runPlayout(expectedCronKey) {
       console.log(`[auto-playout] Cleaned ${deletedFake.count} fake results (empty goals)`);
     }
 
+    // POISONED PREDICTIONS RESET: Reset predictions marked "incorrect" with fake 0:0
+    // back to "pending" so they can be re-verified with real results.
+    const resetPoisoned = await sql`
+      UPDATE predictions
+      SET status = 'pending',
+          actual_home_score = NULL,
+          actual_away_score = NULL,
+          actual_outcome = NULL,
+          actual_score = NULL,
+          verified_at = NULL
+      WHERE status = 'incorrect'
+        AND actual_home_score = 0
+        AND actual_away_score = 0
+        AND actual_score = '0:0'
+    `;
+    if (resetPoisoned.count > 0) {
+      console.log(`[auto-playout] Reset ${resetPoisoned.count} poisoned predictions back to pending`);
+    }
+
     await sql.end();
 
     const elapsed = Date.now() - startTime;
