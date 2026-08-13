@@ -37,7 +37,7 @@ export const config = {
     fetchLiveUrl: `${API_BASE}/api/fetch-live`,
     analyzeMatchUrl: `${API_BASE}/api/analyze-match`,
     verifyPredictionsUrl: `${API_BASE}/api/verify-predictions`,
-    autoPlayoutUrl: `${API_BASE}/api/auto-playout`,
+    // auto-playout is cron-only (requires CRON_SECRET), not callable from frontend
     // API Routes replacing direct Neon SQL
     predictions: `${API_BASE}/api/predictions`,
     premiumActivate: `${API_BASE}/api/premium-activate`,
