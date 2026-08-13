@@ -1,4 +1,4 @@
-// Vercel Serverless Function — early-alerts v1 (ESM)
+// Vercel Serverless Function — early-alerts v2 (ESM)
 // Returns active early result alerts detected by auto-playout v4
 // These are results found BEFORE the match officially started
 //
@@ -7,6 +7,32 @@
 
 import { createSql } from './_lib/db.js';
 import { setCorsHeaders } from './_lib/cors.js';
+
+/**
+ * Ensure early_alerts table exists (self-healing — no dependency on auto-playout).
+ */
+async function ensureAlertsTable(sql) {
+  await sql`
+    CREATE TABLE IF NOT EXISTS early_alerts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      league_id TEXT NOT NULL,
+      league_name TEXT NOT NULL,
+      round_number INTEGER NOT NULL,
+      match_id INTEGER NOT NULL,
+      home_team TEXT NOT NULL,
+      away_team TEXT NOT NULL,
+      score_home INTEGER NOT NULL DEFAULT 0,
+      score_away INTEGER NOT NULL DEFAULT 0,
+      outcome TEXT NOT NULL DEFAULT 'X',
+      expected_start TIMESTAMPTZ,
+      detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      how_early_seconds INTEGER NOT NULL DEFAULT 0,
+      dismissed BOOLEAN NOT NULL DEFAULT FALSE,
+      UNIQUE(league_id, round_number, match_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_early_alerts_active ON early_alerts(detected_at) WHERE dismissed = FALSE`;
+}
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, 'GET, OPTIONS', 'Content-Type');
@@ -24,12 +50,13 @@ export default async function handler(req, res) {
 
   try {
     const sql = createSql();
+    await ensureAlertsTable(sql);
 
     let rows;
     if (showAll) {
       // All alerts (including dismissed)
       rows = await sql`
-        SELECT league_id, league_name, round_number, match_id,
+        SELECT id, league_id, league_name, round_number, match_id,
                home_team, away_team, score_home, score_away, outcome,
                expected_start, detected_at, how_early_seconds, dismissed
         FROM early_alerts
@@ -40,7 +67,7 @@ export default async function handler(req, res) {
     } else {
       // Only active (not dismissed) alerts
       rows = await sql`
-        SELECT league_id, league_name, round_number, match_id,
+        SELECT id, league_id, league_name, round_number, match_id,
                home_team, away_team, score_home, score_away, outcome,
                expected_start, detected_at, how_early_seconds, dismissed
         FROM early_alerts
