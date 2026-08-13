@@ -445,7 +445,9 @@ export default async function handler(req, res) {
 
   try {
     // ── Auth: CRON key ALWAYS required (no bypass, even in manual mode) ──
-    const cronKey = req.headers['x-cron-key'] || '';
+    // Accept key via header (x-cron-key) OR query param (?cron_key=xxx).
+    // Header is preferred (cron-job.org paid), query param is fallback (free plan).
+    const cronKey = req.headers['x-cron-key'] || req.query.cron_key || '';
     const expectedCronKey = process.env.CRON_SECRET || '';
 
     // ?manual=true only skips timing gates (e.g. "starts within 30 min"), never auth.
