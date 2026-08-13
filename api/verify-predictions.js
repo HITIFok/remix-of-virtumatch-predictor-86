@@ -106,6 +106,9 @@ async function fetchActiveMatchIds() {
 }
 
 // v21: Fetch results from match_results table (instant, no API)
+// FILTERS OUT fake 0:0 results (artifacts from pre-start playout fetches where goals was empty).
+// A real 0:0 would have minute stored (from lastGoal.minute). A fake 0:0 has minute=90 (default).
+// We also check goals JSONB: if empty array, it's fake.
 async function fetchDbResults(sql, leagueId) {
   const roundResults = new Map();
   try {
@@ -113,6 +116,7 @@ async function fetchDbResults(sql, leagueId) {
       SELECT round_number, match_id, home_team, away_team, score_home, score_away, outcome
       FROM match_results
       WHERE league_id = ${leagueId}
+        AND (goals IS NOT NULL AND goals != '[]'::jsonb)
       ORDER BY round_number ASC
     `;
     for (const row of rows) {
@@ -275,11 +279,13 @@ export default async function handler(req, res) {
     const activeByLeague = await fetchActiveMatchIds();
 
     // 2b. v21: Pre-load match_results from DB for ALL leagues (instant, 1 query)
+    // FILTERS OUT fake results where goals JSONB is empty array (pre-start artifacts)
     const dbResultsCache = new Map();
     try {
       const allDbRows = await sql`
         SELECT league_id, round_number, match_id, home_team, away_team, score_home, score_away, outcome
         FROM match_results
+        WHERE goals IS NOT NULL AND goals != '[]'::jsonb
       `;
       for (const row of allDbRows) {
         const lid = row.league_id;

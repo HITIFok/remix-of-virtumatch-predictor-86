@@ -156,19 +156,25 @@ async function fetchPlayoutResults(leagueId, roundNumber, eventCategoryId) {
     if (!m.id) continue;
     const goals = m.goals || [];
     const lastGoal = goals.length > 0 ? goals[goals.length - 1] : null;
+
+    // CRITICAL: Only include matches that have REAL score data.
+    // If goals array is empty → match hasn't started yet, skip it.
+    // Without this check, we store fake 0:0 results that pollute verification.
+    if (goals.length === 0) continue;
+
+    const h = lastGoal.homeScore || 0;
+    const a = lastGoal.awayScore || 0;
+    const minute = lastGoal.minute || 90;
+
     results.push({
       matchId: m.id,
       homeTeam: m.homeTeam?.name || '',
       awayTeam: m.awayTeam?.name || '',
-      scoreHome: lastGoal ? (lastGoal.homeScore || 0) : 0,
-      scoreAway: lastGoal ? (lastGoal.awayScore || 0) : 0,
-      minute: lastGoal ? (lastGoal.minute || 0) : 90,
+      scoreHome: h,
+      scoreAway: a,
+      minute: minute,
       goals: goals,
-      outcome: (() => {
-        const h = lastGoal ? (lastGoal.homeScore || 0) : 0;
-        const a = lastGoal ? (lastGoal.awayScore || 0) : 0;
-        return h > a ? '1' : h < a ? '2' : 'X';
-      })(),
+      outcome: h > a ? '1' : h < a ? '2' : 'X',
     });
   }
   return results;
@@ -563,6 +569,15 @@ async function runPlayout(expectedCronKey) {
       UPDATE early_alerts SET dismissed = TRUE
       WHERE detected_at < NOW() - INTERVAL '30 minutes' AND dismissed = FALSE
     `;
+    // FAKE 0:0 CLEANUP: Remove match_results where goals JSONB is empty
+    // These are artifacts from pre-start playout fetches (goals array was empty)
+    const deletedFake = await sql`
+      DELETE FROM match_results
+      WHERE goals = '[]'::jsonb OR goals IS NULL
+    `;
+    if (deletedFake.count > 0) {
+      console.log(`[auto-playout] Cleaned ${deletedFake.count} fake results (empty goals)`);
+    }
 
     await sql.end();
 
