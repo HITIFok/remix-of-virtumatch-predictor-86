@@ -1,19 +1,25 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Zap, Loader2 } from "lucide-react";
 import type { MatchInput } from "@/lib/prediction-engine";
-import { AVAILABLE_LEAGUES, type LeagueInfo } from "@/hooks/use-live-matches";
+import { AVAILABLE_LEAGUES } from "@/hooks/use-live-matches";
+import { useLeagueTeams } from "@/hooks/use-league-teams";
+import TeamSearch from "@/components/TeamSearch";
+import FlagIcon from "@/components/FlagIcon";
 
 interface MatchFormProps {
   onAnalyze: (matches: MatchInput[]) => void;
   loading?: boolean;
 }
 
-import FlagIcon from "@/components/FlagIcon";
+interface MatchEntry extends MatchInput {
+  _key: string; // unique key for React rendering
+}
 
-const emptyMatch = (): MatchInput => ({
+const emptyMatch = (): MatchEntry => ({
+  _key: crypto.randomUUID?.() || String(Date.now()) + Math.random(),
   home: "",
   away: "",
   league: AVAILABLE_LEAGUES[0].name,
@@ -23,9 +29,9 @@ const emptyMatch = (): MatchInput => ({
 });
 
 export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
-  const [matches, setMatches] = useState<MatchInput[]>([emptyMatch()]);
+  const [matches, setMatches] = useState<MatchEntry[]>([emptyMatch()]);
 
-  const updateMatch = (idx: number, field: keyof MatchInput, value: string) => {
+  const updateMatch = useCallback((idx: number, field: keyof MatchInput, value: string) => {
     setMatches(prev => {
       const copy = [...prev];
       if (field === "home" || field === "away" || field === "league") {
@@ -35,7 +41,15 @@ export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
       }
       return copy;
     });
-  };
+  }, []);
+
+  const handleLeagueChange = useCallback((idx: number, newLeague: string) => {
+    setMatches(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], league: newLeague, home: "", away: "" };
+      return copy;
+    });
+  }, []);
 
   const addMatch = () => setMatches(prev => [...prev, emptyMatch()]);
   const removeMatch = (idx: number) => setMatches(prev => prev.filter((_, i) => i !== idx));
@@ -47,93 +61,16 @@ export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
   return (
     <div className="space-y-4 max-w-2xl mx-auto lg:max-w-3xl">
       {matches.map((m, idx) => (
-        <div key={idx} className="bg-gradient-card rounded-lg p-4 shadow-card border border-border space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-display text-muted-foreground tracking-widest uppercase">
-              Match {idx + 1}
-            </span>
-            {matches.length > 1 && (
-              <button onClick={() => removeMatch(idx)} className="text-muted-foreground hover:text-destructive transition-colors">
-                <Trash2 size={16} />
-              </button>
-            )}
-          </div>
-
-          {/* League selector - Identique à LiveMatches */}
-          <Select value={m.league} onValueChange={v => updateMatch(idx, "league", v)}>
-            <SelectTrigger className="w-full bg-gradient-card border-border">
-              <SelectValue>
-                <span className="flex items-center gap-2">
-                  <FlagIcon countryCode={AVAILABLE_LEAGUES.find(l => l.name === m.league)?.countryCode || "gb-eng"} />
-                  <span className="font-display font-bold">{m.league}</span>
-                </span>
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {AVAILABLE_LEAGUES.map((league) => (
-                <SelectItem key={league.id} value={league.name}>
-                  <span className="flex items-center gap-2">
-                    <FlagIcon countryCode={league.countryCode} />
-                    <span className="font-display">{league.name}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              placeholder="Équipe domicile"
-              value={m.home}
-              onChange={e => updateMatch(idx, "home", e.target.value)}
-              className="bg-muted border-border font-medium"
-            />
-            <Input
-              placeholder="Équipe extérieur"
-              value={m.away}
-              onChange={e => updateMatch(idx, "away", e.target.value)}
-              className="bg-muted border-border font-medium"
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Dom</label>
-              <Input
-                type="number"
-                step="0.01"
-                min="1.01"
-                placeholder="1.56"
-                value={m.oddHome || ""}
-                onChange={e => updateMatch(idx, "oddHome", e.target.value)}
-                className="bg-muted border-border text-center font-display text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Nul</label>
-              <Input
-                type="number"
-                step="0.01"
-                min="1.01"
-                placeholder="3.56"
-                value={m.oddDraw || ""}
-                onChange={e => updateMatch(idx, "oddDraw", e.target.value)}
-                className="bg-muted border-border text-center font-display text-sm"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Ext</label>
-              <Input
-                type="number"
-                step="0.01"
-                min="1.01"
-                placeholder="5.67"
-                value={m.oddAway || ""}
-                onChange={e => updateMatch(idx, "oddAway", e.target.value)}
-                className="bg-muted border-border text-center font-display text-sm"
-              />
-            </div>
-          </div>
-        </div>
+        <MatchCard
+          key={m._key}
+          match={m}
+          index={idx}
+          totalMatches={matches.length}
+          loading={loading}
+          onUpdate={(field, value) => updateMatch(idx, field, value)}
+          onLeagueChange={(league) => handleLeagueChange(idx, league)}
+          onRemove={() => removeMatch(idx)}
+        />
       ))}
 
       <div className="flex gap-3">
@@ -151,6 +88,120 @@ export default function MatchForm({ onAnalyze, loading }: MatchFormProps) {
             <><Zap size={16} className="mr-1" /> ANALYSER 🔥</>
           )}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Individual Match Card ──────────────────────────────────────────────────
+
+interface MatchCardProps {
+  match: MatchEntry;
+  index: number;
+  totalMatches: number;
+  loading: boolean;
+  onUpdate: (field: keyof MatchInput, value: string) => void;
+  onLeagueChange: (league: string) => void;
+  onRemove: () => void;
+}
+
+function MatchCard({ match, index, totalMatches, loading, onUpdate, onLeagueChange, onRemove }: MatchCardProps) {
+  const { teams, loading: teamsLoading } = useLeagueTeams(match.league);
+
+  return (
+    <div className="bg-gradient-card rounded-lg p-4 shadow-card border border-border space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-display text-muted-foreground tracking-widest uppercase">
+          Match {index + 1}
+        </span>
+        {totalMatches > 1 && (
+          <button onClick={onRemove} className="text-muted-foreground hover:text-destructive transition-colors">
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
+
+      {/* League selector */}
+      <Select value={match.league} onValueChange={onLeagueChange}>
+        <SelectTrigger className="w-full bg-gradient-card border-border">
+          <SelectValue>
+            <span className="flex items-center gap-2">
+              <FlagIcon countryCode={AVAILABLE_LEAGUES.find(l => l.name === match.league)?.countryCode || "gb-eng"} />
+              <span className="font-display font-bold">{match.league}</span>
+            </span>
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {AVAILABLE_LEAGUES.map((league) => (
+            <SelectItem key={league.id} value={league.name}>
+              <span className="flex items-center gap-2">
+                <FlagIcon countryCode={league.countryCode} />
+                <span className="font-display">{league.name}</span>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {/* Team search dropdowns */}
+      <div className="grid grid-cols-2 gap-3">
+        <TeamSearch
+          teams={teams}
+          value={match.home}
+          onChange={v => onUpdate("home", v)}
+          placeholder="Équipe domicile"
+          loading={teamsLoading}
+          label="Domicile"
+        />
+        <TeamSearch
+          teams={teams}
+          value={match.away}
+          onChange={v => onUpdate("away", v)}
+          placeholder="Équipe extérieur"
+          loading={teamsLoading}
+          label="Extérieur"
+        />
+      </div>
+
+      {/* Odds */}
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Dom</label>
+          <Input
+            type="number"
+            step="0.01"
+            min="1.01"
+            placeholder="1.56"
+            value={match.oddHome || ""}
+            onChange={e => onUpdate("oddHome", e.target.value)}
+            className="bg-muted border-border text-center font-display text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Nul</label>
+          <Input
+            type="number"
+            step="0.01"
+            min="1.01"
+            placeholder="3.56"
+            value={match.oddDraw || ""}
+            onChange={e => onUpdate("oddDraw", e.target.value)}
+            className="bg-muted border-border text-center font-display text-sm"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 block">Cote Ext</label>
+          <Input
+            type="number"
+            step="0.01"
+            min="1.01"
+            placeholder="5.67"
+            value={match.oddAway || ""}
+            onChange={e => onUpdate("oddAway", e.target.value)}
+            className="bg-muted border-border text-center font-display text-sm"
+          />
+        </div>
       </div>
     </div>
   );
