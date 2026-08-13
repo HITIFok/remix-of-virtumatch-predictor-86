@@ -5,7 +5,7 @@ import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Settings, Shield, LogOut, Sparkles, Crown, Info } from "lucide-react";
-import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin, clearAccess } from "@/lib/storage";
+import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin } from "@/lib/storage";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
@@ -47,21 +47,6 @@ export default function SettingsPage() {
     setRefreshKey(k => k + 1);
   };
 
-  const handlePremiumLogout = () => {
-    clearAccess();
-    toast.info("Accès premium supprimé");
-    setRefreshKey(k => k + 1);
-  };
-
-  const handleResetAll = () => {
-    if (confirm("Déconnecter tous les accès (Admin + Premium) ?")) {
-      logoutAdmin();
-      clearAccess();
-      toast.success("Tous les accès ont été réinitialisés");
-      setRefreshKey(k => k + 1);
-    }
-  };
-
   return (
     <div className="min-h-screen pb-24 relative overflow-x-hidden page-enter">
       <AnimatedBackground />
@@ -101,14 +86,6 @@ export default function SettingsPage() {
                   Jours restants : <span className="text-gold font-bold">{Math.ceil((access.expiresAt - Date.now()) / (1000 * 60 * 60 * 24))}</span>
                 </p>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                onClick={handlePremiumLogout} 
-                className="text-destructive hover:bg-destructive/10 w-full mt-2"
-              >
-                <LogOut size={14} className="mr-1" /> Déconnexion Premium
-              </Button>
             </div>
           ) : (
             <p className="text-sm text-gold">🔒 Non premium — Achetez un code dans la boutique</p>
@@ -172,17 +149,6 @@ export default function SettingsPage() {
             <p>Analyse prédictive de matchs virtuels</p>
           </div>
         </div>
-
-        {/* Reset All */}
-        {(premium || admin) && (
-          <Button 
-            variant="outline" 
-            onClick={handleResetAll} 
-            className="w-full border-destructive/50 text-destructive hover:bg-destructive/10 font-display text-xs tracking-wider"
-          >
-            <LogOut size={14} className="mr-2" /> Réinitialiser tous les accès
-          </Button>
-        )}
       </div>
       <BottomNav />
     </div>
