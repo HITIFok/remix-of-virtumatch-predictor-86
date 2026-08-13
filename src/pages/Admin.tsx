@@ -13,8 +13,10 @@ import {
   verifyAdminSession,
   type GeneratedCode,
 } from "@/lib/storage";
-import { Shield, Plus, Copy, Check, Trash2, Loader2, ArrowRightLeft } from "lucide-react";
+import { Shield, Plus, Copy, Check, Trash2, Loader2, ArrowRightLeft, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import DeviceIdSearch from "@/components/DeviceIdSearch";
+import { useAdminDeviceIds } from "@/hooks/use-admin-device-ids";
 
 // ─── Validation côté serveur ───────────────────────────────────────────────────
 // Utilise verifyAdminSession() de storage.ts qui gère Web vs APK automatiquement
@@ -35,6 +37,9 @@ export default function Admin() {
   const [toDevice, setToDevice] = useState("");
   const [migrating, setMigrating] = useState(false);
   const [migrateResult, setMigrateResult] = useState<string | null>(null);
+
+  // ── Device IDs list for dropdown ──
+  const { deviceInfos, activations, loading: devicesLoading, refetch: refetchDevices } = useAdminDeviceIds();
 
   // ── Garde d'accès au montage ────────────────────────────────────────────────
   useEffect(() => {
@@ -58,11 +63,13 @@ export default function Admin() {
       if (!cancelled) {
         setCodes(data);
         setLoading(false);
+        // Refetch device IDs now that session is confirmed valid
+        refetchDevices();
       }
     })();
 
     return () => { cancelled = true; };
-  }, [navigate]);
+  }, [navigate, refetchDevices]);
 
   // ── Génération de code ──────────────────────────────────────────────────────
   // Re-vérifie le token côté serveur avant chaque génération.
@@ -289,31 +296,39 @@ export default function Admin() {
           Migrez les prédictions et le premium d'un ancien device_id vers le nouveau.
           Utile quand l'utilisateur a perdu son device_id (redémarrage PC, cache vidé).
         </p>
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div>
-            <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-display block mb-1">
-              Ancien device_id (source)
-            </label>
-            <input
-              type="text"
+            <DeviceIdSearch
+              devices={deviceInfos}
+              activations={activations}
               value={fromDevice}
-              onChange={(e) => setFromDevice(e.target.value)}
-              placeholder="dev-1234567890-abcdef12"
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50"
+              onChange={setFromDevice}
+              placeholder="Rechercher ou saisir l'ancien device_id..."
+              loading={devicesLoading}
+              label="Ancien device_id (source)"
+              excludeDeviceId={toDevice || undefined}
             />
           </div>
           <div>
-            <label className="text-[10px] text-muted-foreground uppercase tracking-wider font-display block mb-1">
-              Nouveau device_id (destination)
-            </label>
-            <input
-              type="text"
+            <DeviceIdSearch
+              devices={deviceInfos}
+              activations={activations}
               value={toDevice}
-              onChange={(e) => setToDevice(e.target.value)}
-              placeholder="dev-abcdef1234"
-              className="w-full bg-muted border border-border rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/50"
+              onChange={setToDevice}
+              placeholder="Rechercher ou saisir le nouveau device_id..."
+              loading={devicesLoading}
+              label="Nouveau device_id (destination)"
+              excludeDeviceId={fromDevice || undefined}
             />
           </div>
+          <button
+            type="button"
+            onClick={() => refetchDevices()}
+            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors mx-auto"
+          >
+            <RefreshCw size={10} />
+            Rafraîchir la liste des devices
+          </button>
           <Button
             onClick={handleMigrate}
             disabled={migrating || verifying || !fromDevice.trim() || !toDevice.trim()}
