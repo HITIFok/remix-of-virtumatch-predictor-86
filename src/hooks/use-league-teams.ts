@@ -1,73 +1,78 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { config } from "@/config/env";
+import { API_BASE } from "@/config/env";
+import { AVAILABLE_LEAGUES } from "./use-live-matches";
 
 /**
- * Hook that fetches team names for a given league from the cached matches API.
- * Returns a deduplicated, sorted list of team names plus loading/error state.
+ * Hook that fetches team names for a given league.
+ * Uses the live API (/api/matches?leagueId=xxx) which returns matches, ranking, results.
  *
- * Data sources per league:
- *   - matches[].home / matches[].away (current round teams)
- *   - ranking[].team (all teams with standings)
- *   - results[].home / results[].away (past match teams)
+ * Returns a deduplicated, sorted list of team names plus loading/error state.
  */
 export function useLeagueTeams(leagueName: string) {
   const [teams, setTeams] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
-  const [fetched, setFetched] = useState<Record<string, boolean>>({});
   const cacheRef = useRef<Record<string, string[]>>({});
 
   const fetchTeams = useCallback(async (league: string) => {
-    if (!league || cacheRef.current[league]) {
-      setTeams(cacheRef.current[league] || []);
+    if (!league) {
+      setTeams([]);
+      return;
+    }
+
+    // Check memory cache first
+    if (cacheRef.current[league]) {
+      setTeams(cacheRef.current[league]);
+      return;
+    }
+
+    // Find leagueId from league name
+    const leagueInfo = AVAILABLE_LEAGUES.find(l => l.name === league);
+    if (!leagueInfo) {
+      setTeams([]);
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch(`${config.api.scrapedData}?league=${encodeURIComponent(league)}`);
+      const res = await fetch(`${API_BASE}/api/matches?leagueId=${leagueInfo.id}`);
       if (!res.ok) {
         setTeams([]);
         return;
       }
 
-      const json = await res.json();
-      const data = json.rows;
-      if (!data || !Array.isArray(data)) {
-        setTeams([]);
-        return;
-      }
-
+      const data = await res.json();
       const teamSet = new Set<string>();
 
-      for (const entry of data) {
-        if (!entry?.payload || !Array.isArray(entry.payload)) continue;
-
-        // Extract team names from all data types
-        if (entry.data_type === "matches" || entry.data_type === "results") {
-          for (const m of entry.payload) {
-            const home = m.home || m.homeTeam?.name || "";
-            const away = m.away || m.awayTeam?.name || "";
-            if (home) teamSet.add(home);
-            if (away) teamSet.add(away);
-          }
-        }
-
-        if (entry.data_type === "ranking") {
-          for (const t of entry.payload) {
-            const name = t.team || t.name || "";
-            if (name) teamSet.add(name);
-          }
+      // Collect from matches (home/away team names)
+      if (Array.isArray(data.matches)) {
+        for (const m of data.matches) {
+          if (m.home) teamSet.add(m.home);
+          if (m.away) teamSet.add(m.away);
         }
       }
 
-      // Sort alphabetically
+      // Collect from ranking (team names with standings)
+      if (Array.isArray(data.ranking)) {
+        for (const t of data.ranking) {
+          if (t.team) teamSet.add(t.team);
+        }
+      }
+
+      // Collect from results (past match team names)
+      if (Array.isArray(data.results)) {
+        for (const r of data.results) {
+          if (r.home) teamSet.add(r.home);
+          if (r.away) teamSet.add(r.away);
+        }
+      }
+
+      // Sort alphabetically (French locale)
       const sorted = Array.from(teamSet).sort((a, b) =>
         a.localeCompare(b, "fr", { sensitivity: "base" })
       );
 
       cacheRef.current[league] = sorted;
       setTeams(sorted);
-      setFetched(prev => ({ ...prev, [league]: true }));
     } catch (err) {
       console.error("[useLeagueTeams] Fetch error:", err);
       setTeams([]);
