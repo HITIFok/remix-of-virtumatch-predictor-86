@@ -7,6 +7,7 @@ const PERMISSION_REQUESTED_KEY = 'vm_notif_permission_asked';
 
 // Sound file path (static asset in /public)
 const NOTIFICATION_SOUND_URL = '/notification-chime.wav';
+const BET261_BASE = 'https://bet261.mg';
 
 /**
  * Check if the browser supports notifications.
@@ -123,6 +124,7 @@ export function notifyExploit(
   leagueName: string,
   howEarlySeconds: number,
   count: number,
+  matchId?: number,
 ): void {
   const earlyText = howEarlySeconds >= 60
     ? `${Math.floor(howEarlySeconds / 60)}m${(howEarlySeconds % 60).toString().padStart(2, '0')}s`
@@ -134,12 +136,37 @@ export function notifyExploit(
 
   const body = `${homeTeam} ${scoreHome} - ${scoreAway} ${awayTeam} (${earlyText} avant) — ${leagueName}`;
 
+  // Deep link: click notification → opens bet261 match page
+  const bet261Url = matchId ? `${BET261_BASE}/sports/event/${matchId}` : `${BET261_BASE}/virtual`;
+
   // Browser push notification (works even when tab is in background)
   sendBrowserNotification(title, {
     body,
     tag: `exploit-${Date.now()}`,
     data: { homeTeam, awayTeam, scoreHome, scoreAway },
+    url: bet261Url, // some browsers support this for click-to-open
   });
+
+  // Override onclick to always open bet261
+  try {
+    if (Notification.permission === 'granted' && typeof window !== 'undefined') {
+      // Create notification manually to control click behavior
+      const notif = new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        tag: `exploit-${Date.now()}`,
+        renotify: true,
+      });
+      notif.onclick = () => {
+        window.open(bet261Url, '_blank', 'noopener,noreferrer');
+        notif.close();
+      };
+      setTimeout(() => notif.close(), 8000);
+      return; // Skip the sendBrowserNotification below since we handled it
+    }
+  } catch {
+    // Fallback: just send the normal notification
+  }
 
   // In-app sound
   playNotificationSound();

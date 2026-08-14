@@ -14,8 +14,9 @@ import { toast } from "sonner";
 import {
   RefreshCw, Loader2, Clock, Trophy, Lock, Zap,
   Shield, Swords, Target, AlertTriangle, BarChart3, ListOrdered,
-  Eye, EyeOff, ChevronDown, ChevronUp
+  Eye, EyeOff, ChevronDown, ChevronUp, ExternalLink
 } from "lucide-react";
+import { getBet261MatchLink, openBet261Match, getBet261VirtualLink } from "@/lib/bet261-link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -241,20 +242,36 @@ function MatchCard({
       </div>
 
       {match.oddHome > 0 && (
-        <div className="grid grid-cols-3 gap-px bg-border/30 mx-3 mb-3 rounded-lg overflow-hidden">
-          <div className="bg-muted/50 text-center py-1.5">
-            <span className="text-[9px] text-muted-foreground block">DOM</span>
-            <span className="text-xs font-display font-bold text-foreground">{match.oddHome}</span>
+        <>
+          <div className="grid grid-cols-3 gap-px bg-border/30 mx-3 mb-2 rounded-lg overflow-hidden">
+            <div className="bg-muted/50 text-center py-1.5">
+              <span className="text-[9px] text-muted-foreground block">DOM</span>
+              <span className="text-xs font-display font-bold text-foreground">{match.oddHome}</span>
+            </div>
+            <div className="bg-muted/50 text-center py-1.5">
+              <span className="text-[9px] text-muted-foreground block">NUL</span>
+              <span className="text-xs font-display font-bold text-foreground">{match.oddDraw}</span>
+            </div>
+            <div className="bg-muted/50 text-center py-1.5">
+              <span className="text-[9px] text-muted-foreground block">EXT</span>
+              <span className="text-xs font-display font-bold text-foreground">{match.oddAway}</span>
+            </div>
           </div>
-          <div className="bg-muted/50 text-center py-1.5">
-            <span className="text-[9px] text-muted-foreground block">NUL</span>
-            <span className="text-xs font-display font-bold text-foreground">{match.oddDraw}</span>
-          </div>
-          <div className="bg-muted/50 text-center py-1.5">
-            <span className="text-[9px] text-muted-foreground block">EXT</span>
-            <span className="text-xs font-display font-bold text-foreground">{match.oddAway}</span>
-          </div>
-        </div>
+          {/* bet261 quick bet button */}
+          {match.id && (
+            <div className="mx-3 mb-3">
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 h-8 text-[11px] font-display font-bold tracking-wider"
+                onClick={(e) => { e.stopPropagation(); openBet261Match(match.id!); }}
+              >
+                <ExternalLink size={12} className="mr-1" />
+                PARIER SUR BET261
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       <div className="px-3 pb-3">
