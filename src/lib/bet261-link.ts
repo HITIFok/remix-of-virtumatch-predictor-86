@@ -43,10 +43,53 @@ export function getBet261SportsLink(): string {
 
 // ─── Browser Actions ─────────────────────────────────────────────────────
 
-/** Open bet261.mg in a new tab */
+/** Platform detection */
+function isNativeCapacitor(): boolean {
+  if (typeof window === 'undefined') return false;
+  return !!(window as any).Capacitor?.isNativePlatform?.();
+}
+
+/**
+ * Open a URL inside the app (WebView) on Android/iOS via @capacitor/browser.
+ * Falls back to window.open on web browsers.
+ *
+ * On the native Android app, this opens bet261.mg in an in-app browser
+ * (not Chrome), so the user never leaves the app.
+ */
+async function openInAppBrowser(url: string): Promise<void> {
+  try {
+    const { Browser } = await import('@capacitor/browser');
+
+    await Browser.open({
+      url,
+      toolbarColor: '#0a0a0f',
+      presentationStyle: 'popover',
+      windowName: '_self',
+    });
+  } catch {
+    // Capacitor Browser not available (web browser) → fallback
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+}
+
+/** Close the in-app browser (Capacitor only, no-op on web) */
+export async function closeInAppBrowser(): Promise<void> {
+  try {
+    const { Browser } = await import('@capacitor/browser');
+    await Browser.close();
+  } catch {
+    // No-op on web
+  }
+}
+
+/**
+ * Open bet261.mg:
+ *  - On Android app (Capacitor): opens in in-app WebView — user stays in the app
+ *  - On web browser: opens in new tab
+ */
 export function openBet261(url: string): void {
   if (typeof window === 'undefined') return;
-  window.open(url, '_blank', 'noopener,noreferrer');
+  openInAppBrowser(url);
 }
 
 /** Open the specific match page on bet261.mg */
