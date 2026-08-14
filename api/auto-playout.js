@@ -1,7 +1,7 @@
-// Vercel Serverless Function — auto-playout v4 (ESM)
+// Vercel Serverless Function — auto-playout v5 (ESM)
 // Cron job: fetches playout results at multiple intervals around expectedStart
 //
-// Strategy (v4 — aggressive pre-start polling + early alerts):
+// Strategy (v5 — 5s post-start playout exploit):
 //   Responds 202 Accepted immediately, then runs all work in background
 //   using Vercel's waitUntil. This prevents cron-job.org timeouts.
 //
@@ -43,21 +43,23 @@ const LEAGUES = [
 ];
 
 // Fetch phases: offset in seconds relative to expectedStart
-// Negative = BEFORE match start, Positive = AFTER match start
+// Based on REAL timing analysis (2026-08-14):
+//   /playout has FULL goals ~7s after expectedStart
+//   /results doesn't update until ~60-90s after expectedStart
+// So we poll playout aggressively right after start.
 const FETCH_PHASES = [
-  { phase: -3, offset: -120 },  // 2 min before — first pre-start check
-  { phase: -2, offset: -60 },   // 1 min before — second pre-start check
-  { phase: -1, offset: -15 },   // 15s before — final pre-start check
-  { phase: 1, offset: 100 },    // +1m40s — match just started
-  { phase: 2, offset: 180 },    // +3m00s — mid-match
-  { phase: 3, offset: 260 },    // +4m20s — end of match (final score)
+  { phase: 1, offset: 5 },     // +5s — FIRST playout poll (results appear here!)
+  { phase: 2, offset: 15 },    // +15s — confirm scores
+  { phase: 3, offset: 30 },    // +30s — verify no changes
+  { phase: 4, offset: 60 },    // +1m00s — cross-check with /results
+  { phase: 5, offset: 120 },   // +2m00s — final verification
 ];
 
-// Hot-poll configuration
-const HOT_POLL_INTERVAL_MS = 15_000;  // 15 seconds between rapid polls
-const HOT_POLL_MAX_ITERATIONS = 5;     // 5 iterations = ~75s total background
-const HOT_POLL_BEFORE_MS = -120_000;   // Start hot zone: 2 min before expectedStart
-const HOT_POLL_AFTER_MS = 300_000;     // End hot zone: 5 min after expectedStart
+// Hot-poll configuration (runs WITHIN a single cron invocation via waitUntil)
+const HOT_POLL_INTERVAL_MS = 5_000;   // 5 seconds between rapid polls (was 15s)
+const HOT_POLL_MAX_ITERATIONS = 8;      // 8 iterations = ~40s total background
+const HOT_POLL_BEFORE_MS = -10_000;    // Start hot zone: 10s before expectedStart
+const HOT_POLL_AFTER_MS = 120_000;     // End hot zone: 2 min after expectedStart
 
 const HEADERS = {
   'Origin': process.env.API_ORIGIN || '',
@@ -429,7 +431,7 @@ let isManual = false;
 
 async function runPlayout(expectedCronKey) {
   const startTime = Date.now();
-  console.log('=== auto-playout v4 (aggressive pre-start + early alerts) ===');
+  console.log('=== auto-playout v5 (5s post-start playout exploit) ===');
 
   try {
     const sql = createSql();
@@ -459,7 +461,8 @@ async function runPlayout(expectedCronKey) {
       const expectedMs = new Date(round.expectedStart).getTime();
       // Schedule rounds that start within the next 30 minutes (or already started <30s ago)
       // In manual mode, schedule everything
-      const startsSoon = expectedMs > now - 30_000 && expectedMs < now + 30 * 60_000;
+      // v5: Expanded to 10 min window since playout has results within 5-7s of start
+      const startsSoon = expectedMs > now - 60_000 && expectedMs < now + 10 * 60_000;
 
       if (startsSoon || isManual) {
         const count = await scheduleRoundPhases(
@@ -601,7 +604,7 @@ async function runPlayout(expectedCronKey) {
     await sql.end();
 
     const elapsed = Date.now() - startTime;
-    console.log(`[auto-playout] v4 done in ${elapsed}ms: ${scheduledCount} scheduled, ${dueFetches.length} due, ${totalStored} stored, ${totalAlerts} alerts, ${phase3Done.length} phase3 done`);
+    console.log(`[auto-playout] v5 done in ${elapsed}ms: ${scheduledCount} scheduled, ${dueFetches.length} due, ${totalStored} stored, ${totalAlerts} alerts, ${phase3Done.length} phase3 done`);
 
   } catch (error) {
     const elapsed = Date.now() - startTime;
@@ -612,7 +615,7 @@ async function runPlayout(expectedCronKey) {
 // ─── Main handler (responds immediately, runs work in background) ──────
 
 export default async function handler(req, res) {
-  console.log('=== auto-playout v4 (aggressive pre-start + alerts) ===');
+  console.log('=== auto-playout v5 (5s post-start playout exploit) ===');
 
   try {
     // ── Auth: CRON key ALWAYS required (no bypass, even in manual mode) ──
@@ -633,7 +636,7 @@ export default async function handler(req, res) {
     // ── Respond 202 Accepted immediately ──
     res.status(202).json({
       accepted: true,
-      version: 'v4-aggressive-prestart',
+      version: 'v5-playout-exploit',
       message: 'Playout processing started in background (pre-start + hot-poll)',
     });
 
