@@ -8,6 +8,8 @@ const DEFAULT_ORIGINS = [
   'http://localhost',
   'http://localhost:5173',
   'http://localhost:4173',
+  // Capacitor Android with androidScheme: 'https' → origin is https://localhost
+  // Capacitor iOS with ios.scheme: 'https' → same
 ];
 
 function parseAllowedOrigins() {
@@ -21,11 +23,24 @@ function parseAllowedOrigins() {
 const ALLOWED_ORIGINS = parseAllowedOrigins();
 
 export function isOriginAllowed(origin, reqHost) {
+  // 1. Exact match against allowed list
   if (ALLOWED_ORIGINS.includes(origin)) return true;
+
+  // 2. Same hostname as the Vercel deployment host (self-referencing)
   try {
     const originHost = new URL(origin).hostname;
     if (originHost === reqHost) return true;
   } catch {}
+
+  // 3. Allow any origin from a Capacitor native app (localhost-based schemes)
+  //    - Android with androidScheme: 'https' → https://localhost
+  //    - iOS → https://localhost or capacitor://localhost
+  //    These are always localhost regardless of port
+  try {
+    const url = new URL(origin);
+    if (url.hostname === 'localhost') return true;
+  } catch {}
+
   return false;
 }
 
