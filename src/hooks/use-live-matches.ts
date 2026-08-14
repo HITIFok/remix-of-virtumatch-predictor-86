@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { config } from "@/config/env";
 import type { ScrapedMatch, MatchResult, RankingEntry } from "@/lib/types";
+import { notifyExploit } from "@/lib/notifications";
 
 // Liste des ligues disponibles avec codes pays pour drapeaux réels
 export const AVAILABLE_LEAGUES = [
@@ -376,6 +377,23 @@ export function useLiveMatches() {
 
           if (qr?.hasResults) {
             console.log(`[Poll] 🎯 Playout detected! ${qr.playoutResults.length} results in ${qr.elapsed}ms → full fetch`);
+            // Instant push notification for exploit detection
+            const results = qr.playoutResults;
+            if (results.length > 0) {
+              const first = results[0];
+              const earlySeconds = first.minute && first.minute < 90
+                ? Math.max(0, 90 - first.minute)
+                : 0;
+              notifyExploit(
+                first.homeTeam || 'Match',
+                first.awayTeam || 'Match',
+                first.scoreHome || 0,
+                first.scoreAway || 0,
+                selectedLeague.name,
+                Math.max(earlySeconds, 5), // at minimum 5s early from playout exploit
+                results.length,
+              );
+            }
             await fetchData(selectedLeagueId, selectedLeague.name, true);
             lastFullFetchRef.current = Date.now();
           }

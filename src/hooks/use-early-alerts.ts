@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { config } from '@/config/env';
+import {
+  notifyExploit,
+  supportsNotifications,
+  getNotificationPermission,
+  requestNotificationPermission,
+  hasAlreadyAskedPermission,
+} from '@/lib/notifications';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -34,7 +41,8 @@ export function useEarlyAlerts() {
   const [alerts, setAlerts] = useState<EarlyAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastPoll, setLastPoll] = useState<string | null>(null);
-  const prevCountRef = useRef(0);
+  const prevAlertsRef = useRef<Set<string>>(new Set());
+  const notifiedRef = useRef<Set<string>>(new Set());
 
   const fetchAlerts = useCallback(async () => {
     try {
@@ -48,7 +56,49 @@ export function useEarlyAlerts() {
 
       const data: EarlyAlertsResponse = await res.json();
       if (data?.success) {
-        setAlerts(data.alerts);
+        const newAlerts = data.alerts;
+
+        // ── Push Notification Logic ──
+        // Detect NEW alerts that weren't in previous fetch
+        const currentIds = new Set(newAlerts.map(a => a.id));
+        const newIds: string[] = [];
+
+        for (const id of currentIds) {
+          if (!prevAlertsRef.current.has(id) && !notifiedRef.current.has(id)) {
+            newIds.push(id);
+            notifiedRef.current.add(id);
+          }
+        }
+
+        // Fire notifications for new alerts (batch by league-round)
+        if (newIds.length > 0) {
+          const newAlertList = newAlerts.filter(a => newIds.includes(a.id));
+          const leagueRoundGroups = new Map<string, EarlyAlert[]>();
+
+          for (const alert of newAlertList) {
+            const key = `${alert.leagueId}-${alert.roundNumber}`;
+            if (!leagueRoundGroups.has(key)) leagueRoundGroups.set(key, []);
+            leagueRoundGroups.get(key)!.push(alert);
+          }
+
+          for (const [, group] of leagueRoundGroups) {
+            const first = group[0];
+            const maxEarly = Math.max(...group.map(a => a.howEarlySeconds));
+
+            notifyExploit(
+              first.homeTeam,
+              first.awayTeam,
+              first.scoreHome,
+              first.scoreAway,
+              first.leagueName,
+              maxEarly,
+              group.length,
+            );
+          }
+        }
+
+        prevAlertsRef.current = currentIds;
+        setAlerts(newAlerts);
         setLastPoll(new Date().toISOString());
       }
     } catch (err) {
@@ -70,12 +120,7 @@ export function useEarlyAlerts() {
   // Compute derived state
   const activeAlerts = alerts.filter(a => !a.dismissed && a.howEarlySeconds > 0);
   const hasAlerts = activeAlerts.length > 0;
-  const newAlertCount = Math.max(0, activeAlerts.length - prevCountRef.current);
-
-  // Update previous count ref when alerts change
-  useEffect(() => {
-    prevCountRef.current = activeAlerts.length;
-  }, [activeAlerts.length]);
+  const newAlertCount = Math.max(0, activeAlerts.length - prevAlertsRef.current.size);
 
   // Group by league
   const alertsByLeague = activeAlerts.reduce<Record<string, EarlyAlert[]>>((acc, a) => {
@@ -94,5 +139,29 @@ export function useEarlyAlerts() {
     loading,
     lastPoll,
     refetch: fetchAlerts,
+  };
+}
+
+// ─── Notification Permission Hook ──────────────────────────────────────────
+
+export function useNotificationPermission() {
+  const [permission, setPermission] = useState<NotificationPermission>(() => {
+    if (typeof window === 'undefined') return 'denied';
+    return getNotificationPermission();
+  });
+
+  const canAsk = supportsNotifications() && !hasAlreadyAskedPermission();
+
+  const requestPermission = useCallback(async (): Promise<NotificationPermission> => {
+    const result = await requestNotificationPermission();
+    setPermission(result);
+    return result;
+  }, []);
+
+  return {
+    permission,
+    canAsk,
+    requestPermission,
+    supported: supportsNotifications(),
   };
 }

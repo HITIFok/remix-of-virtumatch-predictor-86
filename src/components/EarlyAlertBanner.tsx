@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useEarlyAlerts, type EarlyAlert } from '@/hooks/use-early-alerts';
-import { Zap, X, ChevronDown, ChevronUp, Clock, Trophy } from 'lucide-react';
+import { useEarlyAlerts, type EarlyAlert, useNotificationPermission } from '@/hooks/use-early-alerts';
+import { isSoundEnabled, toggleSound } from '@/lib/notifications';
+import { Zap, X, ChevronDown, ChevronUp, Clock, Trophy, Bell, BellOff, Volume2, VolumeX } from 'lucide-react';
 
 // ─── Single Alert Row ─────────────────────────────────────────────────────
 
@@ -45,12 +46,24 @@ export default function EarlyAlertBanner() {
   const { alerts, alertsByLeague, hasAlerts, newAlertCount, refetch } = useEarlyAlerts();
   const [expanded, setExpanded] = useState(true);
   const [dismissed, setDismissed] = useState(false);
+  const [soundOn, setSoundOn] = useState(() => isSoundEnabled());
+  const { permission, canAsk, requestPermission, supported } = useNotificationPermission();
 
   // Don't show if no alerts or user dismissed
   if (!hasAlerts || dismissed) return null;
 
   const uniqueLeagues = Object.keys(alertsByLeague);
   const totalAlerts = alerts.length;
+
+  const handleToggleSound = () => {
+    const next = toggleSound();
+    setSoundOn(next);
+  };
+
+  const handleEnableNotifications = async () => {
+    if (!supported) return;
+    await requestPermission();
+  };
 
   return (
     <div className="fixed top-0 left-0 right-0 z-[100] animate-slide-down">
@@ -78,11 +91,39 @@ export default function EarlyAlertBanner() {
           </div>
 
           <div className="flex items-center gap-1 flex-shrink-0">
+            {/* Sound toggle */}
+            <button
+              onClick={handleToggleSound}
+              className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              title={soundOn ? 'Couper le son' : 'Activer le son'}
+            >
+              {soundOn ? (
+                <Volume2 size={12} className="text-emerald-400" />
+              ) : (
+                <VolumeX size={12} className="text-white/40" />
+              )}
+            </button>
+
+            {/* Notification bell */}
+            {permission === 'granted' ? (
+              <div className="p-1.5" title="Notifications actives">
+                <Bell size={12} className="text-emerald-400" />
+              </div>
+            ) : canAsk || permission === 'default' ? (
+              <button
+                onClick={handleEnableNotifications}
+                className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+                title="Activer les notifications push"
+              >
+                <BellOff size={12} className="text-gold" />
+              </button>
+            ) : null}
+
             {/* Refresh button */}
             <button
               onClick={refetch}
               className="p-1.5 rounded-lg hover:bg-white/10 transition-colors"
-              title="Rafraîchir"
+              title="Rafraichir"
             >
               <Trophy size={12} className="text-white/50" />
             </button>
