@@ -1,7 +1,7 @@
-// Vercel Serverless Function — fetch-live v16 (ESM)
+// Vercel Serverless Function — fetch-live v17 (ESM)
 // Converted from Supabase Edge Function (Deno) to Vercel (Node.js)
 // Fetches live match data, ranking, results from sporty-tech.net API
-// v16: QUICK-RESULTS mode — only 2 API calls (matches+playout) for fast result detection
+// v17: Multi-round playout scan + team names in quick-results + Tier 1/2 cross-validation
 
 import { setCorsHeaders } from './_lib/cors.js';
 
@@ -130,6 +130,8 @@ async function fetchPlayout(leagueId, round, eventCategoryId) {
             scoreAway: lastGoal ? (lastGoal.awayScore || 0) : 0,
             minute: lastGoal ? (lastGoal.minute || 0) : 90,
             goals: goals,
+            homeTeam: m.homeTeam?.name || '',
+            awayTeam: m.awayTeam?.name || '',
           });
         }
       }
@@ -175,7 +177,7 @@ export default async function handler(req, res) {
 
     const leagueName = LEAGUES[leagueId] || 'Unknown League';
     const mode = req.query.mode || bodyMode;
-    console.log(`=== fetch-live v16: ${leagueName} (${leagueId}) ===`);
+    console.log(`=== fetch-live v17: ${leagueName} (${leagueId}) ===`);
 
     // === QUICK-RESULTS MODE (v16) ===
     if (mode === 'quick-results') {
@@ -205,27 +207,63 @@ export default async function handler(req, res) {
         }
       }
 
-      // Extract eventCategoryId from the betting round for playout API
-      let qEventCategoryId = null;
+      // v17: Build round→eventCategoryId map for ALL rounds (not just betting)
+      const qRoundCatMap = new Map();
       for (const rd of matchesResp.rounds) {
-        if (rd.roundNumber === qBettingRound) {
-          qEventCategoryId = rd.eventCategoryId || null;
-          break;
+        if (rd.roundNumber && rd.eventCategoryId) {
+          qRoundCatMap.set(rd.roundNumber, rd.eventCategoryId);
         }
       }
-      const qPlayoutData = qBettingRound > 0
-        ? await fetchPlayout(leagueId, qBettingRound, qEventCategoryId)
-        : new Map();
+      let qEventCategoryId = qRoundCatMap.get(qBettingRound) || null;
+
+      // v17: Scan up to 3 recent rounds in playout for earliest possible detection
+      const qRoundsDesc = matchesResp.rounds
+        ?.filter(rd => rd.roundNumber)
+        .sort((a, b) => b.roundNumber - a.roundNumber) || [];
+      const qPlayoutRounds = qRoundsDesc.slice(0, 3).map(rd => rd.roundNumber);
+
+      const allQPlayout = new Map();
+      if (qPlayoutRounds.length > 0) {
+        const qResults = await Promise.allSettled(
+          qPlayoutRounds.map(r => fetchPlayout(leagueId, r, qRoundCatMap.get(r)))
+        );
+        for (const result of qResults) {
+          if (result.status === 'fulfilled') {
+            for (const [id, data] of result.value) {
+              allQPlayout.set(id, data);
+            }
+          }
+        }
+      }
+
+      // Build matchId→matchInfo map for team name resolution
+      const qMatchInfo = new Map();
+      for (const rd of matchesResp.rounds) {
+        for (const m of rd.matches || []) {
+          if (m.id) {
+            qMatchInfo.set(m.id, {
+              homeTeam: m.homeTeam?.name || '',
+              awayTeam: m.awayTeam?.name || '',
+            });
+          }
+        }
+      }
 
       const qPreloaded = [];
-      for (const [matchId, pData] of qPlayoutData) {
+      for (const [matchId, pData] of allQPlayout) {
         if (qBettingMatchIds.has(matchId)) {
-          qPreloaded.push({ matchId, ...pData });
+          const info = qMatchInfo.get(matchId);
+          qPreloaded.push({
+            matchId,
+            ...pData,
+            homeTeam: pData.homeTeam || info?.homeTeam || '',
+            awayTeam: pData.awayTeam || info?.awayTeam || '',
+          });
         }
       }
 
       const hasResults = qPreloaded.length > 0;
-      console.log(`[quick-results] bettingRound=${qBettingRound}, bettingMatches=${qBettingMatchIds.size}, preloaded=${qPreloaded.length} (${Date.now() - startTime}ms)`);
+      console.log(`[quick-results] bettingRound=${qBettingRound}, bettingMatches=${qBettingMatchIds.size}, preloaded=${qPreloaded.length}, playoutRoundsChecked=${qPlayoutRounds} (${Date.now() - startTime}ms)`);
 
       return res.status(200).json({
         success: true, mode: 'quick-results', league: leagueName, leagueId,
@@ -414,7 +452,14 @@ export default async function handler(req, res) {
               minute: preloaded.minute,
             };
             prediction = oddsPredictions.get(m.id) || null;
-            console.log(`[EXPLOIT] ${m.homeTeam?.name || '?'} vs ${m.awayTeam?.name || '?'} -> ${scoreHome}-${scoreAway} (betting still open! round ${roundNum})`);
+            // v17: Cross-validate Tier 1 (odds) vs Tier 2 (playout)
+            let confirmed = false;
+            if (prediction) {
+              confirmed = prediction.predictedHome === scoreHome && prediction.predictedAway === scoreAway;
+              console.log(`[EXPLOIT] ${m.homeTeam?.name || '?'} vs ${m.awayTeam?.name || '?'} -> ${scoreHome}-${scoreAway} (betting open! rd${roundNum}) Tier1=${prediction.predictedHome}:${prediction.predictedAway} confirmed=${confirmed}`);
+            } else {
+              console.log(`[EXPLOIT] ${m.homeTeam?.name || '?'} vs ${m.awayTeam?.name || '?'} -> ${scoreHome}-${scoreAway} (betting open! rd${roundNum})`);
+            }
           } else if (allPlayoutMatches.has(m.id)) {
             const liveInfo = allPlayoutMatches.get(m.id);
             status = 'live';
