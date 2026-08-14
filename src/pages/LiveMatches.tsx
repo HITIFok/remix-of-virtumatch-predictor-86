@@ -17,6 +17,7 @@ import {
   Eye, EyeOff, ChevronDown, ChevronUp, ExternalLink
 } from "lucide-react";
 import { getBet261MatchLink, openBet261Match, getBet261VirtualLink } from "@/lib/bet261-link";
+import BetQuickAction from "@/components/BetQuickAction";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -257,18 +258,20 @@ function MatchCard({
               <span className="text-xs font-display font-bold text-foreground">{match.oddAway}</span>
             </div>
           </div>
-          {/* bet261 quick bet button */}
+          {/* bet261 quick bet panel */}
           {match.id && (
             <div className="mx-3 mb-3">
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-300 h-8 text-[11px] font-display font-bold tracking-wider"
-                onClick={(e) => { e.stopPropagation(); openBet261Match(match.id!); }}
-              >
-                <ExternalLink size={12} className="mr-1" />
-                PARIER SUR BET261
-              </Button>
+              <BetQuickAction
+                matchId={match.id}
+                homeTeam={match.home}
+                awayTeam={match.away}
+                scoreHome={match.predeterminedScore?.home ?? match.scoreHome ?? 0}
+                scoreAway={match.predeterminedScore?.away ?? match.scoreAway ?? 0}
+                leagueName={match.league}
+                howEarlySeconds={match.predeterminedScore?.minute ? Math.max(0, 90 - match.predeterminedScore.minute) : undefined}
+                odds={{ home: match.oddHome, draw: match.oddDraw, away: match.oddAway }}
+                showBookmarklet={false}
+              />
             </div>
           )}
         </>

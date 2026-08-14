@@ -134,40 +134,39 @@ export function notifyExploit(
     ? `${count} resultats en avance !`
     : `Resultat en avance !`;
 
-  const body = `${homeTeam} ${scoreHome} - ${scoreAway} ${awayTeam} (${earlyText} avant) — ${leagueName}`;
+  const body = `${homeTeam} ${scoreHome} - ${scoreAway} ${awayTeam} (${earlyText} avant)`;
 
   // Deep link: click notification → opens bet261 match page
   const bet261Url = matchId ? `${BET261_BASE}/sports/event/${matchId}` : `${BET261_BASE}/virtual`;
 
-  // Browser push notification (works even when tab is in background)
-  sendBrowserNotification(title, {
-    body,
-    tag: `exploit-${Date.now()}`,
-    data: { homeTeam, awayTeam, scoreHome, scoreAway },
-    url: bet261Url, // some browsers support this for click-to-open
-  });
-
-  // Override onclick to always open bet261
-  try {
-    if (Notification.permission === 'granted' && typeof window !== 'undefined') {
-      // Create notification manually to control click behavior
-      const notif = new Notification(title, {
-        body,
-        icon: '/favicon.ico',
-        tag: `exploit-${Date.now()}`,
-        renotify: true,
-      });
-      notif.onclick = () => {
-        window.open(bet261Url, '_blank', 'noopener,noreferrer');
-        notif.close();
-      };
-      setTimeout(() => notif.close(), 8000);
-      return; // Skip the sendBrowserNotification below since we handled it
-    }
-  } catch {
-    // Fallback: just send the normal notification
-  }
-
-  // In-app sound
+  // Play in-app sound
   playNotificationSound();
+
+  // Browser push notification (works even when tab is in background)
+  if (!supportsNotifications() || Notification.permission !== 'granted') return;
+
+  try {
+    const notif = new Notification(title, {
+      body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      vibrate: [200, 100, 200],
+      tag: `exploit-${Date.now()}`,
+      renotify: true,
+      requireInteraction: false,
+    });
+
+    // Click → open bet261.mg match page directly
+    notif.onclick = () => {
+      window.open(bet261Url, '_blank', 'noopener,noreferrer');
+      notif.close();
+    };
+
+    // Auto-close after 8 seconds
+    setTimeout(() => {
+      notif.close();
+    }, 8000);
+  } catch {
+    // Notification API error — ignore
+  }
 }

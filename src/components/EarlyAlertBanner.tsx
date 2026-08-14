@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useEarlyAlerts, type EarlyAlert, useNotificationPermission } from '@/hooks/use-early-alerts';
 import { isSoundEnabled, toggleSound } from '@/lib/notifications';
 import { getBet261MatchLink, openBet261Match } from '@/lib/bet261-link';
-import { Zap, X, ChevronDown, ChevronUp, Clock, Trophy, Bell, BellOff, Volume2, VolumeX, ExternalLink } from 'lucide-react';
+import { BetButton } from '@/components/BetQuickAction';
+import { Zap, X, ChevronDown, ChevronUp, Clock, Trophy, Bell, BellOff, Volume2, VolumeX, ExternalLink, Copy, Check } from 'lucide-react';
 
 // ─── Single Alert Row ─────────────────────────────────────────────────────
 
@@ -33,18 +34,16 @@ function AlertRow({ alert }: { alert: EarlyAlert }) {
         </div>
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {/* Quick bet button */}
-        <button
-          onClick={() => openBet261Match(alert.matchId)}
-          className="flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/30 hover:bg-emerald-500/30 transition-colors"
-          title="Parier sur bet261"
-        >
-          <ExternalLink size={10} className="text-emerald-400" />
-          <span className="text-[9px] font-display font-bold text-emerald-400 tracking-wider">BET</span>
-        </button>
-        <span className="text-lg font-display font-black text-fire">
-          {alert.scoreHome}-{alert.scoreAway}
-        </span>
+        {/* Quick bet button with copy + open */}
+        <BetButton
+          matchId={alert.matchId}
+          homeTeam={alert.homeTeam}
+          awayTeam={alert.awayTeam}
+          scoreHome={alert.scoreHome}
+          scoreAway={alert.scoreAway}
+          leagueName={alert.leagueName}
+          howEarlySeconds={alert.howEarlySeconds}
+        />
       </div>
     </div>
   );
