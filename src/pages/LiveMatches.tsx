@@ -258,20 +258,44 @@ function MatchCard({
               <span className="text-xs font-display font-bold text-foreground">{match.oddAway}</span>
             </div>
           </div>
-          {/* bet261 quick bet panel */}
+          {/* bet261 integration — only show exploit panel if score is actually detected */}
           {match.id && (
             <div className="mx-3 mb-3">
-              <BetQuickAction
-                matchId={match.id}
-                homeTeam={match.home}
-                awayTeam={match.away}
-                scoreHome={match.predeterminedScore?.home ?? match.scoreHome ?? 0}
-                scoreAway={match.predeterminedScore?.away ?? match.scoreAway ?? 0}
-                leagueName={match.league}
-                howEarlySeconds={match.predeterminedScore?.minute ? Math.max(0, 90 - match.predeterminedScore.minute) : undefined}
-                odds={{ home: match.oddHome, draw: match.oddDraw, away: match.oddAway }}
-                showBookmarklet={false}
-              />
+              {hasLeak && match.predeterminedScore ? (
+                /* EXPLOIT DETECTED → full bet panel with score */
+                <BetQuickAction
+                  matchId={match.id}
+                  homeTeam={match.home}
+                  awayTeam={match.away}
+                  scoreHome={match.predeterminedScore.home}
+                  scoreAway={match.predeterminedScore.away}
+                  leagueName={match.league}
+                  howEarlySeconds={match.predeterminedScore.minute ? Math.max(0, 90 - match.predeterminedScore.minute) : undefined}
+                  odds={{ home: match.oddHome, draw: match.oddDraw, away: match.oddAway }}
+                  showBookmarklet={false}
+                />
+              ) : hasOdds && aiPrediction ? (
+                /* AI PREDICTION → compact bet panel with predicted score */
+                <BetQuickAction
+                  matchId={match.id}
+                  homeTeam={match.home}
+                  awayTeam={match.away}
+                  scoreHome={aiPrediction.scoreHome ?? 0}
+                  scoreAway={aiPrediction.scoreAway ?? 0}
+                  leagueName={match.league}
+                  odds={{ home: match.oddHome, draw: match.oddDraw, away: match.oddAway }}
+                  showBookmarklet={false}
+                />
+              ) : (
+                /* NO SCORE → simple open bet261 button */
+                <button
+                  onClick={(e) => { e.stopPropagation(); openBet261Match(match.id!); }}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 active:scale-[0.98] transition-all font-display text-[11px] font-bold text-emerald-400 tracking-wider"
+                >
+                  <ExternalLink size={12} />
+                  OUVRIR SUR BET261.MG
+                </button>
+              )}
             </div>
           )}
         </>
