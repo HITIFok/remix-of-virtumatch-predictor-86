@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
-import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 
 // https://vitejs.dev/config/
@@ -110,7 +109,7 @@ export default defineConfig(({ mode }) => ({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": import.meta.dirname + "/src",
     },
   },
   build: {
@@ -124,7 +123,7 @@ export default defineConfig(({ mode }) => ({
       external: ['postgres'],
     },
   },
-  esbuild: {
+  oxc: {
     // Keep console.log/warn/error for production debugging
     drop: mode === "production" ? ["debugger"] : [],
     dropLabels: mode === "production" ? ["dev"] : [],
