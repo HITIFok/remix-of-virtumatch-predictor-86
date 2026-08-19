@@ -7,6 +7,7 @@ import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
 import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { config } from "@/config/env";
+import { getAuthHeaders } from "@/lib/device";
 import { saveToHistory } from "@/lib/storage";
 import ResultCard from "@/components/ResultCard";
 import { RankingTable, ResultsList } from "@/components/LeagueData";
@@ -468,9 +469,10 @@ export default function LiveMatches() {
 
     try {
       const enriched = enrichMatchesForAI(toEnrich.map(t => t.match), results, ranking);
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`${config.api.analyzeMatchUrl}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ matches: enriched }),
       });
       const data = await res.json();

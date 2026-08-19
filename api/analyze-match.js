@@ -2,6 +2,7 @@
 // AI-powered match analysis — Groq (primary) + Mathematical fallback
 
 import { setCorsHeaders } from './_lib/cors.js';
+import { requireAuth } from './_lib/auth.js';
 
 const maskKey = (key) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : 'NOT_SET';
 
@@ -545,21 +546,8 @@ async function analyzeFast(matches, groqKey, groqModel) {
   return { predictions: matches.map(mathPredict), provider: 'math-v2' };
 }
 
-// ─── AUTH: Require valid device_id header (premium-checked client-side) ───
-const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
-
-function extractDeviceId(req) {
-  // Header takes priority (safe from logs/URL leakage)
-  const fromHeader = req.headers['x-device-id'] || '';
-  if (fromHeader && DEVICE_ID_RE.test(fromHeader)) return fromHeader;
-  // Fallback: body (never query string — avoids URL logs)
-  try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    const fromBody = String(body.device_id || '').trim();
-    if (fromBody && DEVICE_ID_RE.test(fromBody)) return fromBody;
-  } catch { /* ignore */ }
-  return null;
-}
+// ─── AUTH: HMAC device token or legacy fallback ────────────────────────────
+// Handled by requireAuth() from _lib/auth.js
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────
 
@@ -573,10 +561,10 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // ── Auth gate: require valid device_id (8+ chars, prevents trivial abuse) ──
-  const deviceId = extractDeviceId(req);
+  // ── Auth gate: HMAC device token (or legacy fallback during migration) ──
+  const deviceId = await requireAuth(req);
   if (!deviceId) {
-    return res.status(401).json({ error: 'Valid device_id required (x-device-id header or body field, min 8 chars)' });
+    return res.status(401).json({ error: 'Authentication required (Device token or x-device-id header)' });
   }
 
   const startTime = Date.now();

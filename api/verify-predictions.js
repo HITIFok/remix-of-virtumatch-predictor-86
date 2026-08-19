@@ -12,6 +12,7 @@
 import crypto from 'crypto';
 import postgres from 'postgres';
 import { setCorsHeaders } from './_lib/cors.js';
+import { requireAuth } from './_lib/auth.js';
 
 const API_BASE = 'https://hg-event-api-prod.sporty-tech.net/api/instantleagues';
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
@@ -295,19 +296,15 @@ export default async function handler(req, res) {
         deviceId = body?.deviceId || body?.device_id;
       } catch { /* no body */ }
 
-      if (!deviceId) {
-        return res.status(400).json({
+      // Client mode: verify device auth
+      const authedDeviceId = await requireAuth(req);
+      if (!authedDeviceId) {
+        return res.status(401).json({
           success: false,
-          error: 'device_id requis en mode client',
+          error: 'Authentication required',
         });
       }
-
-      if (!/^dev-[a-z0-9]+$/i.test(deviceId)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Format device_id invalide',
-        });
-      }
+      deviceId = authedDeviceId;
 
       console.log(`[verify] Mode: CLIENT (device: ${deviceId})`);
     }

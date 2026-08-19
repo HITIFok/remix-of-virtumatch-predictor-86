@@ -3,11 +3,10 @@
 // All SQL queries are server-side only
 
 import postgres from 'postgres';
-import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
+import { setCorsHeaders } from './_lib/cors.js';
+import { requireAuth, DEVICE_ID_RE } from './_lib/auth.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
-
-const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
 // Rate limiting: 30 requests per minute per IP
@@ -179,9 +178,9 @@ export default async function handler(req, res) {
 
   // ─── GET: Read predictions by deviceId ──────────────────────────────────────
   if (req.method === 'GET') {
-    const deviceId = req.query.device_id || '';
-    if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
-      return res.status(400).json({ success: false, error: 'Valid device_id query parameter is required' });
+    const deviceId = await requireAuth(req);
+    if (!deviceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
     try {
@@ -221,6 +220,15 @@ export default async function handler(req, res) {
     const validation = validatePrediction(body);
     if (!validation.valid) {
       return res.status(400).json({ success: false, error: 'Validation failed', details: validation.errors });
+    }
+
+    // Verify auth matches the device_id in the body
+    const authedDeviceId = await requireAuth(req);
+    if (!authedDeviceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+    if (body.device_id !== authedDeviceId) {
+      return res.status(403).json({ success: false, error: 'device_id mismatch' });
     }
 
     const d = validation.data;
@@ -277,10 +285,13 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'Invalid JSON body' });
     }
 
-    const deviceId = body.device_id || '';
-    if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
-      return res.status(400).json({ success: false, error: 'Valid device_id is required' });
+    // Verify auth
+    const authedDeviceId = await requireAuth(req);
+    if (!authedDeviceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
     }
+
+    const deviceId = authedDeviceId; // Use authenticated device_id, not body
 
     try {
       const sql = postgres(NEON_DATABASE_URL);

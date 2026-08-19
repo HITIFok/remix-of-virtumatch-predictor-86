@@ -1,6 +1,6 @@
 import { config } from "@/config/env";
 import type { MatchResult } from "./prediction-engine";
-import { getDeviceId } from "@/lib/device";
+import { getDeviceId, getAuthHeaders } from "@/lib/device";
 
 const ACCESS_KEY = "virtuxxs_access";
 const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
@@ -19,7 +19,10 @@ export async function getHistory(): Promise<MatchResult[]> {
   }
 
   try {
-    const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`);
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(`${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`, {
+      headers: authHeaders,
+    });
     if (!res.ok) return [];
     const { predictions } = await res.json();
 
@@ -88,9 +91,10 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
   const confidence = Math.round(result.aiConfidence);
 
   try {
+    const authHeaders = await getAuthHeaders();
     const res = await fetch(config.api.predictions, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         home_team: result.home,
         away_team: result.away,
@@ -116,7 +120,7 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
         gg_result: result.ggResult,
         total_goals: result.totalGoals,
         parity: result.parity,
-        over_under_15: result.overUnder15,
+      	over_under_15: result.overUnder15,
         over_under_25: result.overUnder25,
         over_under_35: result.overUnder35,
         device_id: deviceId,
@@ -147,9 +151,10 @@ export async function clearHistory() {
     return;
   }
   try {
+    const authHeaders = await getAuthHeaders();
     await fetch(config.api.predictions, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ device_id: deviceId }),
     });
   } catch (err) {
@@ -212,8 +217,10 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
     const deviceId = getDeviceId();
     if (!deviceId) return false;
 
+    const authHeaders = await getAuthHeaders();
     const res = await fetch(`${config.api.premiumActivate}?device_id=${encodeURIComponent(deviceId)}`, {
       method: 'GET',
+      headers: authHeaders,
     });
 
     // Server error (500, 502, etc.) → don't clear, treat as offline
@@ -445,10 +452,11 @@ export function generateRandomCode(): string {
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string; expiresAt?: string }> {
   try {
     const deviceId = getDeviceId();
+    const authHeaders = await getAuthHeaders();
 
     const res = await fetch(config.api.premiumActivate, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: inputCode, device_id: deviceId }),
     });
 

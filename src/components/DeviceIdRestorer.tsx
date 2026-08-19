@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { restoreDeviceId, getDeviceId } from '@/lib/device';
+import { restoreDeviceId, getDeviceId, initDeviceAuth } from '@/lib/device';
 import { Loader2 } from 'lucide-react';
 
 interface DeviceIdRestorerProps {
@@ -28,6 +28,8 @@ export function DeviceIdRestorer({ children, onRestored }: DeviceIdRestorerProps
       if (lsId && lsId.startsWith('dev-')) {
         // localStorage already has device_id — good to go
         getDeviceId(); // warm the cache
+        // Pre-register for HMAC auth (non-blocking for UX)
+        initDeviceAuth().catch(() => {});
         setReady(true);
         return;
       }
@@ -39,6 +41,8 @@ export function DeviceIdRestorer({ children, onRestored }: DeviceIdRestorerProps
         console.log(`[DeviceIdRestorer] Restored device ID, reloading data...`);
         onRestored?.();
       }
+      // Pre-register for HMAC auth
+      initDeviceAuth().catch(() => {});
     } catch (err) {
       console.warn('[DeviceIdRestorer] Restore failed:', err);
     } finally {

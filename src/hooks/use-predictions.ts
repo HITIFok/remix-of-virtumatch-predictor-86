@@ -1,7 +1,7 @@
 // Hook pour gérer les prédictions et leur suivi de précision
 import { useState, useEffect, useCallback } from 'react'
 import { config } from '@/config/env'
-import { getDeviceId } from '@/lib/device'
+import { getDeviceId, getAuthHeaders } from '@/lib/device'
 export { getDeviceId }
 
 // camelCase — matches api/predictions.js mapToCamelCase() output
@@ -64,9 +64,10 @@ export function usePredictions() {
     try {
       const deviceId = getDeviceId()
 
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`${config.api.verifyPredictionsUrl}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId }),
       });
 
@@ -93,8 +94,9 @@ export function usePredictions() {
       setLoading(true)
 
       const deviceId = getDeviceId()
+      const authHeaders = await getAuthHeaders();
       const url = `${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders });
       if (!res.ok) {
         setPredictions([]);
         setStats(null);
@@ -265,9 +267,10 @@ export function usePredictions() {
         league_id: pred.league_id || null,
       }
 
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(config.api.predictions, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify(insertData),
       });
 
@@ -297,9 +300,10 @@ export function usePredictions() {
   const deletePrediction = useCallback(async (id: number) => {
     try {
       const deviceId = getDeviceId();
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(config.api.predictions, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: deviceId, prediction_id: id }),
       });
       if (!res.ok) {
@@ -318,9 +322,10 @@ export function usePredictions() {
   const deletePendingPredictions = useCallback(async () => {
     try {
       const deviceId = getDeviceId();
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(config.api.predictions, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ device_id: deviceId, status: 'pending' }),
       });
       if (!res.ok) {

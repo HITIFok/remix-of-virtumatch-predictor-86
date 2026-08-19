@@ -44,5 +44,7 @@ export const config = {
     scrapedData: `${API_BASE}/api/matches?mode=cache`,
     // Early alerts (results detected before match start)
     earlyAlertsUrl: `${API_BASE}/api/early-alerts`,
+    // HMAC device auth registration
+    deviceRegister: `${API_BASE}/api/device-register`,
   },
 } as const;

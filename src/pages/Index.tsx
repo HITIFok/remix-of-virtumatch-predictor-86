@@ -8,6 +8,7 @@ import PremiumGate from "@/components/PremiumGate";
 import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
 import { config } from "@/config/env";
+import { getAuthHeaders } from "@/lib/device";
 import { toast } from "sonner";
 import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
 import { APK_DOWNLOAD_URL } from "@/config/env";
@@ -21,9 +22,10 @@ export default function Index() {
     setLoading(true);
     try {
       // Call AI API route
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`${config.api.analyzeMatchUrl}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ matches }),
       });
       const aiData = await res.json();

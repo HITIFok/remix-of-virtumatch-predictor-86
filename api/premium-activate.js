@@ -3,11 +3,10 @@
 // Uses PostgreSQL transaction to prevent race conditions on code activation
 
 import postgres from 'postgres';
-import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
+import { setCorsHeaders } from './_lib/cors.js';
+import { requireAuth, DEVICE_ID_RE } from './_lib/auth.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
-
-const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
 
 // ── Simple in-memory rate limiter (per device_id, survives within same warm instance) ──
 const activateAttempts = new Map();
@@ -45,9 +44,9 @@ export default async function handler(req, res) {
 
   // ─── GET: Check premium status ─────────────────────────────────────────────
   if (req.method === 'GET') {
-    const deviceId = req.query.device_id || '';
-    if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
-      return res.status(400).json({ success: false, error: 'Valid device_id query parameter is required' });
+    const deviceId = await requireAuth(req);
+    if (!deviceId) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
     try {
@@ -87,16 +86,17 @@ export default async function handler(req, res) {
   }
 
   const code = String(body.code || '').trim();
-  const deviceId = String(body.device_id || '').trim();
+
+  // Verify auth and get device_id from HMAC token
+  const authedDeviceId = await requireAuth(req);
+  if (!authedDeviceId) {
+    return res.status(401).json({ success: false, error: 'Authentication required' });
+  }
+  const deviceId = authedDeviceId;
 
   // Validate code: 4-50 characters
   if (!code || code.length < 4 || code.length > 50) {
     return res.status(400).json({ success: false, error: 'Invalid code' });
-  }
-
-  // Validate deviceId format (min 8 chars — harder to guess)
-  if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
-    return res.status(400).json({ success: false, error: 'Invalid device_id format' });
   }
 
   // Rate limit: max 15 activation attempts per device per hour
