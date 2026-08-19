@@ -46,6 +46,43 @@ export default async function handler(req, res) {
   }
 
   const showAll = req.query.all === 'true';
+
+  // Security: ?all=true reveals full detection history — require admin token
+  if (showAll) {
+    const auth = req.headers['authorization'] || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token || !process.env.ADMIN_TOKEN_SECRET) {
+      return res.status(403).json({ error: 'Admin authentication required for full history' });
+    }
+    // Verify HMAC token (same logic as admin-codes.js)
+    const parts = token.split('.');
+    if (parts.length !== 2) {
+      return res.status(403).json({ error: 'Invalid token format' });
+    }
+    const [payload, signature] = parts;
+    const { createHmac, timingSafeEqual } = await import('crypto');
+    let timestamp;
+    try {
+      timestamp = parseInt(Buffer.from(payload, 'base64url').toString(), 10);
+    } catch {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+    if (isNaN(timestamp) || Date.now() - timestamp > 24 * 60 * 60 * 1000) {
+      return res.status(403).json({ error: 'Token expired' });
+    }
+    const expected = createHmac('sha256', process.env.ADMIN_TOKEN_SECRET)
+      .update(payload).digest('base64url');
+    try {
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expected);
+      if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
+        return res.status(403).json({ error: 'Invalid token' });
+      }
+    } catch {
+      return res.status(403).json({ error: 'Invalid token' });
+    }
+  }
+
   const startTime = Date.now();
 
   try {
@@ -107,6 +144,6 @@ export default async function handler(req, res) {
   } catch (error) {
     const elapsed = Date.now() - startTime;
     console.error(`[early-alerts] Error (${elapsed}ms):`, error);
-    return res.status(500).json({ error: error.message, alerts: [], count: 0 });
+    return res.status(500).json({ error: 'Internal server error', alerts: [], count: 0 });
   }
 }

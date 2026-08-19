@@ -277,7 +277,8 @@ export default async function handler(req, res) {
     const sql = postgres(NEON_DATABASE_URL);
 
     // ── Mode detection: CRON vs CLIENT ──
-    const cronKey = req.headers['x-cron-key'] || req.query.cron_key || '';
+    // Security: key is ONLY accepted via x-cron-key header (not query string)
+    const cronKey = req.headers['x-cron-key'] || '';
     const expectedCronKey = process.env.CRON_SECRET || '';
     const isCron = !!(cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey));
 
@@ -386,6 +387,6 @@ export default async function handler(req, res) {
   } catch (error) {
     const elapsed = Date.now() - startTime;
     console.error(`[verify] Error (${elapsed}ms):`, error);
-    return res.status(500).json({ error: error.message, elapsed });
+    return res.status(500).json({ error: 'Internal server error', elapsed });
   }
 }

@@ -545,6 +545,22 @@ async function analyzeFast(matches, groqKey, groqModel) {
   return { predictions: matches.map(mathPredict), provider: 'math-v2' };
 }
 
+// ─── AUTH: Require valid device_id header (premium-checked client-side) ───
+const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
+
+function extractDeviceId(req) {
+  // Header takes priority (safe from logs/URL leakage)
+  const fromHeader = req.headers['x-device-id'] || '';
+  if (fromHeader && DEVICE_ID_RE.test(fromHeader)) return fromHeader;
+  // Fallback: body (never query string — avoids URL logs)
+  try {
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    const fromBody = String(body.device_id || '').trim();
+    if (fromBody && DEVICE_ID_RE.test(fromBody)) return fromBody;
+  } catch { /* ignore */ }
+  return null;
+}
+
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -553,6 +569,14 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
+  }\n  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // ── Auth gate: require valid device_id (8+ chars, prevents trivial abuse) ──
+  const deviceId = extractDeviceId(req);
+  if (!deviceId) {
+    return res.status(401).json({ error: 'Valid device_id required (x-device-id header or body field, min 8 chars)' });
   }
 
   const startTime = Date.now();
@@ -565,7 +589,18 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'matches array required and non-empty' });
     }
 
-    console.log(`[analyze-match] v24 Processing ${matches.length} match(es)...`);
+    // Limit: max 10 matches per request (prevents GROQ credit drain)
+    if (matches.length > 10) {
+      return res.status(400).json({ error: 'Maximum 10 matches per request' });
+    }
+
+    // Limit: max 100KB body size
+    const bodyStr = JSON.stringify(body);
+    if (bodyStr.length > 102400) {
+      return res.status(413).json({ error: 'Request body too large' });
+    }
+
+    console.log(`[analyze-match] v24 Processing ${matches.length} match(es) for device ${deviceId}...`);
 
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
@@ -582,6 +617,6 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[analyze-match] Unhandled error:', e.message, e.stack);
-    return res.status(500).json({ error: e.message });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 };

@@ -22,7 +22,10 @@ function parseAllowedOrigins() {
 
 const ALLOWED_ORIGINS = parseAllowedOrigins();
 
-export function isOriginAllowed(origin, reqHost) {
+export function isOriginAllowed(origin, reqHost, reqHeaders) {
+  // 0. Capacitor native app: custom header that browsers never send
+  if (reqHeaders?.['x-capacitor-request']) return true;
+
   // 1. Exact match against allowed list
   if (ALLOWED_ORIGINS.includes(origin)) return true;
 
@@ -32,24 +35,20 @@ export function isOriginAllowed(origin, reqHost) {
     if (originHost === reqHost) return true;
   } catch {}
 
-  // 3. Allow any origin from a Capacitor native app (localhost-based schemes)
-  //    - Android with androidScheme: 'https' → https://localhost
-  //    - iOS → https://localhost or capacitor://localhost
-  //    These are always localhost regardless of port
-  try {
-    const url = new URL(origin);
-    if (url.hostname === 'localhost') return true;
-  } catch {}
+  // NOTE: Previously allowed any origin with hostname='localhost'.
+  // Removed: this enabled CORS bypass from any website by spoofing Origin.
+  // Capacitor apps now use a custom X-Capacitor-Request header instead.
 
   return false;
 }
 
 export function setCorsHeaders(req, res, methods = 'POST, OPTIONS', headers = 'Content-Type, Authorization') {
   const origin = req.headers.origin || '';
-  if (isOriginAllowed(origin, req.headers.host || '')) {
+  if (isOriginAllowed(origin, req.headers.host || '', req.headers)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
   res.setHeader('Access-Control-Allow-Methods', methods);
   res.setHeader('Access-Control-Allow-Headers', headers);
-  res.setHeader('Access-Control-Max-Age', '86400');
+  res.setHeader('Access-Control-Max-Age', '3600'); // 1h (was 24h — faster security fix propagation)
+  res.setHeader('Vary', 'Origin'); // Prevent CDN cache poisoning between origins
 }

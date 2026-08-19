@@ -49,7 +49,10 @@ function verifyToken(token) {
 function extractToken(req) {
   const auth = req.headers['authorization'] || '';
   if (auth.startsWith('Bearer ')) return auth.slice(7);
-  return req.query?.token || '';
+  // Security: token is ONLY accepted via Authorization header.
+  // Previously accepted via req.query.token — removed to prevent
+  // token leakage in Vercel logs, browser history, and Referer headers.
+  return '';
 }
 
 function parseBody(req) {

@@ -7,10 +7,7 @@ import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
-// Accept both formats:
-//   dev-<8-hex>         (current client fingerprint: dev-a3f1b2c4)
-//   dev-<number>-<hex>  (legacy format)
-const DEVICE_ID_RE = /^dev-[a-z0-9]+$/;
+const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
 // Rate limiting: 30 requests per minute per IP

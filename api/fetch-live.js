@@ -528,7 +528,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('fetch-live error:', error.message);
     return res.status(500).json({
-      success: false, error: error.message,
+      success: false, error: 'Failed to fetch live data',
       matches: [], results: [], ranking: [],
     });
   }

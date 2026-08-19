@@ -7,14 +7,29 @@ import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
-// Accept both formats:
-//   dev-<8-hex>         (current client fingerprint: dev-a3f1b2c4)
-//   dev-<number>-<hex>  (legacy format)
-const DEVICE_ID_RE = /^dev-[a-z0-9]+$/;
+const DEVICE_ID_RE = /^dev-[a-z0-9]{8,}$/;
 
-// Note: No per-endpoint rate limiting here.
-// The global Edge middleware (middleware.js) already limits to 30 req/min per IP.
-// Keeping this endpoint free of additional limits so users can try multiple codes.
+// ── Simple in-memory rate limiter (per device_id, survives within same warm instance) ──
+const activateAttempts = new Map();
+const MAX_ATTEMPTS_PER_HOUR = 15;
+const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
+
+function checkRateLimit(deviceId) {
+  const now = Date.now();
+  const entry = activateAttempts.get(deviceId);
+  if (!entry || now - entry.firstAttempt > ATTEMPT_WINDOW_MS) {
+    activateAttempts.set(deviceId, { count: 1, firstAttempt: now });
+    return true;
+  }
+  if (entry.count >= MAX_ATTEMPTS_PER_HOUR) {
+    return false;
+  }
+  entry.count++;
+  return true;
+}
+
+// Note: In-memory rate limiter added (per device_id, 15/hour).
+// For production, migrate to Upstash Redis for cross-instance persistence.
 
 export default async function handler(req, res) {
   // CORS (supports both GET and POST)
@@ -65,6 +80,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Invalid JSON body' });
   }
 
+  // Body size limit (10KB)
+  const bodyStr = JSON.stringify(body);
+  if (bodyStr.length > 10240) {
+    return res.status(413).json({ success: false, error: 'Request body too large' });
+  }
+
   const code = String(body.code || '').trim();
   const deviceId = String(body.device_id || '').trim();
 
@@ -73,9 +94,14 @@ export default async function handler(req, res) {
     return res.status(400).json({ success: false, error: 'Invalid code' });
   }
 
-  // Validate deviceId format
+  // Validate deviceId format (min 8 chars — harder to guess)
   if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
     return res.status(400).json({ success: false, error: 'Invalid device_id format' });
+  }
+
+  // Rate limit: max 15 activation attempts per device per hour
+  if (!checkRateLimit(deviceId)) {
+    return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
   }
 
   try {
