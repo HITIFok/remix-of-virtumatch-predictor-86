@@ -276,11 +276,24 @@ export async function restoreDeviceId(): Promise<string | null> {
 /**
  * Get auth headers for an API request.
  * Returns an object with Authorization header containing HMAC device token.
+ * If a user session (magic link) exists, includes Bearer token instead (higher priority).
  * Falls back to plain x-device-id header if token generation fails.
  *
  * Usage: fetch(url, { headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' } })
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
+  // Priority 1: User session (email-based magic link) — Bearer token
+  try {
+    const { getUserSession } = await import('./storage');
+    const userSession = getUserSession();
+    if (userSession) {
+      return {
+        'Authorization': `Bearer ${userSession.token}`,
+      };
+    }
+  } catch { /* storage import failed, continue with device auth */ }
+
+  // Priority 2: Device auth (HMAC token)
   const deviceId = getDeviceId();
   const secret = await ensureRegistered(deviceId);
 

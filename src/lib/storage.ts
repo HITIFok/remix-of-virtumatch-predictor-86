@@ -4,6 +4,7 @@ import { getDeviceId, getAuthHeaders } from "@/lib/device";
 
 const ACCESS_KEY = "virtuxxs_access";
 const ADMIN_SESSION_KEY = "virtuxxs_admin_session";
+const USER_SESSION_KEY = "virtuxxs_user_session";
 const SETTINGS_KEY = "virtuxxs_settings";
 
 const ADMIN_SESSION_DURATION = 24 * 60 * 60 * 1000; // 24h en ms
@@ -120,7 +121,7 @@ export async function saveToHistory(result: MatchResult): Promise<{ success: boo
         gg_result: result.ggResult,
         total_goals: result.totalGoals,
         parity: result.parity,
-      	over_under_15: result.overUnder15,
+        over_under_15: result.overUnder15,
         over_under_25: result.overUnder25,
         over_under_35: result.overUnder35,
         device_id: deviceId,
@@ -214,11 +215,20 @@ export function isPremium(): boolean {
 //   'offline' → network error / server unreachable (don't clear localStorage!)
 export async function verifyPremium(): Promise<boolean | 'offline'> {
   try {
-    const deviceId = getDeviceId();
-    if (!deviceId) return false;
-
+    const userSession = getUserSession();
     const authHeaders = await getAuthHeaders();
-    const res = await fetch(`${config.api.premiumActivate}?device_id=${encodeURIComponent(deviceId)}`, {
+
+    // Build URL: prefer user-based (no device_id in URL), fallback to device_id
+    let url: string;
+    if (userSession) {
+      url = config.api.premiumActivate;
+    } else {
+      const deviceId = getDeviceId();
+      if (!deviceId) return false;
+      url = `${config.api.premiumActivate}?device_id=${encodeURIComponent(deviceId)}`;
+    }
+
+    const res = await fetch(url, {
       method: 'GET',
       headers: authHeaders,
     });
@@ -254,6 +264,44 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
 
 export function clearAccess() {
   localStorage.removeItem(ACCESS_KEY);
+}
+
+// ─── User Session (email-based magic link auth) ──────────────────────────────
+export interface UserSession {
+  token: string;
+  email: string;
+  expiresAt: number;
+}
+
+export function getUserSession(): UserSession | null {
+  try {
+    const raw = localStorage.getItem(USER_SESSION_KEY);
+    if (!raw) return null;
+    const session: UserSession = JSON.parse(raw);
+    if (!session.token || !session.email) return null;
+    if (Date.now() > session.expiresAt) {
+      localStorage.removeItem(USER_SESSION_KEY);
+      return null;
+    }
+    return session;
+  } catch { return null; }
+}
+
+export function setUserSession(token: string, email: string, expiresIn: number) {
+  const session: UserSession = {
+    token,
+    email,
+    expiresAt: Date.now() + expiresIn,
+  };
+  localStorage.setItem(USER_SESSION_KEY, JSON.stringify(session));
+}
+
+export function clearUserSession() {
+  localStorage.removeItem(USER_SESSION_KEY);
+}
+
+export function hasUserSession(): boolean {
+  return getUserSession() !== null;
 }
 
 // ─── Admin (server-verified via API Routes — Web ET APK) ─────────────────────────
@@ -449,6 +497,8 @@ export function generateRandomCode(): string {
 }
 
 // ═══ validateCode — activation d'un code utilisateur via API Route ═══
+// Legacy flow: sends code with device_id (direct activation)
+// New flow: requestMagicLinkActivation() handles email+code
 export async function validateCode(inputCode: string): Promise<{ valid: boolean; days: number; message: string; expiresAt?: string }> {
   try {
     const deviceId = getDeviceId();
@@ -475,11 +525,39 @@ export async function validateCode(inputCode: string): Promise<{ valid: boolean;
       valid: true,
       days: data.days || 0,
       message: data.message || `Code valide! ${data.days || 0} jours d'accès`,
-      expiresAt: data.expires_at || undefined, // Server-calculated expiry (authoritative)
+      expiresAt: data.expires_at || undefined,
     };
   } catch (err: any) {
     console.error('Exception validateCode:', err);
     return { valid: false, days: 0, message: `Exception: ${err.message}` };
+  }
+}
+
+// ═══ requestMagicLinkActivation — email+code → magic link (Phase 4) ═══
+// Sends email + code to the server, which validates the code and sends a
+// magic link email. The actual activation happens when the user clicks
+// the link and lands on /auth/verify.
+export async function requestMagicLinkActivation(email: string, code: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const res = await fetch(config.api.premiumActivate, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), code: code.trim() }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      return { success: false, message: errBody?.error || 'Erreur serveur' };
+    }
+
+    const data = await res.json();
+    return {
+      success: data.success,
+      message: data.message || 'Si cet email est valide, un lien a été envoyé.',
+    };
+  } catch (err: any) {
+    console.error('Exception requestMagicLinkActivation:', err);
+    return { success: false, message: `Erreur: ${err.message}` };
   }
 }
 

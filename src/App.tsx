@@ -14,6 +14,7 @@ const Shop = lazy(() => import("./pages/Shop"));
 const Guide = lazy(() => import("./pages/Guide"));
 const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 const Admin = lazy(() => import("./pages/Admin"));
+const AuthVerify = lazy(() => import("./pages/AuthVerify"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 function PageLoader() {
@@ -49,6 +50,7 @@ const App = () => (
               <Route path="/guide" element={<Guide />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/admin" element={<Admin />} />
+              <Route path="/auth/verify" element={<AuthVerify />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>
