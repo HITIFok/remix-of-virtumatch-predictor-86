@@ -46,5 +46,8 @@ export const config = {
     earlyAlertsUrl: `${API_BASE}/api/early-alerts`,
     // HMAC device auth registration
     deviceRegister: `${API_BASE}/api/device-register`,
+    // Magic link auth (email-based premium)
+    authRequest: `${API_BASE}/api/auth?action=request`,
+    authVerify: `${API_BASE}/api/auth?action=verify`,
   },
 } as const;
