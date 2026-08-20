@@ -4,8 +4,8 @@ import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Settings, Shield, LogOut, Sparkles, Crown, Info, Mail } from "lucide-react";
-import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin, getUserSession, clearUserSession } from "@/lib/storage";
+import { Settings, Shield, LogOut, Sparkles, Crown, Info, Mail, Link2, Loader2, CheckCircle2 } from "lucide-react";
+import { getAccess, isPremium, isAdmin, loginAdminSupabase, logoutAdmin, getUserSession, clearUserSession, requestMigration } from "@/lib/storage";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
@@ -17,6 +17,31 @@ export default function SettingsPage() {
   const premium = isPremium();
   const access = getAccess();
   const admin = isAdmin();
+  const userSession = getUserSession();
+
+  // Migration state (device_id premium → email account)
+  const [migrateEmail, setMigrateEmail] = useState("");
+  const [migrateLoading, setMigrateLoading] = useState(false);
+  const [migrateSent, setMigrateSent] = useState(false);
+
+  // Show migration banner: premium active + NO user session
+  const showMigration = premium && !userSession;
+
+  const handleMigrate = async () => {
+    if (!migrateEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(migrateEmail.trim())) {
+      toast.error("Email invalide");
+      return;
+    }
+    setMigrateLoading(true);
+    const result = await requestMigration(migrateEmail);
+    if (result.success) {
+      setMigrateSent(true);
+      toast.success("Vérifie ta boîte mail !");
+    } else {
+      toast.error(result.message);
+    }
+    setMigrateLoading(false);
+  };
 
   const handleAdminLogin = async () => {
     if (!adminPwd.trim()) {
@@ -92,6 +117,52 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {/* Self-service migration: device_id premium → email account */}
+        {showMigration && (
+          <div className="card-premium card-glow-ice p-4 sm:p-5 mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Link2 size={16} className="text-ice animate-glow flex-shrink-0" />
+              <h3 className="font-display text-xs text-muted-foreground tracking-wider uppercase">
+                Lie ton Email
+              </h3>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Ton premium est lié à cet appareil. Lie un email pour le conserver sur tous tes appareils.
+            </p>
+            {migrateSent ? (
+              <div className="flex items-start gap-2 bg-ice/10 rounded-xl p-3 border border-ice/30">
+                <CheckCircle2 size={16} className="text-ice mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-xs text-foreground font-semibold">Email envoyé</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Si <span className="text-foreground">{migrateEmail}</span> est valide, clique sur le lien reçu pour finaliser la liaison.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  type="email"
+                  placeholder="Ton adresse email"
+                  value={migrateEmail}
+                  onChange={e => setMigrateEmail(e.target.value)}
+                  className="input-premium flex-1"
+                  onKeyDown={e => e.key === "Enter" && handleMigrate()}
+                  disabled={migrateLoading}
+                />
+                <Button
+                  variant="ice"
+                  onClick={handleMigrate}
+                  disabled={migrateLoading || !migrateEmail.trim()}
+                  className="flex-shrink-0"
+                >
+                  {migrateLoading ? <Loader2 size={14} className="animate-spin" /> : <><Mail size={14} className="mr-1" /> Envoyer</>}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* User account (email-based) */}
         <div className="card-premium p-4 sm:p-5 mb-4">
           <div className="flex items-center gap-2 mb-3">
@@ -100,32 +171,26 @@ export default function SettingsPage() {
               Compte Email
             </h3>
           </div>
-          {(() => {
-            const session = getUserSession();
-            if (session) {
-              return (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-ice/10 rounded-xl p-3 border border-ice/30">
-                  <div>
-                    <p className="text-sm text-foreground font-semibold font-display">{session.email}</p>
-                    <p className="text-xs text-muted-foreground">Session active</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => { clearUserSession(); toast.info("Session email fermée"); setRefreshKey(k => k + 1); }}
-                    className="text-destructive hover:bg-destructive/10"
-                  >
-                    <LogOut size={14} className="mr-1" /> Déconnexion
-                  </Button>
-                </div>
-              );
-            }
-            return (
-              <p className="text-sm text-muted-foreground">
-                Aucun compte email lié. Utilise l'activation par email dans le Shop pour lier un compte.
-              </p>
-            );
-          })()}
+          {userSession ? (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-ice/10 rounded-xl p-3 border border-ice/30">
+              <div>
+                <p className="text-sm text-foreground font-semibold font-display">{userSession.email}</p>
+                <p className="text-xs text-muted-foreground">Session active</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { clearUserSession(); toast.info("Session email fermée"); setRefreshKey(k => k + 1); }}
+                className="text-destructive hover:bg-destructive/10"
+              >
+                <LogOut size={14} className="mr-1" /> Déconnexion
+              </Button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Aucun compte email lié. Utilise l'activation par email dans le Shop pour lier un compte.
+            </p>
+          )}
         </div>
 
         {/* Admin access */}

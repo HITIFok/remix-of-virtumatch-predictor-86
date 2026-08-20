@@ -14,6 +14,7 @@ export default function AuthVerify() {
   const [errorMsg, setErrorMsg] = useState('');
   const [email, setEmail] = useState('');
   const [premiumInfo, setPremiumInfo] = useState<{ days: number; expiresAt: string } | null>(null);
+  const [migratedCount, setMigratedCount] = useState(0);
 
   useEffect(() => {
     const token = searchParams.get('token');
@@ -58,6 +59,14 @@ export default function AuthVerify() {
             expiresAt: data.premium.expires_at,
           });
           toast.success(`Premium activé pour ${data.premium.days || 30} jours !`);
+        } else if (data.migrated) {
+          // Migration: device_id premium linked to email account
+          setPremiumInfo({
+            days: 0,
+            expiresAt: '',
+          });
+          setMigratedCount(data.migrated.count);
+          toast.success('Premium lié à ton email !');
         } else {
           toast.success('Connexion réussie !');
         }
@@ -122,7 +131,7 @@ export default function AuthVerify() {
           </p>
         </div>
 
-        {premiumInfo && (
+        {premiumInfo && premiumInfo.days > 0 && (
           <div className="bg-success/10 border border-success/30 rounded-xl p-3 space-y-1">
             <div className="flex items-center justify-center gap-2">
               <ShieldCheck size={16} className="text-gold" />
@@ -133,6 +142,18 @@ export default function AuthVerify() {
             </p>
             <p className="text-xs text-muted-foreground">
               Expire le {new Date(premiumInfo.expiresAt).toLocaleDateString('fr-FR')}
+            </p>
+          </div>
+        )}
+
+        {migratedCount > 0 && (
+          <div className="bg-ice/10 border border-ice/30 rounded-xl p-3 space-y-1">
+            <div className="flex items-center justify-center gap-2">
+              <ShieldCheck size={16} className="text-ice" />
+              <p className="font-display text-xs text-ice tracking-wider">PREMIUM LIÉ</p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ton premium a été lié à ton email. Tu peux maintenant y accéder depuis n'importe quel appareil.
             </p>
           </div>
         )}

@@ -65,11 +65,12 @@ async function handleRequest(req, res) {
     return res.status(400).json({ success: false, error: 'Email invalide' });
   }
 
-  if (purpose !== 'activate' && purpose !== 'login') {
-    return res.status(400).json({ success: false, error: "Purpose doit être 'activate' ou 'login'" });
+  if (purpose !== 'activate' && purpose !== 'login' && purpose !== 'migrate') {
+    return res.status(400).json({ success: false, error: "Purpose doit être 'activate', 'login' ou 'migrate'" });
   }
 
   // ── If purpose='activate', validate code + durationDays ──
+  // ── If purpose='migrate', extract device_id from request ──
   let payload = null;
   if (purpose === 'activate') {
     const code = String(body.code || '').trim();
@@ -82,6 +83,14 @@ async function handleRequest(req, res) {
       return res.status(400).json({ success: false, error: 'Durée invalide (1-365 jours)' });
     }
     payload = { code, durationDays };
+  }
+
+  if (purpose === 'migrate') {
+    const deviceId = req.headers['x-device-id'] || String(body.device_id || '').trim();
+    if (!deviceId || !/^dev-[a-z0-9]{8,}$/.test(deviceId)) {
+      return res.status(400).json({ success: false, error: 'Appareil non reconnu' });
+    }
+    payload = { device_id: deviceId };
   }
 
   // ── Rate limit ──
@@ -120,11 +129,17 @@ async function handleRequest(req, res) {
   const verifyUrl = `${APP_URL}/auth/verify?token=${encodeURIComponent(token)}`;
   const subject = purpose === 'activate'
     ? 'Active ton accès Premium — VirtuMatch'
+    : purpose === 'migrate'
+    ? 'Lie ton compte Premium — VirtuMatch'
     : 'Connexion à ton compte — VirtuMatch';
-  const ctaText = purpose === 'activate' ? 'Activer mon Premium' : 'Me connecter';
+  const ctaText = purpose === 'activate'
+    ? 'Activer mon Premium'
+    : purpose === 'migrate'
+    ? 'Lier mon compte'
+    : 'Me connecter';
   const html = `<div style="max-width:480px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a2e;">
 <h2 style="color:#6c5ce7;">VirtuMatch</h2>
-<p>Clique sur le bouton ci-dessous pour ${purpose === 'activate' ? 'activer ton code premium' : 'te connecter à ton compte'} :</p>
+<p>Clique sur le bouton ci-dessous pour ${purpose === 'activate' ? 'activer ton code premium' : purpose === 'migrate' ? 'lier ton premium à ton email' : 'te connecter à ton compte'} :</p>
 <a href="${verifyUrl}" style="display:inline-block;background:#6c5ce7;color:white;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:600;margin:16px 0;">${ctaText}</a>
 <p style="color:#888;font-size:14px;">Ce lien expire dans 15 minutes. Si tu n'as pas fait cette demande, ignore cet email.</p>
 </div>`;
@@ -213,6 +228,23 @@ async function handleVerify(req, res) {
       return res.status(500).json({ success: false, error: 'Erreur lors de la création du compte' });
     }
 
+    // ── If purpose='migrate': link existing device_id premium to this user ──
+    let migratedCount = 0;
+
+    if (link.purpose === 'migrate' && link.payload?.device_id) {
+      const deviceId = link.payload.device_id;
+      // Migrate all active, unlinked premium activations for this device
+      const result = await sql`
+        UPDATE premium_activations
+        SET user_id = ${userId}
+        WHERE device_id = ${deviceId}
+          AND user_id IS NULL
+          AND expires_at > NOW()
+      `;
+      migratedCount = result.count;
+      console.log(`[auth/verify] Migrated ${migratedCount} premium activation(s) from device ${deviceId} to user ${userId}`);
+    }
+
     // ── If purpose='activate': finalize premium activation ──
     let premiumResult = null;
 
@@ -285,6 +317,9 @@ async function handleVerify(req, res) {
           expires_at: premiumResult.expires_at,
           reactivated: premiumResult.reactivated || false,
         },
+      } : {}),
+      ...(migratedCount > 0 ? {
+        migrated: { count: migratedCount },
       } : {}),
     });
   } catch (err) {

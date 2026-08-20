@@ -561,6 +561,35 @@ export async function requestMagicLinkActivation(email: string, code: string): P
   }
 }
 
+// ═══ requestMigration — self-service migration for device_id premium users (Phase 5) ═══
+// Sends a magic link with purpose='migrate'. The device_id is extracted from
+// the request headers by the backend. On verification, the backend migrates
+// any active premium_activations from device_id to the new user_id.
+export async function requestMigration(email: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(config.api.authRequest, {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase(), purpose: 'migrate' }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      return { success: false, message: errBody?.error || 'Erreur serveur' };
+    }
+
+    const data = await res.json();
+    return {
+      success: data.success,
+      message: data.message || 'Si cet email est valide, un lien a été envoyé.',
+    };
+  } catch (err: any) {
+    console.error('Exception requestMigration:', err);
+    return { success: false, message: `Erreur: ${err.message}` };
+  }
+}
+
 // ═══ SÉCURISÉ : suppression de code TOUJOURS via API Route ═══
 export async function deleteGeneratedCode(codeId: string): Promise<boolean> {
   try {
