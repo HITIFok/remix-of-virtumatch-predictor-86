@@ -64,6 +64,14 @@ export default async function handler(req, res) {
 
   const result = await registerDevice(deviceId);
 
+  if (result.alreadyRegistered) {
+    return res.status(409).json({
+      success: false,
+      error: 'Device already registered',
+      alreadyRegistered: true,
+    });
+  }
+
   if (!result.success) {
     return res.status(500).json(result);
   }

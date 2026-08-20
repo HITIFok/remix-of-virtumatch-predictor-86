@@ -34,11 +34,11 @@ const TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
  * Register a device and return its secret.
- * If the device already exists, return the existing secret.
- * This is the ONLY endpoint that reveals the device secret.
+ * If the device already exists, REFUSE to re-expose the secret (auth bypass prevention).
+ * This is the ONLY endpoint that reveals the device secret — and it must do so exactly once.
  *
  * @param {string} deviceId - Must match /^dev-[a-z0-9]{8,}$/
- * @returns {{ success: boolean, device_secret?: string, error?: string }}
+ * @returns {{ success: boolean, device_secret?: string, error?: string, alreadyRegistered?: boolean }}
  */
 export async function registerDevice(deviceId) {
   if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
@@ -53,9 +53,12 @@ export async function registerDevice(deviceId) {
     `;
 
     if (existing?.device_secret) {
-      // Device already registered — return existing secret
+      // Device already registered — NEVER re-expose the secret.
+      // Knowing a device_id (deterministic client fingerprint) must not be
+      // sufficient to obtain the HMAC secret. 409 signals the client that
+      // it already registered but lost its local secret (e.g. reinstall).
       await sql.end();
-      return { success: true, device_secret: existing.device_secret };
+      return { success: false, error: 'Device already registered', alreadyRegistered: true };
     }
 
     // New device — generate a 32-byte random secret
