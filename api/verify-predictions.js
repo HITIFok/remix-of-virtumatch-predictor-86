@@ -12,7 +12,7 @@
 import crypto from 'crypto';
 import postgres from 'postgres';
 import { setCorsHeaders } from './_lib/cors.js';
-import { requireAuth } from './_lib/auth.js';
+import { requireAuth, requireUserAuth } from './_lib/auth.js';
 
 const API_BASE = 'https://hg-event-api-prod.sporty-tech.net/api/instantleagues';
 const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
@@ -284,6 +284,7 @@ export default async function handler(req, res) {
     const isCron = !!(cronKey && expectedCronKey && timingSafeEqual(cronKey, expectedCronKey));
 
     let deviceId;
+    let userId;
     let callerMode;
 
     if (isCron) {
@@ -291,33 +292,60 @@ export default async function handler(req, res) {
       console.log('[verify] Mode: CRON (full scan)');
     } else {
       callerMode = 'client';
-      try {
-        const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-        deviceId = body?.deviceId || body?.device_id;
-      } catch { /* no body */ }
 
-      // Client mode: verify device auth
-      const authedDeviceId = await requireAuth(req);
-      if (!authedDeviceId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Authentication required',
-        });
+      // Priority 1: user auth (email session)
+      userId = await requireUserAuth(req);
+      if (userId) {
+        // Look up device(s) linked to this user via premium_activations
+        const devices = await sql`
+          SELECT DISTINCT device_id FROM premium_activations
+          WHERE user_id = ${userId} AND device_id IS NOT NULL
+        `;
+        const deviceIds = devices.map(d => d.device_id);
+        if (deviceIds.length > 0) {
+          deviceId = deviceIds; // array of device_ids
+          console.log(`[verify] Mode: CLIENT (user: ${userId}, devices: ${deviceIds.join(',')})`);
+        } else {
+          // User has no linked devices — nothing to verify
+          console.log(`[verify] Mode: CLIENT (user: ${userId}, no linked devices)`);
+          await sql.end();
+          return res.status(200).json({
+            success: true, message: 'Aucune prédiction en attente',
+            verified: 0, elapsed: Date.now() - startTime,
+          });
+        }
+      } else {
+        // Priority 2: device auth (HMAC — legacy)
+        const authedDeviceId = await requireAuth(req);
+        if (!authedDeviceId) {
+          return res.status(401).json({
+            success: false,
+            error: 'Authentication required',
+          });
+        }
+        deviceId = authedDeviceId;
+        console.log(`[verify] Mode: CLIENT (device: ${deviceId})`);
       }
-      deviceId = authedDeviceId;
-
-      console.log(`[verify] Mode: CLIENT (device: ${deviceId})`);
     }
 
     // ── 1. Fetch pending predictions ──
     let pendingPredictions;
-    if (deviceId) {
+    if (Array.isArray(deviceId)) {
+      // User auth: multiple devices
+      pendingPredictions = await sql`
+        SELECT * FROM predictions
+        WHERE status = 'pending' AND device_id = ANY(${deviceId})
+        ORDER BY created_at ASC LIMIT 200
+      `;
+    } else if (deviceId) {
+      // Device auth: single device
       pendingPredictions = await sql`
         SELECT * FROM predictions
         WHERE status = 'pending' AND device_id = ${deviceId}
         ORDER BY created_at ASC LIMIT 200
       `;
     } else {
+      // Cron mode: all predictions
       pendingPredictions = await sql`
         SELECT * FROM predictions
         WHERE status = 'pending'

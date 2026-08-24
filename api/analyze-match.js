@@ -2,7 +2,7 @@
 // AI-powered match analysis — Groq (primary) + Mathematical fallback
 
 import { setCorsHeaders } from './_lib/cors.js';
-import { requireAuth } from './_lib/auth.js';
+import { requireAuth, requireUserAuth } from './_lib/auth.js';
 
 const maskKey = (key) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : 'NOT_SET';
 
@@ -561,8 +561,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // ── Auth gate: HMAC device token (or legacy fallback during migration) ──
-  const deviceId = await requireAuth(req);
+  // ── Auth gate: user session (Bearer) or HMAC device token (legacy) ──
+  const userId = await requireUserAuth(req);
+  const deviceId = userId || (await requireAuth(req));
   if (!deviceId) {
     return res.status(401).json({ error: 'Authentication required (Device token or x-device-id header)' });
   }
