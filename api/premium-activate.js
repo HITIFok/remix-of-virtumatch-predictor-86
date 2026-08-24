@@ -57,7 +57,7 @@ async function sendActivationMagicLink(email, code, durationDays) {
         ${tokenHash},
         ${email},
         'activate',
-        ${JSON.stringify({ code, durationDays })},
+        ${ { code, durationDays } },
         NOW() + INTERVAL '15 minutes'
       )
     `;

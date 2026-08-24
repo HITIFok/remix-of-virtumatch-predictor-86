@@ -123,7 +123,7 @@ async function handleRequest(req, res) {
         ${tokenHash},
         ${email},
         ${purpose},
-        ${payload ? JSON.stringify(payload) : null},
+        ${payload || null},
         NOW() + INTERVAL '15 minutes'
       )
     `;
@@ -242,11 +242,16 @@ async function handleVerify(req, res) {
       return res.status(500).json({ success: false, error: 'Erreur lors de la création du compte' });
     }
 
+    // ── Safely parse payload (JSONB may come back as string or object) ──
+    const parsedPayload = typeof link.payload === 'string'
+      ? (() => { try { return JSON.parse(link.payload); } catch { return null; } })()
+      : (link.payload || null);
+
     // ── If purpose='migrate': link existing device_id premium to this user ──
     let migratedCount = 0;
 
-    if (link.purpose === 'migrate' && link.payload?.device_id) {
-      const deviceId = link.payload.device_id;
+    if (link.purpose === 'migrate' && parsedPayload?.device_id) {
+      const deviceId = parsedPayload.device_id;
       // Migrate all active, unlinked premium activations for this device
       const result = await sql`
         UPDATE premium_activations
@@ -262,8 +267,14 @@ async function handleVerify(req, res) {
     // ── If purpose='activate': finalize premium activation ──
     let premiumResult = null;
 
-    if (link.purpose === 'activate' && link.payload) {
-      const { code, durationDays } = link.payload;
+    if (link.purpose === 'activate' && parsedPayload) {
+      const { code, durationDays } = parsedPayload;
+
+      if (!code) {
+        console.error('[auth/verify] activate link missing code in payload', { linkId: link.id });
+        await sql.end();
+        return res.status(400).json({ success: false, error: 'Lien invalide: données manquantes' });
+      }
 
       premiumResult = await sql.begin(async (tx) => {
         const [codeRow] = await tx`
@@ -337,7 +348,7 @@ async function handleVerify(req, res) {
       } : {}),
     });
   } catch (err) {
-    console.error('[auth/verify] Error:', err.message);
+    console.error('[auth/verify] Error:', err.message, err.stack);
     try { await sql.end(); } catch { /* */ }
     return res.status(500).json({ success: false, error: 'Erreur serveur' });
   }
