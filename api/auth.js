@@ -5,10 +5,19 @@
 //   POST ?action=verify         → Verify magic link from body { token }
 
 import crypto from 'crypto';
-import { Resend } from 'resend';
 import { setCorsHeaders } from './_lib/cors.js';
 import { createSql } from './_lib/db.js';
 import { signUserToken } from './_lib/auth.js';
+
+// Lazy-load Resend to avoid import-time crash if package is missing
+async function getResend() {
+  try {
+    const mod = await import('resend');
+    return mod.Resend;
+  } catch {
+    return null;
+  }
+}
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || 'VirtuMatch <onboarding@resend.dev>';
@@ -145,8 +154,13 @@ async function handleRequest(req, res) {
 </div>`;
 
   try {
-    const resend = new Resend(RESEND_API_KEY);
-    await resend.emails.send({ from: RESEND_FROM, to: email, subject, html });
+    const ResendClass = await getResend();
+    if (ResendClass && RESEND_API_KEY) {
+      const resend = new ResendClass(RESEND_API_KEY);
+      await resend.emails.send({ from: RESEND_FROM, to: email, subject, html });
+    } else {
+      console.error('[auth/request] Resend not available or RESEND_API_KEY not set');
+    }
   } catch (err) {
     console.error('[auth/request] Resend error:', err.message);
   }

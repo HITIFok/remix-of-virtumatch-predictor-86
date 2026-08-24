@@ -6,8 +6,17 @@
 // POST with email triggers magic link; without email keeps legacy direct activation.
 
 import crypto from 'crypto';
-import { Resend } from 'resend';
 import postgres from 'postgres';
+
+// Lazy-load Resend to avoid import-time crash
+async function getResend() {
+  try {
+    const mod = await import('resend');
+    return mod.Resend;
+  } catch {
+    return null;
+  }
+}
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
 import { createSql } from './_lib/db.js';
@@ -69,13 +78,18 @@ async function sendActivationMagicLink(email, code, durationDays) {
 
   if (RESEND_API_KEY) {
     try {
-      const resend = new Resend(RESEND_API_KEY);
-      await resend.emails.send({
-        from: RESEND_FROM,
-        to: email,
-        subject: 'Active ton accès Premium — VirtuMatch',
-        html,
-      });
+      const ResendClass = await getResend();
+      if (ResendClass && RESEND_API_KEY) {
+        const resend = new ResendClass(RESEND_API_KEY);
+        await resend.emails.send({
+          from: RESEND_FROM,
+          to: email,
+          subject: 'Active ton accès Premium — VirtuMatch',
+          html,
+        });
+      } else {
+        console.error('[premium-activate] Resend not available');
+      }
     } catch (err) {
       console.error('[premium-activate] Resend error:', err.message);
     }

@@ -240,6 +240,9 @@ const USER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
  * @returns {string} token
  */
 export function signUserToken(userId) {
+  if (!USER_SESSION_SECRET) {
+    throw new Error('USER_SESSION_SECRET environment variable is not configured');
+  }
   const timestamp = Date.now();
   const message = `${timestamp}.${userId}`;
   const payload = Buffer.from(String(timestamp)).toString('base64url');
