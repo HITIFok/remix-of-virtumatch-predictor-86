@@ -198,8 +198,8 @@ async function handleVerify(req, res) {
   // ── Hash to look up in DB ──
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
-  const sql = createSql();
   try {
+    const sql = createSql();
     // ── Find valid, unused magic link ──
     const [link] = await sql`
       SELECT id, email, purpose, payload, expires_at
@@ -354,15 +354,20 @@ export default async function handler(req, res) {
 
   const action = String(req.query?.action || '').trim();
 
-  // POST ?action=request
-  if (req.method === 'POST' && action === 'request') {
-    return handleRequest(req, res);
-  }
+  try {
+    // POST ?action=request
+    if (req.method === 'POST' && action === 'request') {
+      return await handleRequest(req, res);
+    }
 
-  // GET/POST ?action=verify
-  if ((req.method === 'GET' || req.method === 'POST') && action === 'verify') {
-    return handleVerify(req, res);
-  }
+    // GET/POST ?action=verify
+    if ((req.method === 'GET' || req.method === 'POST') && action === 'verify') {
+      return await handleVerify(req, res);
+    }
 
-  return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return res.status(405).json({ success: false, error: 'Method not allowed' });
+  } catch (err) {
+    console.error('[auth] UNHANDLED:', err.message, err.stack);
+    return res.status(500).json({ success: false, error: 'Erreur serveur interne' });
+  }
 }
