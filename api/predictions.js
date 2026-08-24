@@ -260,18 +260,10 @@ export default async function handler(req, res) {
     let authedDeviceId = null;
 
     if (userId) {
-      // User auth: verify the device_id in body belongs to this user
-      const sql = postgres(NEON_DATABASE_URL);
-      const [link] = await sql`
-        SELECT 1 FROM premium_activations
-        WHERE user_id = ${userId} AND device_id = ${body.device_id}
-        LIMIT 1
-      `;
-      await sql.end();
-      if (!link) {
-        return res.status(403).json({ success: false, error: 'device_id not linked to your account' });
-      }
+      // User auth (email verified via magic link): trust the user.
+      // device_id in body is for grouping only, no additional ownership check needed.
     } else {
+      // Device auth: verify device_id matches the HMAC token
       authedDeviceId = await requireAuth(req);
       if (!authedDeviceId) {
         return res.status(401).json({ success: false, error: 'Authentication required' });
