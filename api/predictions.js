@@ -178,24 +178,14 @@ export default async function handler(req, res) {
 
   // ─── GET: Read predictions ─────────────────────────────────────────────────
   if (req.method === 'GET') {
-    // Priority 1: user auth (email session)
+    // Priority 1: user auth (email session) — query directly by user_id
     const userId = await requireUserAuth(req);
     if (userId) {
       try {
         const sql = postgres(NEON_DATABASE_URL);
-        // Find device(s) linked to this user
-        const devices = await sql`
-          SELECT DISTINCT device_id FROM premium_activations
-          WHERE user_id = ${userId} AND device_id IS NOT NULL
-        `;
-        const deviceIds = devices.map(d => d.device_id);
-        if (deviceIds.length === 0) {
-          await sql.end();
-          return res.status(200).json({ success: true, predictions: [] });
-        }
         const rows = await sql`
           SELECT * FROM predictions
-          WHERE device_id = ANY(${deviceIds})
+          WHERE user_id = ${userId}
           ORDER BY created_at DESC
           LIMIT 200
         `;
@@ -290,7 +280,8 @@ export default async function handler(req, res) {
           first_half_goal_prob, expected_goals,
           winner_1x2,
           device_id, status, home, away,
-          score_home, score_away, exact_score
+          score_home, score_away, exact_score,
+          user_id
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
           ${d.odd_home}, ${d.odd_draw}, ${d.odd_away},
@@ -303,7 +294,8 @@ export default async function handler(req, res) {
           ${d.first_half_goal_prob}, ${d.expected_goals},
           ${d.winner_1x2},
           ${d.device_id}, ${d.status}, ${d.home}, ${d.away},
-          ${d.score_home}, ${d.score_away}, ${d.exact_score}
+          ${d.score_home}, ${d.score_away}, ${d.exact_score},
+          ${userId || null}
         )
         RETURNING *
       `;
@@ -327,20 +319,41 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'Invalid JSON body' });
     }
 
-    // Priority 1: user auth (email session)
+    // Priority 1: user auth (email session) — delete by user_id
     const userId = await requireUserAuth(req);
     let deviceIds = null;
 
     if (userId) {
-      const sql = postgres(NEON_DATABASE_URL);
-      const devices = await sql`
-        SELECT DISTINCT device_id FROM premium_activations
-        WHERE user_id = ${userId} AND device_id IS NOT NULL
-      `;
-      await sql.end();
-      deviceIds = devices.map(d => d.device_id);
-      if (deviceIds.length === 0) {
-        return res.status(200).json({ success: true, deleted: 0 });
+      // User auth: delete predictions owned by this user
+      try {
+        const sql = postgres(NEON_DATABASE_URL);
+
+        if (body.prediction_id) {
+          const predictionId = parseInt(body.prediction_id, 10);
+          if (!predictionId || isNaN(predictionId)) {
+            await sql.end();
+            return res.status(400).json({ success: false, error: 'Invalid prediction_id' });
+          }
+          const result = await sql`
+            DELETE FROM predictions
+            WHERE id = ${predictionId} AND user_id = ${userId}
+          `;
+          await sql.end();
+          if (result.count === 0) {
+            return res.status(404).json({ success: false, error: 'Prediction not found' });
+          }
+          return res.status(200).json({ success: true, deleted: result.count });
+        }
+
+        const result = await sql`
+          DELETE FROM predictions
+          WHERE user_id = ${userId}
+        `;
+        await sql.end();
+        return res.status(200).json({ success: true, deleted: result.count });
+      } catch (err) {
+        console.error('[predictions DELETE user] Error:', err.message);
+        return res.status(500).json({ success: false, error: 'Failed to delete predictions' });
       }
     } else {
       // Priority 2: device auth (HMAC — legacy)
