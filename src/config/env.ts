@@ -23,8 +23,8 @@ export const API_BASE = (() => {
   return VERCEL_PRODUCTION_URL;
 })();
 
-// URL de téléchargement de l'APK (configurée dans Vercel: VITE_APK_DOWNLOAD_URL)
-export const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || '';
+// URL de téléchargement de l'APK (GitHub Actions artifact)
+export const APK_DOWNLOAD_URL = import.meta.env.VITE_APK_DOWNLOAD_URL || 'https://github.com/HITIFok/remix-of-virtumatch-predictor-86/actions/runs/32827417955/artifacts/9555485266';
 
 export const config = {
   api: {
