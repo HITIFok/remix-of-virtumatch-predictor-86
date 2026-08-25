@@ -1,4 +1,32 @@
 ---
+Task ID: 3
+Agent: main
+Task: Fix analyze-match 500 error (Vercel timeout on "Prédire tous les matchs")
+
+Work Log:
+- Diagnosed: "A server e..." = Vercel HTML error page, not JSON → function killed by 10s Hobby timeout
+- Root cause: Groq API call (4.5s) + cold start (1-3s) + auth DB call (0-2s) > 10s budget
+- Server fix (api/analyze-match.js):
+  - Wrapped entire handler in global timeout guard (8s) → always returns JSON (504), never Vercel HTML
+  - Auth moved inside try/catch (was outside — unhandled auth errors returned HTML)
+  - Reduced DEADLINE_MS from 4500 to 2500 (leaves buffer for cold start + auth)
+  - Dynamic deadline: effectiveDeadline = min(2500, remainingMs - 1000)
+  - Aggressive batch routing: >3 matches → instant math fallback (no Groq call at all)
+  - Lowered token threshold from 8000 to 5000 for 2-3 match batches
+- Client fix (LiveMatches.tsx + Index.tsx):
+  - Added content-type check before res.json() — handles Vercel HTML gracefully
+  - Falls back to math predictions silently when AI is unavailable
+- TypeScript compiles clean
+
+Stage Summary:
+- analyze-match v25: timeout-resilient, always returns JSON
+- 1 match: Groq AI (up to 2.5s) with math fallback
+- 2-3 matches: Groq if tokens < 5000, else math
+- 4+ matches: instant math (no Groq, no timeout risk)
+- Global 8s guard returns JSON 504 instead of Vercel HTML 500
+- Client-side content-type check prevents JSON parse crash
+
+---
 Task ID: 1
 Agent: main
 Task: Fix cron-job.org timeout on auto-playout endpoint

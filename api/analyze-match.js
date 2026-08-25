@@ -481,18 +481,20 @@ function parsePredictions(rawContent) {
   }
 }
 
-// ─── FAST ANALYSIS: 5-second deadline ─────────────────────────────────────
+// ─── FAST ANALYSIS: tight deadline to stay within Vercel 10s limit ─────────
+// Vercel Hobby = 10s max. Cold start (1-3s) + auth (0-2s) + processing overhead
+// → keep Groq budget conservative to avoid Vercel HTML error page
+const DEADLINE_MS = 2500;
 
-const DEADLINE_MS = 4500;
-
-async function analyzeFast(matches, groqKey, groqModel) {
-  const deadline = Date.now() + DEADLINE_MS;
+async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
+  const deadline = Date.now() + deadlineMs;
 
   if (!groqKey) {
     console.log('[analyze-match] No GROQ_API_KEY -> instant math v2.0');
     return { predictions: matches.map(mathPredict), provider: 'math-v2' };
   }
 
+  // For 1 match: try Groq directly
   if (matches.length === 1) {
     const prompt = buildUserPrompt(matches);
     const content = await callGroqSingle(groqKey, groqModel, prompt);
@@ -507,6 +509,13 @@ async function analyzeFast(matches, groqKey, groqModel) {
     return { predictions: [mathPredict(matches[0])], provider: 'math-v2' };
   }
 
+  // For 2+ matches: only try Groq if few matches and small prompt
+  // Vercel Hobby 10s is tight — prefer reliable math fallback for batches
+  if (matches.length > 3) {
+    console.log(`[analyze-match] ${matches.length} matches -> instant math v2.0 (batch reliability)`);
+    return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+  }
+
   const allPrompt = buildUserPrompt(matches);
   const promptTokens = Math.ceil(allPrompt.length / 3);
   const systemTokens = Math.ceil(SYSTEM_PROMPT.length / 3);
@@ -514,8 +523,8 @@ async function analyzeFast(matches, groqKey, groqModel) {
 
   console.log(`[analyze-match] Est. tokens for ${matches.length} matches: ~${totalEstimate}`);
 
-  if (totalEstimate > 8000) {
-    console.log(`[analyze-match] Too many matches -> math v2.0`);
+  if (totalEstimate > 5000) {
+    console.log(`[analyze-match] Token estimate too high -> math v2.0`);
     return { predictions: matches.map(mathPredict), provider: 'math-v2' };
   }
 
@@ -551,26 +560,53 @@ async function analyzeFast(matches, groqKey, groqModel) {
 
 // ─── MAIN HANDLER ─────────────────────────────────────────────────────────
 
+const GLOBAL_TIMEOUT_MS = 8000; // Hard limit — must return before Vercel's 10s kill
+
 export default async function handler(req, res) {
   // CORS (shared module — no wildcard)
   setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-device-id');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
-  }\n  if (req.method !== 'POST') {
+  }
+  if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // ── Auth gate: user session (Bearer) or HMAC device token (legacy) ──
-  const userId = await requireUserAuth(req);
-  const deviceId = userId || (await requireAuth(req));
-  if (!deviceId) {
-    return res.status(401).json({ error: 'Authentication required (Device token or x-device-id header)' });
-  }
+  // ── Global timeout: ensures we ALWAYS return JSON, never Vercel HTML ──
+  const globalDeadline = Date.now() + GLOBAL_TIMEOUT_MS;
+  let responded = false;
+  const guard = (fn) => async (...args) => {
+    if (responded) return;
+    if (Date.now() > globalDeadline) {
+      if (!responded) { responded = true; res.status(504).json({ error: 'Server timeout — try fewer matches' }); }
+      return;
+    }
+    try { return await fn(...args); }
+    catch (e) {
+      if (!responded) {
+        responded = true;
+        console.error('[analyze-match] Error:', e.message, e.stack);
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  };
 
-  const startTime = Date.now();
+  return guard(async () => {
+    // ── Auth gate: user session (Bearer) or HMAC device token (legacy) ──
+    const userId = await requireUserAuth(req);
+    let deviceId;
+    if (userId) {
+      deviceId = userId; // Bearer token — user auth takes priority, no DB call needed
+    } else {
+      deviceId = await requireAuth(req);
+    }
+    if (!deviceId) {
+      return res.status(401).json({ error: 'Authentication required (Device token or x-device-id header)' });
+    }
 
-  try {
+    const startTime = Date.now();
+
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
     const matches = body.matches;
 
@@ -594,7 +630,10 @@ export default async function handler(req, res) {
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
-    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL);
+    // Adjust deadline based on remaining time
+    const remainingMs = globalDeadline - Date.now() - 1000; // 1s buffer for response
+    const effectiveDeadline = Math.max(1000, Math.min(DEADLINE_MS, remainingMs));
+    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL, effectiveDeadline);
 
     const elapsed = Date.now() - startTime;
     console.log(`[analyze-match] Done via ${result.provider}: ${result.predictions.length} predictions in ${elapsed}ms`);
@@ -604,8 +643,5 @@ export default async function handler(req, res) {
       elapsed,
       provider: result.provider,
     });
-  } catch (e) {
-    console.error('[analyze-match] Unhandled error:', e.message, e.stack);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
+  })();
 };

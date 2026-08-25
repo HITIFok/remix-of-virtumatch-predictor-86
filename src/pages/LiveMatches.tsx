@@ -475,6 +475,12 @@ export default function LiveMatches() {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ matches: enriched }),
       });
+      // Safety: Vercel may return HTML on timeout (not JSON)
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.warn(`[LiveMatches] AI returned non-JSON (${res.status}): too many matches or server timeout`);
+        return;
+      }
       const data = await res.json();
       if (res.ok && data?.predictions?.length > 0) {
         const aiPreds = data.predictions as AIPrediction[];

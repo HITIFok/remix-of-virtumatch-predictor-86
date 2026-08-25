@@ -28,19 +28,26 @@ export default function Index() {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ matches }),
       });
-      const aiData = await res.json();
-
+      // Safety: Vercel may return HTML on timeout (not JSON)
+      const contentType = res.headers.get('content-type') || '';
       let aiPredictions: (AIPrediction | undefined)[] = [];
 
-      if (!res.ok || aiData.error) {
-        console.warn("AI analysis failed, using math fallback:", aiData.error);
-        toast.error("IA indisponible, analyse mathématique utilisée");
+      if (!contentType.includes('application/json')) {
+        console.warn(`[Index] AI returned non-JSON (${res.status}): server timeout, using math fallback`);
         aiPredictions = matches.map(() => undefined);
       } else {
-        aiPredictions = (aiData?.predictions || []) as AIPrediction[];
-        // Pad if AI returned fewer results
-        while (aiPredictions.length < matches.length) {
-          aiPredictions.push(undefined);
+        const aiData = await res.json();
+
+        if (!res.ok || aiData.error) {
+          console.warn("AI analysis failed, using math fallback:", aiData.error);
+          toast.error("IA indisponible, analyse mathématique utilisée");
+          aiPredictions = matches.map(() => undefined);
+        } else {
+          aiPredictions = (aiData?.predictions || []) as AIPrediction[];
+          // Pad if AI returned fewer results
+          while (aiPredictions.length < matches.length) {
+            aiPredictions.push(undefined);
+          }
         }
       }
 
