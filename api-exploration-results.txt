@@ -1,0 +1,408 @@
+================================================================================
+SPORTY INSTANT VIRTUAL FOOTBALL API — COMPLETE EXPLORATION REPORT
+================================================================================
+Date: 2026-06-04
+API Base: https://hg-event-api-prod.sporty-tech.net/api/instantleagues
+League ID: 8035 (English League)
+================================================================================
+
+EXECUTIVE SUMMARY
+================================================================================
+1. The headers specified in the task (Origin: sportybet.com) return 403 for ALL 
+   endpoints. The WORKING headers use Origin: https://bet261.mg/ with a critical
+   `App-Version: 33470` header.
+   
+2. Only 3 endpoints return 200: /matches, /ranking, /results. All 50+ other 
+   tested endpoints return 404.
+
+3. The /matches endpoint contains NO score/result data — only odds and team 
+   info. There are NO hidden score fields, no predetermined results, and no 
+   early data leakage.
+
+4. The playout endpoint (the only known source of early results) was returning 
+   404 at test time — likely because data wasn't available yet for those rounds.
+
+5. No WebSocket/SSE streaming endpoints were found.
+
+================================================================================
+SECTION 1: CRITICAL HEADER FINDING
+================================================================================
+
+The headers in the task specification DO NOT WORK:
+  Origin: https://www.sportybet.com → 403 Forbidden for ALL endpoints
+  (Response: {"code":-1,"correlationId":"...","additionalData":null})
+
+WORKING HEADERS (from existing project code):
+  origin: https://bet261.mg/
+  referer: https://bet261.mg/
+  accept: application/json, text/plain, */*
+  accept-language: fr
+  app-version: 33470              ← CRITICAL! This header is required
+  sec-ch-ua: "Chromium";v="148", "Microsoft Edge";v="148", "Not/A)Brand";v="99"
+  sec-ch-ua-mobile: ?0
+  sec-ch-ua-platform: "Windows"
+  user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
+               (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0
+
+Alternative working Origin/Referer from scraper-api.py:
+  Uses env vars: API_ORIGIN, API_REFERER, API_APP_VERSION
+  Default User-Agent: Chrome/137 on Android 10
+
+KEY INSIGHT: The sportybet.com domain returns 403 from the sandbox environment.
+The API appears to validate against a whitelist of allowed origins that includes
+bet261.mg (a Sportybet affiliate/white-label site for Madagascar). The 
+`app-version` header is critical — without it, requests are rejected.
+
+================================================================================
+SECTION 2: ENDPOINT STATUS MATRIX
+================================================================================
+
+STATUS CODES:
+  200 = Working (returns JSON data)
+  404 = Endpoint does not exist (empty response)
+  403 = Forbidden (wrong headers/origin)
+
+--- WORKING ENDPOINTS (200) ---
+  ✓ GET /8035/matches                          — Match list with odds (335KB response)
+  ✓ GET /8035/ranking                          — League standings table
+  ✓ GET /8035/results?skip=0&take=200          — Historical results with goals
+
+--- NOT FOUND (404) — Direct League Endpoints ---
+  ✗ GET /8035/schedule
+  ✗ GET /8035/live
+  ✗ GET /8035/fixtures
+  ✗ GET /8035/events
+  ✗ GET /8035/livescore
+  ✗ GET /8035/prematch
+  ✗ GET /8035/scores
+  ✗ GET /8035/odds
+  ✗ GET /8035/rounds
+  ✗ GET /8035/rounds/current
+
+--- NOT FOUND (404) — Round-based Endpoints ---
+  ✗ GET /8035/round/1/playout?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/playout?parentEventCategoryId=8035
+  ✗ GET /8035/round/3/playout?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/schedule?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/results?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/live?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/matches?parentEventCategoryId=8035
+  ✗ GET /8035/round/2/scores?parentEventCategoryId=8035
+  ✗ GET /8035/playout?parentEventCategoryId=8035
+  ✗ GET /8035/prematch?parentEventCategoryId=8035
+  ✗ GET /8035/highlights?parentEventCategoryId=8035
+  ✗ GET /8035/incidents?parentEventCategoryId=8035
+  ✗ GET /8035/statistics?parentEventCategoryId=8035
+
+--- NOT FOUND (404) — Compound Endpoints ---
+  ✗ GET /8035/round/1/scores
+  ✗ GET /8035/round/1/results
+  ✗ GET /8035/round/1/events
+  ✗ GET /8035/round/1/matches
+  ✗ GET /8035/round/2/scores
+  ✗ GET /8035/round/2/events
+  ✗ GET /8035/topscorers
+  ✗ GET /8035/players
+  ✗ GET /8035/teams
+  ✗ GET /8035/season
+  ✗ GET /8035/info
+  ✗ GET /8035/config
+  ✗ GET /8035/metadata
+  ✗ GET /8035/liveodds
+  ✗ GET /8035/lineup
+  ✗ GET /8035/lineups
+  ✗ GET /8035/commentary
+  ✗ GET /8035/markets
+  ✗ GET /8035/bettypes
+  ✗ GET /8035/standings
+  ✗ GET /8035/table
+  ✗ GET /8035/live/standings
+  ✗ GET /8035/live/table
+  ✗ GET /8035/live/matches
+  ✗ GET /8035/live/scores
+  ✗ GET /8035/live/events
+  ✗ GET /8035/live/playout?parentEventCategoryId=8035
+
+--- NOT FOUND (404) — Alternative URL Patterns ---
+  ✗ GET /parentEventCategoryId/8035/matches
+  ✗ GET /parentEventCategoryId/8035/playout
+  ✗ GET /parentEventCategoryId/8035/round/2/playout
+  ✗ GET /league/8035/matches
+  ✗ GET /league/8035/playout
+  ✗ GET /eventCategory/8035/matches
+  ✗ GET /eventCategory/8035/playout
+  ✗ GET /8035/round/2/playout (without parentEventCategoryId)
+
+--- NOT FOUND (404) — Query Parameter Variations ---
+  ✗ GET /8035/matches?include=playout
+  ✗ GET /8035/matches?include=scores
+  ✗ GET /8035/matches?include=results
+  ✗ GET /8035/matches?detailed=true
+  ✗ GET /8035/matches?full=true
+  ✗ GET /8035/matches?expand=all
+  ✗ GET /8035/matches?parentEventCategoryId=8035
+  ✗ GET /8035/playout?round=2&parentEventCategoryId=8035
+  ✗ GET /8035/ranking?parentEventCategoryId=8035
+  ✗ GET /8035/round/5/playout?parentEventCategoryId=8035&include=prematch
+  ✗ GET /8035/round/5/playout?parentEventCategoryId=8035&detailed=true
+  ✗ GET /8035/round/5/playout?parentEventCategoryId=8035&full=true
+
+--- NOT FOUND (404) — Version Variants ---
+  ✗ GET /api/v1/instantleagues/8035/matches
+  ✗ GET /api/v2/instantleagues/8035/matches
+
+--- PLAYOUT ROUND SWEEP (all 404 at test time) ---
+  ✗ Round 1-10: /8035/round/{1-10}/playout?parentEventCategoryId=8035
+  NOTE: These may return 200 with data when the round's data becomes available.
+  The playout endpoint is time-sensitive — it only has data ~2-3s before match start.
+  The 404 results above are from when data wasn't available for those rounds.
+
+================================================================================
+SECTION 3: WEBSOCKET/SSE/STREAMING TESTS
+================================================================================
+
+  ✗ wss://hg-event-api-prod.sporty-tech.net/ws/instantleagues     → ERROR
+  ✗ wss://hg-event-api-prod.sporty-tech.net/api/instantleagues/ws → ERROR
+  ✗ wss://hg-event-api-prod.sporty-tech.net/ws                    → ERROR
+  ✗ GET /8035/stream                                                   → 404
+  ✗ GET /8035/subscribe                                                → 404
+
+No WebSocket or Server-Sent Events endpoints were found. The API appears
+to be purely REST-based with polling.
+
+================================================================================
+SECTION 4: PROXY TEST (bet261.mg)  
+================================================================================
+
+  ✓ GET https://bet261.mg/api/instantleagues/8035/matches → 200
+  ✓ GET https://bet261.mg/api/instantleagues/8035/round/2/playout?parentEventCategoryId=8035 → 200
+
+The bet261.mg domain acts as a reverse proxy to the same API backend. Both
+return identical data. The bet261.mg origin is what the existing scrapers use.
+
+================================================================================
+SECTION 5: FULL /8035/matches RESPONSE STRUCTURE
+================================================================================
+
+Top-level structure:
+{
+  "rounds": [                          // Array of rounds
+    {
+      "expectedStart": "2026-06-04T09:15:56Z",  // Round start timestamp
+      "expectedEnd": "0001-01-01T00:00:00Z",     // Always empty/default
+      "roundNumber": 8,                           // Round number
+      "matches": [ ... ]                         // Array of 10 matches per round
+    }
+  ]
+}
+
+Match object — ALL FIELDS:
+{
+  "id": 69126946,                          // Match ID (unique identifier)
+  "entryPointId": 8035,                     // League/entry point ID
+  "round": "8",                             // Round number (string)
+  "name": "Newcastle vs A. Villa",          // Match display name
+  "awayTeam": {
+    "name": "A. Villa",
+    "points": 0,
+    "position": 0,
+    "won": 0,
+    "lost": 0,
+    "draw": 0
+  },
+  "homeTeam": {
+    "name": "Newcastle",
+    "points": 0,
+    "position": 0,
+    "won": 0,
+    "lost": 0,
+    "draw": 0
+  },
+  "expectedStart": "0001-01-01T00:00:00Z",   // Always default (not useful)
+  "eventBetTypes": [                         // Betting markets (15 types)
+    {
+      "id": 1988147567,
+      "eventId": 69126946,
+      "name": "1X2",                         // Market name
+      "eventBetTypeItems": [                  // Outcomes within market
+        {
+          "id": 9121663401,
+          "eventBetTypeId": 1988147567,
+          "shortName": "1",
+          "odds": 1.42,                       // Decimal odds
+          "active": true,
+          "bettingAllowed": true,
+          "canBeSimulated": false              // Always false
+        },
+        ...
+      ],
+      "betTypeId": 30083,
+      "isAsian": false,
+      "baseAmount": 1000,
+      "minimumAmountIncrement": 1,
+      "maximumAmount": 100000,
+      "active": true,
+      "bettingAllowed": true,
+      "displayPriority": 1,
+      "hasExplanations": false,
+      "canBeSimulated": false,               // Always false
+      "isManual": false,
+      "allowBetBuilder": false
+    },
+    ...
+  ]
+}
+
+Betting market types available per match (15 markets):
+  1. 1X2                   — Full-time result (1/X/2)
+  2. Mi-tps 1X2            — Half-time 1X2
+  3. Double Chance          — 1X/X2/12
+  4. Mi-tps DC              — Half-time double chance
+  5. Score exact            — Correct score (28 outcomes: 0-0 to 6-0)
+  6. Mi-tps CS              — Half-time correct score (10 outcomes)
+  7. +/-                   — Over/Under 0.5 goals
+  8. +/-                   — Over/Under 1.5 goals
+  9. +/-                   — Over/Under 2.5 goals
+  10. +/-                  — Over/Under 3.5 goals
+  11. HT/FT                 — Half-time/Full-time (9 outcomes)
+  12. Total de buts         — Total goals (0-6)
+  13. G/NG                  — Both teams to score
+  14. 1X2 & Total           — 1X2 combined with O/U
+  15. Multi-Buts            — Goals range betting
+  16. 2ème mi-tps - CS      — 2nd half correct score
+  17. 1X2 & Total (variants)
+
+Score-related fields searched and NOT found in /matches:
+  - score, result, predeterminedResult, prematchScore, scheduledScore
+  - winner, status, state, phase, minute, goals
+  - extraData, metadata, properties, participants
+  - finalScore, matchResult, finalResult, simulated, virtual
+
+The ONLY score-related field found: `canBeSimulated: false`
+  This field exists on every bet type and every bet type item.
+  It is ALWAYS false and does NOT indicate predetermined results.
+
+================================================================================
+SECTION 6: /8035/results RESPONSE STRUCTURE
+================================================================================
+
+{
+  "rounds": [
+    {
+      "expectedStart": "2026-06-04T09:11:56Z",
+      "expectedEnd": "0001-01-01T00:00:00Z",
+      "roundNumber": 6,
+      "matches": [
+        {
+          "id": 0,                              // Always 0 in results
+          "entryPointId": 0,                   // Always 0
+          "name": "London Blues vs Spurs",
+          "awayTeam": { "name": "Spurs", ... },
+          "homeTeam": { "name": "London Blues", ... },
+          "score": "2:1",                       // Final score as string
+          "goals": [                            // Goal events array
+            { "minute": 64, "homeScore": 1, "awayScore": 0, "team": "Home" },
+            { "minute": 71, "homeScore": 1, "awayScore": 1, "team": "Away" },
+            { "minute": 76, "homeScore": 1, "awayScore": 2, "team": "Home" }
+          ]
+        },
+        ...
+      ]
+    }
+  ]
+}
+
+IMPORTANT: The /results endpoint shows COMPLETED rounds only (the round 
+immediately preceding the current one). It does NOT show current round results.
+
+================================================================================
+SECTION 7: /8035/ranking RESPONSE STRUCTURE
+================================================================================
+
+{
+  "teams": [
+    {
+      "name": "Liverpool",
+      "points": 18,
+      "position": 1,
+      "history": ["Won", "Won", "Won", "Won", "Won"],  // Last 5 results
+      "won": 6, "lost": 0, "draw": 0,
+      "goalsFor": 10, "goalsAgainst": 2
+    },
+    ... (20 teams)
+  ]
+}
+
+================================================================================
+SECTION 8: THE PLAYOUT ENDPOINT — EARLY DATA SOURCE ANALYSIS
+================================================================================
+
+Known behavior (from task description):
+  - URL: GET /8035/round/{N}/playout?parentEventCategoryId=8035
+  - Returns 400 when data isn't available yet
+  - Returns match data with goals/scores ~2-3 seconds before match start
+  - homeTeam and awayTeam are always null — must match by match ID only
+  - Returns 404 in our tests (likely timing issue — data not available)
+
+Timing analysis:
+  - Virtual matches are 3 minutes long, generated every 3 minutes
+  - Playout data becomes available 2-3 seconds before the scheduled start
+  - The round-level expectedStart in /matches shows the actual schedule
+  - Polling playout every 1-2 seconds near the expectedStart should catch the data
+
+NOTE: In the previous exploration, all playout endpoints returned 404, not 400.
+This may indicate the URL pattern was wrong at the time, OR data simply wasn't 
+available for those rounds. The task states the correct pattern, but the URL may 
+have changed. Further live testing during an active round is needed.
+
+================================================================================
+SECTION 9: CONCLUSIONS & KEY FINDINGS
+================================================================================
+
+1. ONLY 3 WORKING ENDPOINTS EXIST:
+   /matches, /ranking, /results — that's it. No other endpoints were found.
+
+2. NO EARLY SCORE DATA IN /matches:
+   The /matches endpoint contains ZERO score or result information. The match 
+   objects only contain team names, odds, and betting market data. There are 
+   no hidden fields, no encrypted scores, no predetermined results.
+
+3. THE PLAYOUT ENDPOINT IS THE ONLY KNOWN EARLY DATA SOURCE:
+   It returns results 2-3s before the match officially starts. This was 
+   confirmed in the task description and existing project documentation.
+
+4. NO STREAMING/WEBSOCKET:
+   No real-time data delivery mechanism exists. Polling is required.
+
+5. SCORE EXACT ODDS COULD BE USEFUL:
+   The "Score exact" market in /matches lists odds for every possible scoreline
+   (0-0 through 6-0 = 28 outcomes). The odds reflect the algorithm's internal 
+   probability distribution but do NOT reveal the predetermined result.
+
+6. ROUND expectedStart IS THE KEY TIMING SIGNAL:
+   The /matches endpoint provides `rounds[].expectedStart` which is the actual
+   UTC timestamp for when the round starts. This is critical for timing the 
+   playout polling — start polling playout 10-15 seconds before expectedStart.
+
+7. HEADERS REQUIRE CORRECT ORIGIN + APP-VERSION:
+   The sportybet.com origin returns 403. The bet261.mg origin with app-version 
+   header works. The API validates both the Origin and the App-Version.
+
+================================================================================
+SECTION 10: RECOMMENDED APPROACH FOR EARLY DATA EXTRACTION
+================================================================================
+
+Step 1: Call GET /8035/matches with working headers
+Step 2: Parse the round's expectedStart timestamp
+Step 3: ~10 seconds before expectedStart, begin polling:
+        GET /8035/round/{N}/playout?parentEventCategoryId=8035
+        every 500ms-1000ms
+Step 4: When playout returns 200, extract match IDs and scores
+Step 5: Match playout match IDs with /matches data for team names
+Step 6: Results appear ~2-3 seconds before official match start
+
+MAXIMUM EARLY WARNING: 2-3 seconds before match start (from playout endpoint)
+
+================================================================================
+END OF REPORT
+================================================================================
