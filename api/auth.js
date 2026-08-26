@@ -3,6 +3,7 @@
 //   POST ?action=request  → Send magic link email (body: { email, purpose, code?, durationDays? })
 //   GET  ?action=verify&token=xxx  → Verify magic link from email
 //   POST ?action=verify         → Verify magic link from body { token }
+//   GET  ?action=latest-apk     → Fetch latest GitHub Actions APK artifact URL
 
 import crypto from 'crypto';
 import { setCorsHeaders } from './_lib/cors.js';
@@ -355,6 +356,60 @@ async function handleVerify(req, res) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// LATEST APK — GET ?action=latest-apk
+// Proxies GitHub Actions artifacts API (avoids CSP connect-src block).
+// 5-minute in-memory cache, stale fallback on error.
+// ═══════════════════════════════════════════════════════════════════
+
+const GITHUB_REPO = 'HITIFok/remix-of-virtumatch-predictor-86';
+let _apkCache = { url: null, ts: 0 };
+const APK_CACHE_MS = 5 * 60 * 1000;
+
+async function handleLatestApk(req, res) {
+  const now = Date.now();
+
+  // Return cached URL if fresh
+  if (_apkCache.url && (now - _apkCache.ts) < APK_CACHE_MS) {
+    return res.status(200).json({ url: _apkCache.url });
+  }
+
+  try {
+    const ghHeaders = { Accept: 'application/vnd.github+json' };
+    const ghToken = process.env.GITHUB_TOKEN;
+    if (ghToken) ghHeaders['Authorization'] = `Bearer ${ghToken}`;
+
+    const ghRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/actions/artifacts?per_page=5`,
+      { headers: ghHeaders, signal: AbortSignal.timeout(5000) }
+    );
+
+    if (!ghRes.ok) throw new Error(`GitHub ${ghRes.status}`);
+    const data = await ghRes.json();
+
+    if (!data?.artifacts?.length) {
+      // Return stale cache or empty
+      return res.status(200).json({ url: _apkCache.url || null });
+    }
+
+    // Find APK artifact
+    const apk = data.artifacts.find(a => /apk|android|app-release/i.test(a.name))
+      || data.artifacts[0];
+
+    const url = `https://github.com/${GITHUB_REPO}/actions/runs/${apk.workflow_run.id}/artifacts/${apk.id}`;
+    _apkCache = { url, ts: now };
+
+    return res.status(200).json({ url });
+  } catch (err) {
+    console.error('[auth/latest-apk] Error:', err.message);
+    // Stale fallback
+    if (_apkCache.url) {
+      return res.status(200).json({ url: _apkCache.url });
+    }
+    return res.status(200).json({ url: null });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Main handler — dispatch by action query param
 // ═══════════════════════════════════════════════════════════════════
 
@@ -374,6 +429,11 @@ export default async function handler(req, res) {
     // GET/POST ?action=verify
     if ((req.method === 'GET' || req.method === 'POST') && action === 'verify') {
       return await handleVerify(req, res);
+    }
+
+    // GET ?action=latest-apk
+    if (req.method === 'GET' && action === 'latest-apk') {
+      return await handleLatestApk(req, res);
     }
 
     return res.status(405).json({ success: false, error: 'Method not allowed' });

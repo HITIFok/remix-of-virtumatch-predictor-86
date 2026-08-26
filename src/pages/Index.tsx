@@ -18,19 +18,12 @@ export default function Index() {
   const [premiumRefreshKey, setPremiumRefreshKey] = useState(0);
   const [apkUrl, setApkUrl] = useState<string | null>(null);
 
-  // Fetch latest APK URL from GitHub Actions on mount
+  // Fetch latest APK URL from our server-side proxy (avoids CSP connect-src block)
   useEffect(() => {
-    fetch('https://api.github.com/repos/HITIFok/remix-of-virtumatch-predictor-86/actions/artifacts?per_page=5')
-      .then(r => r.ok ? r.json() : null)
+    fetch('/api/auth?action=latest-apk')
+      .then(r => r.json())
       .then(data => {
-        if (!data?.artifacts?.length) return;
-        // Find APK artifact (prefer one with 'apk' or 'android' in name)
-        const apk = data.artifacts.find((a: { name: string }) =>
-          /apk|android|app-release/i.test(a.name)
-        ) || data.artifacts[0];
-        if (apk) {
-          setApkUrl(`https://github.com/HITIFok/remix-of-virtumatch-predictor-86/actions/runs/${apk.workflow_run.id}/artifacts/${apk.id}`);
-        }
+        if (data?.url) setApkUrl(data.url);
       })
       .catch(() => {});
   }, []);
