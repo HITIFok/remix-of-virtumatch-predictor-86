@@ -614,9 +614,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'matches array required and non-empty' });
     }
 
-    // Limit: max 10 matches per request (prevents GROQ credit drain)
-    if (matches.length > 10) {
-      return res.status(400).json({ error: 'Maximum 10 matches per request' });
+    // Limit: max 50 matches per request
+    // (>3 matches use instant math fallback anyway — no Groq cost)
+    if (matches.length > 50) {
+      return res.status(400).json({ error: 'Maximum 50 matches per request' });
     }
 
     // Limit: max 100KB body size
