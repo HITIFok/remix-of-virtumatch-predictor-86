@@ -7,7 +7,7 @@ import ResultCard from "@/components/ResultCard";
 import PremiumGate from "@/components/PremiumGate";
 import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
-import { config, API_BASE } from "@/config/env";
+import { config } from "@/config/env";
 import { getAuthHeaders } from "@/lib/device";
 import { toast } from "sonner";
 import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
@@ -18,11 +18,20 @@ export default function Index() {
   const [premiumRefreshKey, setPremiumRefreshKey] = useState(0);
   const [apkUrl, setApkUrl] = useState<string | null>(null);
 
-  // Fetch latest APK URL on mount
+  // Fetch latest APK URL from GitHub Actions on mount
   useEffect(() => {
-    fetch(`${API_BASE}/api/latest-apk`)
+    fetch('https://api.github.com/repos/HITIFok/remix-of-virtumatch-predictor-86/actions/artifacts?per_page=5')
       .then(r => r.ok ? r.json() : null)
-      .then(data => { if (data?.url) setApkUrl(data.url); })
+      .then(data => {
+        if (!data?.artifacts?.length) return;
+        // Find APK artifact (prefer one with 'apk' or 'android' in name)
+        const apk = data.artifacts.find((a: { name: string }) =>
+          /apk|android|app-release/i.test(a.name)
+        ) || data.artifacts[0];
+        if (apk) {
+          setApkUrl(`https://github.com/HITIFok/remix-of-virtumatch-predictor-86/actions/runs/${apk.workflow_run.id}/artifacts/${apk.id}`);
+        }
+      })
       .catch(() => {});
   }, []);
 
