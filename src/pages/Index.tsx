@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
 import AnimatedBackground from "@/components/AnimatedBackground";
@@ -7,16 +7,24 @@ import ResultCard from "@/components/ResultCard";
 import PremiumGate from "@/components/PremiumGate";
 import { analyzeMatch, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { saveToHistory } from "@/lib/storage";
-import { config } from "@/config/env";
+import { config, API_BASE } from "@/config/env";
 import { getAuthHeaders } from "@/lib/device";
 import { toast } from "sonner";
 import { Sparkles, TrendingUp, Download, Smartphone } from "lucide-react";
-import { APK_DOWNLOAD_URL } from "@/config/env";
 
 export default function Index() {
   const [results, setResults] = useState<MatchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [premiumRefreshKey, setPremiumRefreshKey] = useState(0);
+  const [apkUrl, setApkUrl] = useState<string | null>(null);
+
+  // Fetch latest APK URL on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/latest-apk`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.url) setApkUrl(data.url); })
+      .catch(() => {});
+  }, []);
 
   const handleAnalyze = async (matches: MatchInput[]) => {
     setLoading(true);
@@ -77,10 +85,10 @@ export default function Index() {
         <PremiumGate onUnlocked={() => setPremiumRefreshKey(k => k + 1)} />
 
         {/* APK Download Banner */}
-        {APK_DOWNLOAD_URL && (
+        {apkUrl && (
           <button
             type="button"
-            onClick={() => { const a = document.createElement("a"); a.href = APK_DOWNLOAD_URL; a.download = ""; a.click(); }}
+            onClick={() => { const a = document.createElement("a"); a.href = apkUrl; a.download = ""; a.click(); }}
             onMouseEnter={() => { (window as unknown as { status: string }).status = ""; }}
             className="mt-4 w-full flex items-center gap-3 p-3.5 rounded-2xl border border-fire/30 bg-gradient-to-r from-fire/10 to-gold/10 hover:from-fire/20 hover:to-gold/20 transition-all duration-300 group cursor-pointer"
           >
