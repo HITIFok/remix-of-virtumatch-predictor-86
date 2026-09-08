@@ -357,7 +357,8 @@ async function handleVerify(req, res) {
 
 // ═══════════════════════════════════════════════════════════════════
 // LATEST APK — GET ?action=latest-apk
-// Proxies GitHub Actions artifacts API (avoids CSP connect-src block).
+// Proxies GitHub Releases API (avoids CSP connect-src block).
+// Release assets are permanent + public — no expiration unlike artifacts.
 // 5-minute in-memory cache, stale fallback on error.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -378,24 +379,22 @@ async function handleLatestApk(req, res) {
     const ghToken = process.env.GITHUB_TOKEN;
     if (ghToken) ghHeaders['Authorization'] = `Bearer ${ghToken}`;
 
+    // Query the "apk-latest" release for its APK asset (permanent, public)
     const ghRes = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/actions/artifacts?per_page=5`,
+      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/apk-latest`,
       { headers: ghHeaders, signal: AbortSignal.timeout(5000) }
     );
 
     if (!ghRes.ok) throw new Error(`GitHub ${ghRes.status}`);
     const data = await ghRes.json();
 
-    if (!data?.artifacts?.length) {
-      // Return stale cache or empty
+    // Find the APK asset in the release
+    const apkAsset = data.assets?.find(a => /\.apk$/i.test(a.name));
+    if (!apkAsset?.browser_download_url) {
       return res.status(200).json({ url: _apkCache.url || null });
     }
 
-    // Find APK artifact
-    const apk = data.artifacts.find(a => /apk|android|app-release/i.test(a.name))
-      || data.artifacts[0];
-
-    const url = `https://github.com/${GITHUB_REPO}/actions/runs/${apk.workflow_run.id}/artifacts/${apk.id}`;
+    const url = apkAsset.browser_download_url;
     _apkCache = { url, ts: now };
 
     return res.status(200).json({ url });

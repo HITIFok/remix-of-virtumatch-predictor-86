@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -65,13 +65,25 @@ jobs:
       - name: Find APK files
         run: find android/app/build/outputs -name "*.apk" -type f
 
-      - name: Upload APK
+      - name: Upload APK as artifact (temporary, for CI use)
         uses: actions/upload-artifact@v4
         with:
           name: virutel-apk
           path: android/app/build/outputs/**/*.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Publish APK as GitHub Release (permanent, public download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-latest
+          name: VirtuMatch APK (latest)
+          body: "Dernier build de l'APK VirtuMatch — généré automatiquement à chaque push sur main."
+          files: android/app/build/outputs/**/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Clean up keystore
         if: always()
