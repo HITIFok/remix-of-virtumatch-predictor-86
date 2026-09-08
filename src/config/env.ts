@@ -23,14 +23,14 @@ export const API_BASE = (() => {
   return VERCEL_PRODUCTION_URL;
 })();
 
-// URL de téléchargement de l'APK — récupérée dynamiquement via /api/latest-apk
+// URL de téléchargement de l'APK — récupérée dynamiquement via /api/auth?action=latest-apk
 export const APK_DOWNLOAD_URL = '';
 
 export const config = {
   api: {
     // Vercel API Routes (backend sécurisé)
-    adminLogin: `${API_BASE}/api/admin-login`,
-    adminVerify: `${API_BASE}/api/admin-login`,
+    adminLogin: `${API_BASE}/api/admin-codes?action=login`,
+    adminVerify: `${API_BASE}/api/admin-codes?action=verify`,
     adminDeleteCode: `${API_BASE}/api/admin-codes`,
     adminCodes: `${API_BASE}/api/admin-codes`,
     // API Routes replacing Supabase Edge Functions
