@@ -22,6 +22,7 @@ Variables d'environnement requises:
 """
 
 import json
+import sys
 import time
 from datetime import datetime
 

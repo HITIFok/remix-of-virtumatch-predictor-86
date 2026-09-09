@@ -15,6 +15,7 @@ Variables d'environnement requises:
 import requests
 import json
 import os
+import sys
 from datetime import datetime
 
 # ============ CONFIGURATION ============
