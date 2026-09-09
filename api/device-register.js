@@ -7,6 +7,11 @@ import { setCorsHeaders } from './_lib/cors.js';
 import { registerDevice, DEVICE_ID_RE } from './_lib/auth.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
+import { errorResponse, successResponse, methodNotAllowed, rateLimited, invalidInput, internalError } from './_lib/errors.js';
+import { validateDeviceId } from './_lib/validate.js';
+import { createLogger } from './_lib/logger.js';
+
+const log = createLogger('device-register');
 
 // Rate limit: 5 registrations per IP per minute (prevents secret enumeration)
 // Phase I: shared rate limiter with automatic cleanup
@@ -20,7 +25,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return methodNotAllowed(res, ['POST']);
   }
 
   // Rate limit
@@ -28,7 +33,8 @@ export default async function handler(req, res) {
   const rl = registerLimiter.check(ip);
   if (!rl.allowed) {
     res.setHeader('Retry-After', String(rl.retryAfter));
-    return res.status(429).json({ success: false, error: 'Too many registration attempts' });
+    log.warn('Rate limited', { ip, retryAfter: rl.retryAfter });
+    return rateLimited(res, rl.retryAfter);
   }
 
   // Extract device_id from header (primary) or body (fallback)
@@ -41,29 +47,29 @@ export default async function handler(req, res) {
     } catch { /* ignore */ }
   }
 
-  if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
-    return res.status(400).json({
-      success: false,
-      error: 'Valid device_id required (x-device-id header or body.device_id)',
-    });
+  // Phase M: validate with shared module
+  const validatedId = validateDeviceId(deviceId);
+  if (!validatedId) {
+    log.warn('Invalid device_id', { deviceId: deviceId ? 'invalid-format' : 'missing' });
+    return invalidInput(res, 'Valid device_id required (x-device-id header or body.device_id)', 'device_id');
   }
+  deviceId = validatedId;
 
   const result = await registerDevice(deviceId);
 
   if (result.alreadyRegistered) {
-    return res.status(409).json({
-      success: false,
-      error: 'Device already registered',
-      alreadyRegistered: true,
+    log.info('Device already registered', { deviceId });
+    return errorResponse(res, 409, 'Device already registered', {
+      code: 'ALREADY_EXISTS',
+      meta: { alreadyRegistered: true },
     });
   }
 
   if (!result.success) {
-    return res.status(500).json(result);
+    log.error('Registration failed', { deviceId });
+    return internalError(res, new Error('registerDevice failed'));
   }
 
-  return res.status(200).json({
-    success: true,
-    device_secret: result.device_secret,
-  });
+  log.info('Device registered', { deviceId });
+  return successResponse(res, { device_secret: result.device_secret });
 }

@@ -7,6 +7,11 @@ import { requireAuth, requireUserAuth, DEVICE_ID_RE } from './_lib/auth.js';
 import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
+import { errorResponse, successResponse, methodNotAllowed, rateLimited, unauthorized, invalidInput, internalError } from './_lib/errors.js';
+import { validateDeviceId, sanitizeString, validateLimit } from './_lib/validate.js';
+import { createLogger } from './_lib/logger.js';
+
+const log = createLogger('predictions');
 
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
@@ -148,11 +153,12 @@ export default async function handler(req, res) {
   const rateLimit = predictionsLimiter.check(ip);
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfter));
-    return res.status(429).json({ success: false, error: 'Too many requests. Please try again later.' });
+    log.warn('Rate limited', { ip, retryAfter: rateLimit.retryAfter });
+    return rateLimited(res, rateLimit.retryAfter);
   }
 
   if (!NEON_DATABASE_URL) {
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    return internalError(res, null, 'Server not configured');
   }
 
   // ─── GET: Read predictions ─────────────────────────────────────────────────
