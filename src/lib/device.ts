@@ -293,7 +293,7 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
     }
   } catch { /* storage import failed, continue with device auth */ }
 
-  // Priority 2: Device auth (HMAC token)
+  // Priority 2: Device auth (HMAC token) — V-01 FIX: always attempt HMAC first
   const deviceId = getDeviceId();
   const secret = await ensureRegistered(deviceId);
 
@@ -302,14 +302,23 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
       const token = await generateDeviceToken(deviceId, secret);
       return {
         'Authorization': `Device ${token}`,
-        'x-device-id': deviceId, // Still send device_id for backward compat
+        'x-device-id': deviceId, // Hint for server DB lookup (not auth)
       };
     } catch (err) {
-      console.warn('[DeviceAuth] Token generation failed, falling back to plain:', err);
+      // V-01 FIX: Log clearly but still fall back during migration period.
+      // After HMAC_ONLY=true is activated server-side, this fallback will
+      // return 401 and the user must re-register their device.
+      console.error('[DeviceAuth] HMAC token generation failed:', err);
     }
+  } else {
+    // No secret available — device not registered or registration failed.
+    // During migration, plain x-device-id is accepted by server (with restrictions).
+    // After migration (HMAC_ONLY=true), this will return 401.
+    console.warn('[DeviceAuth] No device secret — using plain x-device-id fallback (migration only)');
   }
 
-  // Fallback: plain device_id (server will log a warning)
+  // Fallback: plain device_id (server will log a warning + apply restrictions)
+  // This path will be REMOVED after HMAC_ONLY=true is activated.
   return { 'x-device-id': deviceId };
 }
 

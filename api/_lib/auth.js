@@ -192,34 +192,45 @@ export async function requireAuth(req) {
   const result = await verifyDeviceToken(req);
   if (result.valid) return result.deviceId;
 
-  // BACKWARD COMPAT: During migration, also accept plain device_id
-  // from x-device-id header (with stricter validation).
-  // This allows existing APK users to continue working until they update.
-  // TODO: Remove this fallback after all clients are migrated (est. 2 weeks).
+  // ── V-01 FIX: Feature flag HMAC_ONLY ────────────────────────────────────
+  // When HMAC_ONLY=true, the legacy fallback is COMPLETELY DISABLED.
+  // All clients MUST use HMAC tokens (Authorization: Device <token>).
+  // Activate after all APK users have updated (est. 2 weeks post-deploy).
+  //
+  // When HMAC_ONLY=false (migration period), the fallback is RESTRICTED:
+  //   - DELETE requests are BLOCKED via fallback (destructive op requires HMAC)
+  //   - Fallback usage is logged with method + IP for monitoring
+  //   - Fallback is limited to x-device-id header only (not body/query)
+  const HMAC_ONLY = process.env.HMAC_ONLY === 'true';
+
+  if (HMAC_ONLY) {
+    // Migration complete — no fallback allowed
+    return null;
+  }
+
+  // ── RESTRICTED FALLBACK (migration period only) ─────────────────────────
+  // SECURITY RESTRICTIONS during migration:
+  //   1. DELETE is forbidden via fallback (must use HMAC)
+  //   2. Only x-device-id header is accepted (not body.device_id or query.device_id)
+  //   3. Every fallback use is logged with method + IP for abuse detection
+  const method = (req.method || 'GET').toUpperCase();
+
+  if (method === 'DELETE') {
+    // Destructive operations MUST use HMAC — no fallback allowed
+    console.warn(`[auth] BLOCKED: DELETE via fallback is forbidden (HMAC required)`);
+    return null;
+  }
+
   const plainDeviceId = req.headers['x-device-id'] || '';
   if (plainDeviceId && DEVICE_ID_RE.test(plainDeviceId)) {
-    console.warn(`[auth] FALLBACK: plain device_id accepted for ${plainDeviceId} — client needs update`);
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
+    console.warn(`[auth] FALLBACK: plain device_id accepted for ${plainDeviceId} method=${method} ip=${ip} — client needs update`);
     return plainDeviceId;
   }
 
-  // Also check body.device_id for POST/DELETE requests (legacy)
-  if (req.body) {
-    try {
-      const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-      const bodyDeviceId = String(body.device_id || '').trim();
-      if (bodyDeviceId && DEVICE_ID_RE.test(bodyDeviceId)) {
-        console.warn(`[auth] FALLBACK: body device_id accepted for ${bodyDeviceId} — client needs update`);
-        return bodyDeviceId;
-      }
-    } catch { /* ignore */ }
-  }
-
-  // Also check query string for GET requests (legacy — premium-activate GET)
-  const queryDeviceId = req.query?.device_id || '';
-  if (queryDeviceId && DEVICE_ID_RE.test(queryDeviceId)) {
-    console.warn(`[auth] FALLBACK: query device_id accepted for ${queryDeviceId} — client needs update`);
-    return queryDeviceId;
-  }
+  // NOTE: body.device_id and query.device_id fallbacks REMOVED in V-01 fix.
+  // These vectors allowed any POST body or URL parameter to impersonate a device.
+  // During migration, clients must send x-device-id header (already standard).
 
   return null;
 }

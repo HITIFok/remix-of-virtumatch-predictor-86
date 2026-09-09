@@ -96,10 +96,16 @@ async function handleRequest(req, res) {
   }
 
   if (purpose === 'migrate') {
+    // V-01 NOTE: For migrate purpose, device_id is stored in the magic link payload
+    // (not used for auth). The actual migration happens in handleVerify when the
+    // user clicks the magic link. device_id here is informational only.
+    // Prefer x-device-id header; body.device_id is legacy fallback.
     const deviceId = req.headers['x-device-id'] || String(body.device_id || '').trim();
     if (!deviceId || !/^dev-[a-z0-9]{8,}$/.test(deviceId)) {
       return res.status(400).json({ success: false, error: 'Appareil non reconnu' });
     }
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
+    console.warn(`[auth/migrate] device_id=${deviceId} ip=${ip}`);
     payload = { device_id: deviceId };
   }
 

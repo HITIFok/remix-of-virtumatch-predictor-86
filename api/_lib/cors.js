@@ -23,10 +23,24 @@ function parseAllowedOrigins() {
 const ALLOWED_ORIGINS = parseAllowedOrigins();
 
 export function isOriginAllowed(origin, reqHost, reqHeaders) {
-  // 0. Capacitor native app: custom header that browsers never send
-  if (reqHeaders?.['x-capacitor-request']) return true;
+  // ── V-02 FIX: x-capacitor-request bypass REMOVED ─────────────────────
+  // Previously, the presence of x-capacitor-request header caused this
+  // function to return true unconditionally, bypassing all origin checks.
+  // This was exploitable: any HTTP client (curl, fetch on evil.com) could
+  // send this header and bypass CORS protection entirely.
+  //
+  // FIX: Native Capacitor apps now authenticate via HMAC device tokens
+  // (Authorization: Device <token>). The token is verified by requireAuth()
+  // independently of CORS. The Capacitor origin (capacitor://localhost or
+  // https://localhost) is already in ALLOWED_ORIGINS, so legitimate native
+  // requests pass the origin check normally.
+  //
+  // If a Capacitor app sends a request WITHOUT a valid origin (e.g., some
+  // Android WebView configurations), the HMAC token still authenticates the
+  // request at the handler level. CORS is a browser-enforced mechanism and
+  // does not apply to native HTTP clients (curl, Capacitor HTTP plugin).
 
-  // 1. Exact match against allowed list
+  // 1. Exact match against allowed list (includes capacitor://localhost)
   if (ALLOWED_ORIGINS.includes(origin)) return true;
 
   // 2. Same hostname as the Vercel deployment host (self-referencing)
@@ -34,10 +48,6 @@ export function isOriginAllowed(origin, reqHost, reqHeaders) {
     const originHost = new URL(origin).hostname;
     if (originHost === reqHost) return true;
   } catch {}
-
-  // NOTE: Previously allowed any origin with hostname='localhost'.
-  // Removed: this enabled CORS bypass from any website by spoofing Origin.
-  // Capacitor apps now use a custom X-Capacitor-Request header instead.
 
   return false;
 }
