@@ -5,28 +5,12 @@
 
 import { setCorsHeaders } from './_lib/cors.js';
 import { registerDevice, DEVICE_ID_RE } from './_lib/auth.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
 
 // Rate limit: 5 registrations per IP per minute (prevents secret enumeration)
-const registerAttempts = new Map();
-const MAX_REGISTER_PER_MIN = 5;
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  const windowKey = Math.floor(now / 60000);
-  const key = `${ip}:${windowKey}`;
-  const record = registerAttempts.get(key);
-
-  if (!record || now - record.firstAttempt > 60000) {
-    registerAttempts.set(key, { count: 1, firstAttempt: now });
-    return true;
-  }
-
-  if (record.count >= MAX_REGISTER_PER_MIN) {
-    return false;
-  }
-  record.count++;
-  return true;
-}
+// Phase I: shared rate limiter with automatic cleanup
+const registerLimiter = createRateLimiter('device-register', { max: 5, windowMs: 60 * 1000 });
 
 export default async function handler(req, res) {
   setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, x-device-id');
@@ -40,8 +24,10 @@ export default async function handler(req, res) {
   }
 
   // Rate limit
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
-  if (!checkRateLimit(ip)) {
+  const ip = getClientIp(req);
+  const rl = registerLimiter.check(ip);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
     return res.status(429).json({ success: false, error: 'Too many registration attempts' });
   }
 

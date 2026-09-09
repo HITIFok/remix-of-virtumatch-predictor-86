@@ -9,44 +9,14 @@ import crypto from 'crypto';
 import { setCorsHeaders } from './_lib/cors.js';
 import { createSql } from './_lib/db.js';
 import { signUserToken } from './_lib/auth.js';
-
-// Lazy-load Resend to avoid import-time crash if package is missing
-async function getResend() {
-  try {
-    const mod = await import('resend');
-    return mod.Resend;
-  } catch {
-    return null;
-  }
-}
-
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM || 'VirtuMatch <onboarding@resend.dev>';
-const APP_URL = process.env.APP_URL || 'https://virtual-match-hitifproject.vercel.app';
+import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// ── Rate limiting: per email AND per IP (in-memory) ──
-const attempts = new Map();
-const MAX_PER_WINDOW = 3;
-const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-
-function checkRateLimit(email, ip) {
-  const now = Date.now();
-  const wKey = Math.floor(now / WINDOW_MS);
-
-  const eKey = `e:${email.toLowerCase()}:${wKey}`;
-  const iKey = `i:${ip}:${wKey}`;
-
-  const eRec = attempts.get(eKey);
-  if (eRec && eRec.c >= MAX_PER_WINDOW) return false;
-
-  const iRec = attempts.get(iKey);
-  if (iRec && iRec.c >= MAX_PER_WINDOW) return false;
-
-  attempts.set(eKey, { c: (eRec ? eRec.c : 0) + 1, t: now });
-  attempts.set(iKey, { c: (iRec ? iRec.c : 0) + 1, t: now });
-  return true;
-}
+// ── Rate limiting: per email AND per IP (shared module, Phase I) ──
+const authEmailLimiter = createRateLimiter('auth-email', { max: 3, windowMs: 15 * 60 * 1000 });
+const authIpLimiter = createRateLimiter('auth-ip', { max: 3, windowMs: 15 * 60 * 1000 });
 
 // ═══════════════════════════════════════════════════════════════════
 // REQUEST — POST ?action=request
@@ -55,8 +25,9 @@ function checkRateLimit(email, ip) {
 // ═══════════════════════════════════════════════════════════════════
 
 async function handleRequest(req, res) {
-  if (!RESEND_API_KEY) {
-    console.error('[auth] RESEND_API_KEY not configured');
+  const resend = await getResend();
+  if (!resend) {
+    console.error('[auth] Resend not configured');
     return res.status(500).json({ success: false, error: 'Service not configured' });
   }
 
@@ -104,14 +75,14 @@ async function handleRequest(req, res) {
     if (!deviceId || !/^dev-[a-z0-9]{8,}$/.test(deviceId)) {
       return res.status(400).json({ success: false, error: 'Appareil non reconnu' });
     }
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
+    const ip = getClientIp(req);
     console.warn(`[auth/migrate] device_id=${deviceId} ip=${ip}`);
     payload = { device_id: deviceId };
   }
 
   // ── Rate limit ──
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
-  if (!checkRateLimit(email, ip)) {
+  const ip = getClientIp(req);
+  if (!authEmailLimiter.check(email.toLowerCase()).allowed || !authIpLimiter.check(ip).allowed) {
     return res.status(429).json({
       success: false,
       error: 'Trop de demandes. Réessaie dans quelques minutes.',
@@ -161,13 +132,7 @@ async function handleRequest(req, res) {
 </div>`;
 
   try {
-    const ResendClass = await getResend();
-    if (ResendClass && RESEND_API_KEY) {
-      const resend = new ResendClass(RESEND_API_KEY);
-      await resend.emails.send({ from: RESEND_FROM, to: email, subject, html });
-    } else {
-      console.error('[auth/request] Resend not available or RESEND_API_KEY not set');
-    }
+    await resend.emails.send({ from: RESEND_FROM, to: email, subject, html });
   } catch (err) {
     console.error('[auth/request] Resend error:', err.message);
   }

@@ -6,43 +6,15 @@
 // POST with email triggers magic link; without email keeps legacy direct activation.
 
 import crypto from 'crypto';
-import postgres from 'postgres';
-
-// Lazy-load Resend to avoid import-time crash
-async function getResend() {
-  try {
-    const mod = await import('resend');
-    return mod.Resend;
-  } catch {
-    return null;
-  }
-}
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
-import { createSql } from './_lib/db.js';
-
-const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM = process.env.RESEND_FROM || 'VirtuMatch <onboarding@resend.dev>';
-const APP_URL = process.env.APP_URL || 'https://virtual-match-hitifproject.vercel.app';
+import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
+import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// ── Rate limiting (in-memory, per identifier) ──
-const activateAttempts = new Map();
-const MAX_ATTEMPTS_PER_HOUR = 15;
-const ATTEMPT_WINDOW_MS = 60 * 60 * 1000;
-
-function checkRateLimit(identifier) {
-  const now = Date.now();
-  const entry = activateAttempts.get(identifier);
-  if (!entry || now - entry.firstAttempt > ATTEMPT_WINDOW_MS) {
-    activateAttempts.set(identifier, { count: 1, firstAttempt: now });
-    return true;
-  }
-  if (entry.count >= MAX_ATTEMPTS_PER_HOUR) return false;
-  entry.count++;
-  return true;
-}
+// ── Rate limiting (shared module with cleanup, Phase I) ──
+const activateLimiter = createRateLimiter('premium-activate', { max: 15, windowMs: 60 * 60 * 1000 });
 
 // ── Magic link helper (inlined — shared logic with api/auth.js) ──
 async function sendActivationMagicLink(email, code, durationDays) {
@@ -78,9 +50,8 @@ async function sendActivationMagicLink(email, code, durationDays) {
 
   if (RESEND_API_KEY) {
     try {
-      const ResendClass = await getResend();
-      if (ResendClass && RESEND_API_KEY) {
-        const resend = new ResendClass(RESEND_API_KEY);
+      const resend = await getResend();
+      if (resend) {
         await resend.emails.send({
           from: RESEND_FROM,
           to: email,
@@ -127,7 +98,7 @@ async function handleGet(req, res) {
 
   if (userId) {
     try {
-      const sql = postgres(NEON_DATABASE_URL);
+      const sql = createSql();
       const [result] = await sql`
         SELECT expires_at FROM premium_activations
         WHERE user_id = ${userId} AND expires_at > NOW()
@@ -152,7 +123,7 @@ async function handleGet(req, res) {
   }
 
   try {
-    const sql = postgres(NEON_DATABASE_URL);
+    const sql = createSql();
     const [result] = await sql`
       SELECT check_premium_status(${deviceId}::text) as is_premium,
              (SELECT expires_at FROM premium_activations WHERE device_id = ${deviceId}) as expires_at
@@ -197,12 +168,12 @@ async function handlePost(req, res) {
       return res.status(500).json({ success: false, error: 'Service not configured' });
     }
 
-    if (!checkRateLimit(email)) {
+    if (!activateLimiter.check(email).allowed) {
       return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
     }
 
     // Look up the code to validate it exists and get duration
-    const sql = postgres(NEON_DATABASE_URL);
+    const sql = createSql();
     try {
       const [codeRow] = await sql`
         SELECT id, duration_days, used, used_by_device
@@ -246,12 +217,12 @@ async function handlePost(req, res) {
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
-  if (!checkRateLimit(authedDeviceId)) {
+  if (!activateLimiter.check(authedDeviceId).allowed) {
     return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
   }
 
   try {
-    const sql = postgres(NEON_DATABASE_URL);
+    const sql = createSql();
 
     const result = await sql.begin(async (tx) => {
       const [codeRow] = await tx`

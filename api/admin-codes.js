@@ -11,38 +11,18 @@
 //   POST (body has code)          → Create a new access code (requires Bearer admin token)
 
 import crypto from 'crypto';
-import postgres from 'postgres';
 import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
-
-const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
+import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
-const sql = postgres(NEON_DATABASE_URL);
+// Phase I fix: removed module-level postgres() singleton (stale connection risk)
+// All DB operations now use per-request createSql()
 
-// ─── Rate Limiting (in-memory, per instance serverless) ───────────────────────
-const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
-const RATE_LIMIT_MAX_ATTEMPTS = 5;
-const attempts = new Map(); // IP → { count, firstAttempt }
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  const record = attempts.get(ip);
-
-  if (!record || now - record.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    attempts.set(ip, { count: 1, firstAttempt: now });
-    return { allowed: true, remaining: RATE_LIMIT_MAX_ATTEMPTS - 1 };
-  }
-
-  if (record.count >= RATE_LIMIT_MAX_ATTEMPTS) {
-    const retryAfter = Math.ceil((record.firstAttempt + RATE_LIMIT_WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter };
-  }
-
-  record.count++;
-  const remaining = RATE_LIMIT_MAX_ATTEMPTS - record.count;
-  return { allowed: true, remaining };
-}
+// ─── Rate Limiting (shared module with cleanup, Phase I) ───────────────────────
+const adminLimiter = createRateLimiter('admin-login', { max: 5, windowMs: 15 * 60 * 1000 });
 
 // ─── Token HMAC ──────────────────────────────────────────────────────────────
 
@@ -108,8 +88,8 @@ async function handleLogin(req, res, body) {
   }
 
   // Rate limiting
-  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
-  const rateLimit = checkRateLimit(clientIp);
+  const clientIp = getClientIp(req);
+  const rateLimit = adminLimiter.check(clientIp);
 
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfter));
@@ -138,7 +118,7 @@ async function handleLogin(req, res, body) {
 
     const timestamp = Date.now();
     const token = signToken(timestamp);
-    attempts.delete(clientIp);
+    adminLimiter.reset(clientIp);
 
     return res.status(200).json({
       success: true,
@@ -415,6 +395,8 @@ export default async function handler(req, res) {
   if (!NEON_DATABASE_URL) {
     return res.status(500).json({ success: false, error: 'Server not configured' });
   }
+
+  const sql = createSql();
 
   const token = extractToken(req);
   if (!verifyToken(token).valid) {

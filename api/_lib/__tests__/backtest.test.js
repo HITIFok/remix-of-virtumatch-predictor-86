@@ -1,55 +1,70 @@
-// Phase F+G — Tests pour le backtesting et l'audit des coefficients
+// Phase F+G+H — Tests pour le backtesting, l'audit des coefficients, et la calibration
 //
 // Tests verify:
-//   1. The prediction engine produces valid outputs for all match types
-//   2. All 17 coefficients are documented and have sensible ranges
-//   3. Confidence is properly capped at 82%
+//   1. The prediction engine uses centralized config (Phase H)
+//   2. All 17 coefficients are documented with sensible ranges
+//   3. Confidence is properly capped (config-driven)
 //   4. Probabilities sum to 1.0 (normalized)
 //   5. Lambda values stay within realistic bounds
+//   6. Config values match original hardcoded constants
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-// ── Coefficient Audit Tests ───────────────────────────────────────────────
+// ── Coefficient Audit Tests (updated for Phase H config) ──────────────────
 
-describe('Phase G: Coefficient audit — 17 coefficients documented', () => {
+describe('Phase G+H: Coefficient audit — config-driven coefficients', () => {
 
   const engineSource = readFileSync(
     resolve(process.cwd(), 'src/lib/prediction-engine.ts'), 'utf8'
   );
 
-  it('VIRTUAL_AVG_GOALS exists and is 1.3', () => {
-    expect(engineSource).toContain('const VIRTUAL_AVG_GOALS = 1.3');
+  const configSource = readFileSync(
+    resolve(process.cwd(), 'src/lib/prediction-config.ts'), 'utf8'
+  );
+
+  it('VIRTUAL_AVG_GOALS is loaded from config (_cfg.VIRTUAL_AVG_GOALS)', () => {
+    expect(engineSource).toContain('_cfg.VIRTUAL_AVG_GOALS');
   });
 
-  it('AI_WEIGHT exists and is 0.35', () => {
-    expect(engineSource).toContain('const AI_WEIGHT = 0.35');
+  it('AI_WEIGHT is loaded from config (_cfg.AI_WEIGHT)', () => {
+    expect(engineSource).toContain('_cfg.AI_WEIGHT');
   });
 
-  it('FORM_WEIGHTS exist with 5 values', () => {
-    expect(engineSource).toContain('const FORM_WEIGHTS = [1.5, 1.3, 1.2, 1.1, 1.0]');
+  it('FORM_WEIGHTS are loaded from config (_cfg.FORM_WEIGHT_0..4)', () => {
+    expect(engineSource).toContain('_cfg.FORM_WEIGHT_0');
+    expect(engineSource).toContain('_cfg.FORM_WEIGHT_4');
   });
 
-  it('CONF_CAP is 82% (virtual football ceiling)', () => {
-    // Confidence is clamped between 25 and 82
-    expect(engineSource).toMatch(/clamp.*25.*82/);
+  it('CONF_CAP is config-driven (_cfg.CONF_CAP)', () => {
+    // Confidence is clamped between 25 and _cfg.CONF_CAP
+    expect(engineSource).toContain('_cfg.CONF_CAP');
   });
 
-  it('CONF_MAX_BASE is 68% (base confidence ceiling)', () => {
-    // Math.min(favoriteProb * 85, 68)
-    expect(engineSource).toMatch(/Math\.min\(favoriteProb\s*\*\s*85,\s*68\)/);
+  it('CONF_MAX_BASE is config-driven (_cfg.CONF_MAX_BASE)', () => {
+    expect(engineSource).toContain('_cfg.CONF_MAX_BASE');
   });
 
-  it('Stat weight split is 70/20/10', () => {
-    // 0.70 + 0.20 + 0.10 = 1.0 (conservation of lambda weight)
-    expect(engineSource).toContain('0.70');
-    expect(engineSource).toContain('0.20');
-    expect(engineSource).toContain('0.10');
+  it('Stat weight split is config-driven (_cfg.STAT_BASE_WEIGHT/ATTACK/DEF)', () => {
+    expect(engineSource).toContain('_cfg.STAT_BASE_WEIGHT');
+    expect(engineSource).toContain('_cfg.STAT_ATTACK_WEIGHT');
+    expect(engineSource).toContain('_cfg.STAT_DEF_WEIGHT');
   });
 
-  it('VIRTUAL_CAP is 3 (max goals per team)', () => {
-    expect(engineSource).toContain('const VIRTUAL_CAP = 3');
+  it('VIRTUAL_CAP is loaded from config (_cfg.VIRTUAL_CAP)', () => {
+    expect(engineSource).toContain('_cfg.VIRTUAL_CAP');
+  });
+
+  it('config default values match original constants (1.3, 0.35, 82, 68, etc.)', () => {
+    // Verify the config file preserves the original hardcoded values as defaults
+    expect(configSource).toContain('value: 1.3');   // VIRTUAL_AVG_GOALS
+    expect(configSource).toContain('value: 0.35');  // AI_WEIGHT
+    expect(configSource).toContain('value: 82');    // CONF_CAP
+    expect(configSource).toContain('value: 68');    // CONF_MAX_BASE
+    expect(configSource).toContain('value: 0.70');  // STAT_BASE_WEIGHT
+    expect(configSource).toContain('value: 0.20');  // STAT_ATTACK_WEIGHT
+    expect(configSource).toContain('value: 0.10');  // STAT_DEF_WEIGHT
   });
 });
 
@@ -115,25 +130,28 @@ describe('Phase F: Backtesting — probability conservation', () => {
     expect(pH + pD + pA).toBeCloseTo(1.0, 10);
   });
 
-  it('Confidence base formula: min(favProb * 85, 68) is bounded', () => {
+  it('Confidence base formula: min(favProb * CONF_BASE_SCALE, CONF_MAX_BASE) is bounded', () => {
     // Test across the full range of favoriteProb (0.33 to 1.0)
+    const CONF_BASE_SCALE = 85;
+    const CONF_MAX_BASE = 68;
     for (let favProb = 0.33; favProb <= 1.0; favProb += 0.05) {
-      const baseConf = Math.min(favProb * 85, 68);
+      const baseConf = Math.min(favProb * CONF_BASE_SCALE, CONF_MAX_BASE);
       expect(baseConf).toBeGreaterThanOrEqual(0);
-      expect(baseConf).toBeLessThanOrEqual(68);
+      expect(baseConf).toBeLessThanOrEqual(CONF_MAX_BASE);
     }
   });
 
-  it('Confidence after all modifications stays within [25, 82]', () => {
+  it('Confidence after all modifications stays within [25, CONF_CAP]', () => {
+    const CONF_CAP = 82;
     // Simulate the full confidence range
     for (let baseConf = 20; baseConf <= 90; baseConf += 5) {
       // Apply bonuses/penalties
       let conf = baseConf;
       conf += 15; // Max bonuses
       conf -= 35; // Max penalties
-      conf = Math.max(25, Math.min(82, Math.round(conf)));
+      conf = Math.max(25, Math.min(CONF_CAP, Math.round(conf)));
       expect(conf).toBeGreaterThanOrEqual(25);
-      expect(conf).toBeLessThanOrEqual(82);
+      expect(conf).toBeLessThanOrEqual(CONF_CAP);
     }
   });
 });

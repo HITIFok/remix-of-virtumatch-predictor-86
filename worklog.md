@@ -198,3 +198,93 @@ Stage Summary:
 - Backtesting report: /home/z/my-project/download/backtest-phase-f.txt
 - Key risk: VIRTUAL_AVG_GOALS and 70/20/10 split need empirical validation
 - 16 backtesting/coefficient tests added
+
+---
+Task ID: Phase-H
+Agent: Main Agent
+Task: Phase H - Coefficient calibration (centralized config, validation, bounds)
+
+Work Log:
+- Created src/lib/prediction-config.ts — centralized coefficient registry with:
+  - 22 coefficient definitions with value, min, max, unit, description, calibrationStatus
+  - CoefficientRegistry interface for type-safe access
+  - validateCoefficients() function with conservation law checks
+  - getArbitraryCount() and getCalibrationPriorities() for calibration tracking
+  - Env var override mechanism (VIRTUMATCH_COEF_*) with bounds clamping
+  - buildConfig() singleton pattern for runtime configuration
+- Modified src/lib/prediction-engine.ts to import from config:
+  - Added import { getConfig } from './prediction-config'
+  - Replaced all 17 hardcoded coefficients with _cfg.* references
+  - VIRTUAL_AVG_GOALS, FORM_WEIGHTS, grid search constants, stat weight split
+  - AI_WEIGHT, VIRTUAL_CAP, confidence coefficients, form/momentum/H2H coefficients
+- Updated backtest.test.js for Phase H config-aware assertions
+- Created calibration.test.js (29 tests):
+  - Coefficient registry completeness (6 tests)
+  - Default value preservation (1 test)
+  - Validation conservation laws (7 tests)
+  - Prediction engine integration (9 tests)
+  - Calibration priorities (5 tests)
+  - Cross-term double-counting awareness (3 tests)
+- All 117 tests pass (22 auth + 17 cors + 22 csp + 8 ratelimit + 19 backtest + 29 calibration)
+- TypeScript compiles clean, Vite build succeeds
+
+Stage Summary:
+- prediction-config.ts: centralized coefficient registry with bounds, validation, env overrides
+- prediction-engine.ts: all 17 hardcoded coefficients replaced with config references
+- 6 coefficients marked 'arbitrary' (priority for calibration): VIRTUAL_AVG_GOALS, AI_WEIGHT, FORM_ATTACK_BOOST, FORM_DEFENSE_PENALTY, H2H_HOME_BOOST, H2H_AWAY_PENALTY
+- STAT_DEF_WEIGHT cross-term documented as potential double-counting (can be reduced via VIRTUMATCH_COEF_STAT_DEF_WEIGHT env var)
+- 117 total security + calibration tests passing
+
+---
+Task ID: Phase-I
+Agent: Main Agent
+Task: Phase I - Code refactoring (deduplicate rate limits, shared modules, DB normalization)
+
+Work Log:
+- Created api/_lib/ratelimit.js — unified in-memory rate limiter:
+  - createRateLimiter(name, { max, windowMs }) with automatic stale entry cleanup (setInterval)
+  - Consistent return type: { allowed, remaining, retryAfter }
+  - reset() method for clearing limits on success
+  - interval.unref() to not block process exit
+  - Memory-safe: entries older than 2× windowMs evicted automatically
+- Created api/_lib/request.js — shared request utilities:
+  - getClientIp(req) with x-forwarded-for + x-real-ip fallback
+  - Replaces 5 copy-pasted IP extraction one-liners
+- Created api/_lib/resend.js — shared Resend email utility:
+  - getResend() returns ready-to-use Resend instance (not class)
+  - Exports RESEND_FROM and APP_URL constants
+  - Replaces duplicate lazy-load pattern in auth.js + premium-activate.js
+- Refactored api/predictions.js:
+  - Replaced inline Map rate limiter with createRateLimiter('predictions', { max: 30, windowMs: 60s })
+  - Replaced 5 inline postgres() calls with createSql()
+  - Replaced raw x-forwarded-for with getClientIp()
+- Refactored api/device-register.js:
+  - Replaced inline Map rate limiter with createRateLimiter('device-register', { max: 5, windowMs: 60s })
+  - Replaced raw x-forwarded-for with getClientIp()
+- Refactored api/auth.js:
+  - Replaced inline Map rate limiter with dual: createRateLimiter('auth-email') + createRateLimiter('auth-ip')
+  - Replaced local getResend() with shared from _lib/resend.js
+  - Replaced raw x-forwarded-for with getClientIp()
+- Refactored api/admin-codes.js (CRITICAL fix):
+  - Removed module-level postgres() singleton (stale connection risk)
+  - Now uses per-request createSql() inside handler
+  - Replaced inline Map rate limiter with createRateLimiter('admin-login', { max: 5, windowMs: 15min })
+  - Replaced raw x-forwarded-for with getClientIp()
+- Refactored api/premium-activate.js:
+  - Replaced inline Map rate limiter with createRateLimiter('premium-activate', { max: 15, windowMs: 1h })
+  - Replaced inline postgres() calls with createSql()
+  - Replaced local getResend() with shared from _lib/resend.js
+- Created refactor.test.js (19 tests):
+  - Shared module API verification (9 tests)
+  - Handler refactoring verification (7 tests)
+  - Rate limiter functional behavior (3 tests)
+- All 136 tests pass, TypeScript compiles clean, Vite build succeeds
+
+Stage Summary:
+- 3 new shared modules: ratelimit.js, request.js, resend.js
+- 5 API handlers refactored to use shared modules
+- CRITICAL fix: admin-codes.js module-level DB singleton removed
+- All 5 duplicate inline rate limiters eliminated
+- All inline postgres() calls replaced with createSql()
+- All raw x-forwarded-for extraction replaced with getClientIp()
+- 136 total tests passing

@@ -2,37 +2,16 @@
 // Replaces ALL direct Neon SQL from frontend (storage.ts)
 // All SQL queries are server-side only
 
-import postgres from 'postgres';
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth, DEVICE_ID_RE } from './_lib/auth.js';
+import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
 
-const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 const MAX_BODY_BYTES = 100 * 1024; // 100KB
 
-// Rate limiting: 30 requests per minute per IP
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
-const RATE_LIMIT_MAX = 30;
-const rateLimitStore = new Map();
-
-function checkRateLimit(ip) {
-  const now = Date.now();
-  const windowKey = Math.floor(now / RATE_LIMIT_WINDOW_MS);
-  const key = `${ip}:${windowKey}`;
-  const record = rateLimitStore.get(key);
-
-  if (!record || now - record.firstAttempt > RATE_LIMIT_WINDOW_MS) {
-    rateLimitStore.set(key, { count: 1, firstAttempt: now });
-    return { allowed: true, remaining: RATE_LIMIT_MAX - 1 };
-  }
-
-  if (record.count >= RATE_LIMIT_MAX) {
-    const retryAfter = Math.ceil((record.firstAttempt + RATE_LIMIT_WINDOW_MS - now) / 1000);
-    return { allowed: false, retryAfter };
-  }
-
-  record.count++;
-  return { allowed: true, remaining: RATE_LIMIT_MAX - record.count };
-}
+// Rate limiting: shared module with automatic cleanup (Phase I)
+const predictionsLimiter = createRateLimiter('predictions', { max: 30, windowMs: 60 * 1000 });
 
 // Sanitize string: strip HTML tags, limit length
 function sanitize(v, maxLen = 200) {
@@ -165,8 +144,8 @@ export default async function handler(req, res) {
   }
 
   // Rate limiting
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 'unknown';
-  const rateLimit = checkRateLimit(ip);
+  const ip = getClientIp(req);
+  const rateLimit = predictionsLimiter.check(ip);
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfter));
     return res.status(429).json({ success: false, error: 'Too many requests. Please try again later.' });
@@ -182,7 +161,7 @@ export default async function handler(req, res) {
     const userId = await requireUserAuth(req);
     if (userId) {
       try {
-        const sql = postgres(NEON_DATABASE_URL);
+        const sql = createSql();
         const rows = await sql`
           SELECT * FROM predictions
           WHERE user_id = ${userId}
@@ -207,7 +186,7 @@ export default async function handler(req, res) {
     }
 
     try {
-      const sql = postgres(NEON_DATABASE_URL);
+      const sql = createSql();
       const rows = await sql`
         SELECT * FROM predictions
         WHERE device_id = ${deviceId}
@@ -266,7 +245,7 @@ export default async function handler(req, res) {
     const d = validation.data;
 
     try {
-      const sql = postgres(NEON_DATABASE_URL);
+      const sql = createSql();
       const result = await sql`
         INSERT INTO predictions (
           match_id, home_team, away_team, league, league_id, round,
@@ -326,7 +305,7 @@ export default async function handler(req, res) {
     if (userId) {
       // User auth: delete predictions owned by this user
       try {
-        const sql = postgres(NEON_DATABASE_URL);
+        const sql = createSql();
 
         if (body.prediction_id) {
           const predictionId = parseInt(body.prediction_id, 10);
@@ -365,7 +344,7 @@ export default async function handler(req, res) {
     }
 
     try {
-      const sql = postgres(NEON_DATABASE_URL);
+      const sql = createSql();
 
       // If prediction_id provided, delete only that specific prediction (with ownership check)
       if (body.prediction_id) {
