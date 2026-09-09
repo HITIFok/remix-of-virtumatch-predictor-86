@@ -10,7 +10,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:api": "vitest run --config vitest.api.config.ts",
+    "test:api:watch": "vitest --config vitest.api.config.ts",
+    "test:all": "vitest run && vitest run --config vitest.api.config.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

@@ -84,3 +84,65 @@ Stage Summary:
 - 17 coefficients arbitraires documentes
 - Phases de remediation A-M definies
 - Risques residuels catalogues
+
+---
+Task ID: Phase-B
+Agent: Main Agent
+Task: Phase B - Tests de securite automatises pour V-01 (requireAuth), V-02 (isOriginAllowed), V-03 (CSP)
+
+Work Log:
+- Created vitest.api.config.ts with Node environment for server-side API tests
+- Created api/_lib/__tests__/auth.test.js (22 tests):
+  - HMAC_ONLY=true blocks ALL fallback (3 tests)
+  - HMAC_ONLY=false allows restricted fallback (6 tests)
+  - DELETE blocked via fallback (1 test)
+  - body.device_id and query.device_id fallbacks REMOVED (3 tests)
+  - Fallback monitoring/logging (1 test)
+  - verifyDeviceToken() HMAC verification (7 tests)
+  - DEVICE_ID_RE regex validation (2 tests)
+- Created api/_lib/__tests__/cors.test.js (17 tests):
+  - x-capacitor-request bypass REMOVED (5 tests)
+  - Origin validation (5 tests)
+  - setCorsHeaders() proper application (5 tests)
+  - Vary: Origin cache poisoning prevention (1 test)
+  - Max-Age reduced to 3600 (1 test)
+- Created api/_lib/__tests__/csp.test.js (22 tests):
+  - unsafe-inline removed from script-src and style-src (2 tests)
+  - SHA-256 hashes present and matching (4 tests)
+  - Inline style attributes removed from index.html (4 tests)
+  - Positive security controls (7 tests)
+  - Other security headers (5 tests)
+- Added test:api, test:api:watch, test:all scripts to package.json
+- All 61/61 tests pass
+
+Stage Summary:
+- 3 test files created: auth.test.js, cors.test.js, csp.test.js
+- 61 automated security tests covering V-01, V-02, V-03
+- vitest.api.config.ts for Node environment API testing
+- All tests pass after Phase C CSP fix
+
+---
+Task ID: Phase-C
+Agent: Main Agent
+Task: Phase C - Implementer V-03 fix (CSP nonces/hashes, supprimer unsafe-inline)
+
+Work Log:
+- Computed SHA-256 hashes for inline <style> and <script> blocks in index.html
+- Converted 5 inline style="" attributes to CSS classes in <style> block:
+  - SVG gradient stops: stop-fire-start, stop-fire-end, stop-ice-start, stop-ice-end
+  - Error detail paragraph: error-detail
+- Removed 'unsafe-inline' from script-src in vercel.json CSP
+- Removed 'unsafe-inline' from style-src in vercel.json CSP
+- Added SHA-256 hash to script-src: 'sha256-XWIoOnInJ3c6lKL7NZrwU9qFGcSwijhMPOi0rX4b0tw='
+- Added SHA-256 hash to style-src: 'sha256-u13w0P4wGV1/4mtD5670tcXw3DNUfQyEBmuzE+D/26c='
+- Created scripts/compute_csp_hashes.js for hash computation
+- Vite build succeeds with CSP changes
+- All 61 security tests pass
+
+Stage Summary:
+- V-03 FIXED: unsafe-inline completely removed from CSP
+- XSS protection via CSP is now EFFECTIVE
+- SHA-256 hashes allow only known inline content
+- 5 inline style attributes converted to CSS classes
+- CSP is now: script-src 'self' 'sha256-...' https://cdn.jsdelivr.net; style-src 'self' 'sha256-...' https://cdn.jsdelivr.net
+- Zero inline style attributes remain in index.html

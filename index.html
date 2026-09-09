@@ -101,6 +101,12 @@
       #error.show { display: flex; flex-direction: column; align-items: center; justify-content: center; }
       #error h2 { color: #ff6b35; margin-bottom: 10px; }
       #error p { opacity: 0.8; text-align: center; max-width: 400px; }
+      /* V-03: Replaced inline style attributes with CSS classes */
+      .stop-fire-start { stop-color: #ff6b35; }
+      .stop-fire-end { stop-color: #f7931e; }
+      .stop-ice-start { stop-color: #38bdf8; }
+      .stop-ice-end { stop-color: #0ea5e9; }
+      .error-detail { margin-top: 20px; font-size: 12px; opacity: 0.6; }
     </style>
   </head>
 
@@ -109,12 +115,12 @@
       <svg class="logo" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <linearGradient id="fireGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#ff6b35"/>
-            <stop offset="100%" style="stop-color:#f7931e"/>
+            <stop offset="0%" class="stop-fire-start"/>
+            <stop offset="100%" class="stop-fire-end"/>
           </linearGradient>
           <linearGradient id="iceGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#38bdf8"/>
-            <stop offset="100%" style="stop-color:#0ea5e9"/>
+            <stop offset="0%" class="stop-ice-start"/>
+            <stop offset="100%" class="stop-ice-end"/>
           </linearGradient>
         </defs>
         <circle cx="50" cy="50" r="45" fill="url(#fireGrad)" opacity="0.2"/>
@@ -127,7 +133,7 @@
     <div id="error">
       <h2>⚠️ Erreur de chargement</h2>
       <p>L'application n'a pas pu se charger correctement.<br>Vérifiez votre connexion et réessayez.</p>
-      <p style="margin-top: 20px; font-size: 12px; opacity: 0.6;" id="error-detail"></p>
+      <p class="error-detail" id="error-detail"></p>
     </div>
     
     <div id="root"></div>
