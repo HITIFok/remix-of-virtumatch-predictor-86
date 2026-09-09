@@ -19,9 +19,8 @@ async function initCapacitor() {
     await StatusBar.setBackgroundColor({ color: '#1a0a2e' });
     
     console.log('Capacitor plugins initialized');
-  } catch (e) {
-    // Not on mobile, ignore
-    console.log('Not running on mobile');
+  } catch {
+    // Not on mobile — expected in web browser, no action needed
   }
 }
 
