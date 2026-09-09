@@ -572,5 +572,154 @@ Stage Summary:
 - Final PDF report: /home/z/my-project/download/virtumatch-audit-report-final.pdf
 - 9 pages, all phases documented
 - 337 automated tests protecting the application
+
+---
+Task ID: Phase-U
+Agent: Main Agent
+Task: Phase U — Handler Migration (migrate 5 handlers to shared errors.js, validate.js, logger.js)
+
+Work Log:
+- Migrated api/auth.js: replaced inline EMAIL_RE with validateEmail(), inline errors with shared factories, console.log with createLogger('auth')
+- Migrated api/premium-activate.js: replaced inline EMAIL_RE, fixed RESEND_API_KEY bug (bare reference → process.env.RESEND_API_KEY), shared error factories
+- Migrated api/admin-codes.js: shared error factories (methodNotAllowed, rateLimited, invalidInput, internalError, unauthorized)
+- Migrated api/push-odds.js: fixed error.message leakage in 500 response, replaced direct postgres import with createSql(), shared errors/logger
+- Migrated api/verify-predictions.js: replaced direct postgres import with createSql(), shared errors/logger, timing-safe comparisons
+- Migrated api/auto-playout.js: shared errors/logger (unauthorized, internalError)
+- Created handler-migration.test.js (62 tests)
+- All 399 tests pass
+
+Stage Summary:
+- 7/7 handlers now use shared errors.js, validate.js, logger.js
+- RESEND_API_KEY bug fixed (bare reference → process.env.RESEND_API_KEY)
+- error.message leakage fixed in push-odds.js 500 response
+- All inline EMAIL_RE regexes replaced with validateEmail()
+- Correlation IDs and PII redaction on ALL endpoints
+
+---
+Task ID: Phase-V
+Agent: Main Agent
+Task: Phase V — HMAC-Only Enforcement (tests + activation procedure)
+
+Work Log:
+- Created hmac-only.test.js (9 tests): HMAC_ONLY=true behavior, fallback restriction, migration safety
+- Verified HMAC_ONLY=true completely disables fallback (returns null)
+- Verified DELETE is always blocked via fallback
+- Verified body.device_id and query.device_id are NOT used for auth
+- Verified crypto.timingSafeEqual is used for all comparisons
+- All 408 tests pass
+
+Stage Summary:
+- HMAC_ONLY=true ready for activation (env var)
+- Migration safety: no body/query device_id fallback
+- DELETE always requires HMAC token
+
+---
+Task ID: Phase-W
+Agent: Main Agent
+Task: Phase W — Extract High-Priority Magic Numbers to prediction-config.ts
+
+Work Log:
+- Added 16 new coefficient definitions to prediction-config.ts:
+  LAMBDA_MIN, LAMBDA_MAX, DEFAULT_AVG_SCORED, DEFAULT_AVG_CONCEDED,
+  DEFAULT_MOMENTUM, DEF_PENALTY_SELF, DEF_PENALTY_CROSS, H2H_BIAS_DIVISOR,
+  FORM_AGREEMENT_THRESHOLD, H2H_AGREEMENT_THRESHOLD, VIRT_REDIST_HIGH,
+  VIRT_REDIST_LOW, HALF_TIME_FACTOR, NEW_SEASON_BOOST,
+  NEW_SEASON_LAMBDA_MAX, CONF_FLOOR
+- Updated prediction-engine.ts: replaced 14 categories of hardcoded numbers with _cfg.* references
+- Key extractions: lambda clamp (0.3/2.8), defense penalty split (0.5/0.3),
+  H2H divisor (200), form agreement threshold (15), confidence floor (25),
+  half-time factor (0.46), new season boost (0.22)
+- All 408 tests pass, TypeScript compiles clean
+
+Stage Summary:
+- 16 new config parameters extracted (was 22, now 38 total)
+- 8 additional coefficients marked 'arbitrary' (priority for calibration)
+- prediction-engine.ts: all high-impact magic numbers now from config
+- Env var overrides work for all new parameters (VIRTUMATCH_COEF_*)
+
+---
+Task ID: Phase-X
+Agent: Main Agent
+Task: Phase X — Redis Rate Limiting (dual-mode ratelimit.js)
+
+Work Log:
+- Enhanced api/_lib/ratelimit.js with dual-mode support:
+  - check() — synchronous in-memory (backward compatible)
+  - checkDistributed() — async with Redis (when UPSTASH_REDIS_REST_URL configured)
+  - Graceful degradation: Redis failure falls back to in-memory
+  - Per-limiter Redis instance with proper prefix
+- Added isRedisActive() and mode field to getRateLimiterStats()
+- Created redis-ratelimit.test.js (8 tests)
+- All 416 tests pass
+
+Stage Summary:
+- Handler-level rate limiting now supports Upstash Redis
+- Backward compatible: check() stays synchronous for existing handlers
+- Handlers can opt-in to checkDistributed() for Redis-backed limiting
+- Graceful degradation on Redis failure
+
+---
+Task ID: Phase-Y
+Agent: Main Agent
+Task: Phase Y — Monitoring & Error Tracking (Sentry integration)
+
+Work Log:
+- Created api/_lib/sentry.js — Sentry error tracking integration:
+  - initSentry() — initializes only when SENTRY_DSN env var is set
+  - captureException() — reports errors to Sentry (no-op if not configured)
+  - addBreadcrumb(), setUser() — context tracking
+  - Filters 429 rate limit and 204 preflight errors
+  - Includes VERCEL_ENV and git SHA for release tracking
+  - 10% trace sampling for performance monitoring
+- Created monitoring.test.js (15 tests)
+- All 431 tests pass
+
+Stage Summary:
+- Sentry integration ready (optional, SENTRY_DSN env var)
+- Dynamic import — @sentry/node is optional dependency
+- Error filtering: 429/204 errors excluded
+- Release tracking via VERCEL_GIT_COMMIT_SHA
+
+---
+Task ID: Phase-Z
+Agent: Main Agent
+Task: Phase Z — Secret Rotation Automation
+
+Work Log:
+- Created api/_lib/secret-rotation.js — automated secret rotation:
+  - generateSecret(bytes) — crypto-secure secret generation
+  - SECRET_ROTATION_SCHEDULE — rotation schedule for 6 secrets
+  - getOverdueSecrets() — detects secrets past rotation deadline
+  - verifySecretWithGrace() — accepts both old+new during grace period
+  - auditSecrets() — status of all required secrets
+- Rotation schedules: HMAC/ADMIN/USER (90d), CRON/SCRAPER (180d), RESEND (365d)
+- Grace periods: USER_SESSION (72h for 30-day sessions), ADMIN (48h), HMAC (24h)
+- Created secret-rotation.test.js (16 tests)
+- All 447 tests pass
+
+Stage Summary:
+- 6 secrets with rotation schedules
+- Grace period verification (timing-safe)
+- Overdue detection for audit alerts
+- No hardcoded secrets in source code
+
+---
+Task ID: Phase-AA
+Agent: Main Agent
+Task: Phase AA — E2E Test Framework Setup
+
+Work Log:
+- Created api/_lib/e2e-config.js — E2E test infrastructure:
+  - E2E_CONFIG: API URL, test device, timeouts, test leagues
+  - API_ENDPOINTS: all 9 endpoint paths
+  - E2E_FLOWS: 5 test flow definitions (auth, predictions, premium, health, CORS)
+  - checkE2EPrerequisites(): verifies test readiness
+- Created e2e-framework.test.js (15 tests)
+- All 462 tests pass
+
+Stage Summary:
+- E2E test framework configured (5 flows, 9 endpoints)
+- Playwright infrastructure ready (needs @playwright/test install)
+- Test flows: auth (5 steps), predictions (5), premium (5), health (2), CORS (3)
 - 3 critical vulnerabilities fixed (CVSS 8.4-9.1)
 - All 18 phases (A-T) complete

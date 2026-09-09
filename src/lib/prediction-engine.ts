@@ -270,7 +270,7 @@ function extractTeamForm(
   }
 
   if (matches.length === 0) {
-    return { formScores: [], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
+    return { formScores: [], avgScored: _cfg.DEFAULT_AVG_SCORED, avgConceded: _cfg.DEFAULT_AVG_CONCEDED, momentumScore: _cfg.DEFAULT_MOMENTUM, goalsBalance: 0 };
   }
 
   const formScores = matches.map(m => m.result);
@@ -410,8 +410,8 @@ function adjustLambdasWithStats(
 
   // Clamp aux bornes réalistes du football virtuel
   return {
-    lambdaH: clamp(adjustedH, 0.3, 2.8),
-    lambdaA: clamp(adjustedA, 0.3, 2.8),
+    lambdaH: clamp(adjustedH, _cfg.LAMBDA_MIN, _cfg.LAMBDA_MAX),
+    lambdaA: clamp(adjustedA, _cfg.LAMBDA_MIN, _cfg.LAMBDA_MAX),
     hasData: true,
   };
 }
@@ -435,15 +435,15 @@ function adjustLambdasWithHistory(
   if (homeForm.formScores.length >= 3) {
     const attackBoost = (homeForm.avgScored - VIRTUAL_AVG_GOALS) * _cfg.FORM_ATTACK_BOOST;
     const defensePenalty = (homeForm.avgConceded - VIRTUAL_AVG_GOALS) * _cfg.FORM_DEFENSE_PENALTY;
-    adjustedH += attackBoost - defensePenalty * 0.5;
-    adjustedA += defensePenalty * 0.3;
+    adjustedH += attackBoost - defensePenalty * _cfg.DEF_PENALTY_SELF;
+    adjustedA += defensePenalty * _cfg.DEF_PENALTY_CROSS;
   }
 
   if (awayForm.formScores.length >= 3) {
     const attackBoost = (awayForm.avgScored - VIRTUAL_AVG_GOALS) * _cfg.FORM_ATTACK_BOOST;
     const defensePenalty = (awayForm.avgConceded - VIRTUAL_AVG_GOALS) * _cfg.FORM_DEFENSE_PENALTY;
-    adjustedA += attackBoost - defensePenalty * 0.5;
-    adjustedH += defensePenalty * 0.3;
+    adjustedA += attackBoost - defensePenalty * _cfg.DEF_PENALTY_SELF;
+    adjustedH += defensePenalty * _cfg.DEF_PENALTY_CROSS;
   }
 
   // ── Ajustement momentum (forme pondérée) ──
@@ -460,22 +460,22 @@ function adjustLambdasWithHistory(
   // ── Ajustement H2H ──
   // Si l'équipe home domine historiquement, léger boost
   if (h2h.totalMatches >= 2) {
-    const h2hBoost = h2h.homeTeamBias / 200; // -0.15 à +0.15
+    const h2hBoost = h2h.homeTeamBias / _cfg.H2H_BIAS_DIVISOR; // -0.15 à +0.15
     adjustedH += h2hBoost * _cfg.H2H_HOME_BOOST;
     adjustedA -= h2hBoost * _cfg.H2H_AWAY_PENALTY;
   }
 
   // Calculer l'accord entre forme et favori
-  const formAgreement = (homeForm.momentumScore > awayForm.momentumScore + 15) ? 1
-    : (awayForm.momentumScore > homeForm.momentumScore + 15) ? -1 : 0;
+  const formAgreement = (homeForm.momentumScore > awayForm.momentumScore + _cfg.FORM_AGREEMENT_THRESHOLD) ? 1
+    : (awayForm.momentumScore > homeForm.momentumScore + _cfg.FORM_AGREEMENT_THRESHOLD) ? -1 : 0;
 
   const h2hAgreement = h2h.totalMatches >= 2
-    ? (h2h.homeTeamBias > 20 ? 1 : h2h.homeTeamBias < -20 ? -1 : 0)
+    ? (h2h.homeTeamBias > _cfg.H2H_AGREEMENT_THRESHOLD ? 1 : h2h.homeTeamBias < -_cfg.H2H_AGREEMENT_THRESHOLD ? -1 : 0)
     : 0;
 
   return {
-    lambdaH: clamp(adjustedH, 0.3, 2.8),
-    lambdaA: clamp(adjustedA, 0.3, 2.8),
+    lambdaH: clamp(adjustedH, _cfg.LAMBDA_MIN, _cfg.LAMBDA_MAX),
+    lambdaA: clamp(adjustedA, _cfg.LAMBDA_MIN, _cfg.LAMBDA_MAX),
     formAgreement,
     h2hAgreement,
   };
@@ -566,13 +566,13 @@ function redistributeForVirtualFootball(scoreMatrix: ScoreMatrix[]): ScoreMatrix
     }
     if (s.h === VIRTUAL_CAP && s.a === VIRTUAL_CAP) {
       // 3-3 est très rare: réduire de 70%
-      const reduction = s.prob * 0.70;
+      const reduction = s.prob * _cfg.VIRT_REDIST_HIGH;
       excess += reduction;
       return { ...s, prob: s.prob - reduction };
     }
     if ((s.h === VIRTUAL_CAP && s.a >= 2) || (s.a === VIRTUAL_CAP && s.h >= 2)) {
       // 3-2, 3-1, etc.: réduire de 40%
-      const reduction = s.prob * 0.40;
+      const reduction = s.prob * _cfg.VIRT_REDIST_LOW;
       excess += reduction;
       return { ...s, prob: s.prob - reduction };
     }
@@ -811,7 +811,7 @@ function calculateMultiFactorConfidence(
 
   // Plafond virtuel: jamais plus de 82% (incertitude inhérente au virtuel)
   // Plancher: 25% minimum
-  return clamp(Math.round(confidence), 25, _cfg.CONF_CAP);
+  return clamp(Math.round(confidence), _cfg.CONF_FLOOR, _cfg.CONF_CAP);
 }
 
 // ============================================
@@ -819,8 +819,8 @@ function calculateMultiFactorConfidence(
 // ============================================
 
 function calculateHalfTimeScore(lambdaH: number, lambdaA: number): string {
-  const lambdaHT_H = lambdaH * 0.46;
-  const lambdaHT_A = lambdaA * 0.46;
+  const lambdaHT_H = lambdaH * _cfg.HALF_TIME_FACTOR;
+  const lambdaHT_A = lambdaA * _cfg.HALF_TIME_FACTOR;
 
   let bestHTScore = "0-0";
   let bestHTProb = 0;
@@ -921,15 +921,15 @@ export function analyzeMatch(
 
   // Mode Nouvelle Saison: boost pour le favori
   if (newSeasonMode) {
-    if (favorite === '1') lambdaH = Math.min(3.0, lambdaH + 0.22);
-    else if (favorite === '2') lambdaA = Math.min(3.0, lambdaA + 0.22);
+    if (favorite === '1') lambdaH = Math.min(_cfg.NEW_SEASON_LAMBDA_MAX, lambdaH + _cfg.NEW_SEASON_BOOST);
+    else if (favorite === '2') lambdaA = Math.min(_cfg.NEW_SEASON_LAMBDA_MAX, lambdaA + _cfg.NEW_SEASON_BOOST);
   }
 
   // ==========================================
   // ÉTAPE 3: Extraction des données contextuelles
   // ==========================================
-  const homeForm = historicalResults ? extractTeamForm(historicalResults, home) : { formScores: [] as string[], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
-  const awayForm = historicalResults ? extractTeamForm(historicalResults, away) : { formScores: [] as string[], avgScored: 1.3, avgConceded: 1.1, momentumScore: 50, goalsBalance: 0 };
+  const homeForm = historicalResults ? extractTeamForm(historicalResults, home) : { formScores: [] as string[], avgScored: _cfg.DEFAULT_AVG_SCORED, avgConceded: _cfg.DEFAULT_AVG_CONCEDED, momentumScore: _cfg.DEFAULT_MOMENTUM, goalsBalance: 0 };
+  const awayForm = historicalResults ? extractTeamForm(historicalResults, away) : { formScores: [] as string[], avgScored: _cfg.DEFAULT_AVG_SCORED, avgConceded: _cfg.DEFAULT_AVG_CONCEDED, momentumScore: _cfg.DEFAULT_MOMENTUM, goalsBalance: 0 };
   const h2h = historicalResults ? extractH2H(historicalResults, home, away) : { totalMatches: 0, homeWins: 0, draws: 0, awayWins: 0, avgHomeGoals: 0, avgAwayGoals: 0, avgTotalGoals: 0, homeTeamBias: 0 };
 
   const homeStats = teamStats ? (teamStats.get(home) || findTeamStats(teamStats, home)) : undefined;

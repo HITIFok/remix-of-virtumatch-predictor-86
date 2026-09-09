@@ -63,6 +63,23 @@ export interface CoefficientRegistry {
   CONF_BASE_SCALE: number;
   CONF_MAX_BASE: number;
   CONF_CAP: number;
+  // Phase W — High-priority extracted thresholds
+  LAMBDA_MIN: number;
+  LAMBDA_MAX: number;
+  DEFAULT_AVG_SCORED: number;
+  DEFAULT_AVG_CONCEDED: number;
+  DEFAULT_MOMENTUM: number;
+  DEF_PENALTY_SELF: number;
+  DEF_PENALTY_CROSS: number;
+  H2H_BIAS_DIVISOR: number;
+  FORM_AGREEMENT_THRESHOLD: number;
+  H2H_AGREEMENT_THRESHOLD: number;
+  VIRT_REDIST_HIGH: number;
+  VIRT_REDIST_LOW: number;
+  HALF_TIME_FACTOR: number;
+  NEW_SEASON_BOOST: number;
+  NEW_SEASON_LAMBDA_MAX: number;
+  CONF_FLOOR: number;
 }
 
 // ─── Coefficient Definitions (with bounds and metadata) ──────────────────
@@ -230,6 +247,121 @@ export const COEFFICIENT_DEFINITIONS: Record<string, CoefficientDefinition> = {
     description: 'Absolute confidence ceiling (even with all bonuses, never exceed this)',
     calibrationStatus: 'heuristic',
     source: '82% cap for virtual football uncertainty; real models cap at 90-95%',
+  },
+
+  // ═══ Phase W — Extracted High-Priority Thresholds ══════════════════════
+
+  LAMBDA_MIN: {
+    value: 0.3, min: 0.1, max: 0.5,
+    unit: 'goals/match',
+    description: 'Lower clamp bound for adjusted lambda (prevents near-zero goal expectation)',
+    calibrationStatus: 'heuristic',
+    source: 'Virtual football minimum: even weak teams score occasionally',
+  },
+  LAMBDA_MAX: {
+    value: 2.8, min: 2.0, max: 3.5,
+    unit: 'goals/match',
+    description: 'Upper clamp bound for adjusted lambda (prevents unrealistic goal explosion)',
+    calibrationStatus: 'heuristic',
+    source: 'Virtual football max: even dominant teams rarely exceed ~3 goals/match',
+  },
+  DEFAULT_AVG_SCORED: {
+    value: 1.3, min: 0.8, max: 1.8,
+    unit: 'goals/match',
+    description: 'Default average goals scored when no form data available (should match VIRTUAL_AVG_GOALS)',
+    calibrationStatus: 'arbitrary',
+    source: 'Fallback when team has no match history',
+  },
+  DEFAULT_AVG_CONCEDED: {
+    value: 1.1, min: 0.7, max: 1.5,
+    unit: 'goals/match',
+    description: 'Default average goals conceded when no form data available',
+    calibrationStatus: 'arbitrary',
+    source: 'Fallback when team has no match history (lower than scored → slight home advantage)',
+  },
+  DEFAULT_MOMENTUM: {
+    value: 50, min: 30, max: 70,
+    unit: 'score',
+    description: 'Default momentum score when no form data available (neutral = 50)',
+    calibrationStatus: 'heuristic',
+    source: 'Neutral midpoint of 0-100 momentum scale',
+  },
+  DEF_PENALTY_SELF: {
+    value: 0.5, min: 0.3, max: 0.7,
+    unit: 'ratio',
+    description: 'Fraction of defense penalty applied to own lambda (self-correction)',
+    calibrationStatus: 'arbitrary',
+    source: 'Defense weakness hurts your own scoring by 50% of the penalty',
+  },
+  DEF_PENALTY_CROSS: {
+    value: 0.3, min: 0.1, max: 0.5,
+    unit: 'ratio',
+    description: 'Fraction of defense penalty applied to opponent lambda (cross-benefit)',
+    calibrationStatus: 'arbitrary',
+    source: 'Defense weakness boosts opponent scoring by 30% of the penalty',
+  },
+  H2H_BIAS_DIVISOR: {
+    value: 200, min: 100, max: 400,
+    unit: 'divisor',
+    description: 'Divisor for H2H homeTeamBias → lambda adjustment (200 → ±0.15 range)',
+    calibrationStatus: 'arbitrary',
+    source: 'Scales H2H bias percentage to lambda adjustment',
+  },
+  FORM_AGREEMENT_THRESHOLD: {
+    value: 15, min: 5, max: 30,
+    unit: 'points',
+    description: 'Momentum score difference threshold for form agreement (15-point gap needed)',
+    calibrationStatus: 'arbitrary',
+    source: 'How much momentum difference indicates form agreement with odds',
+  },
+  H2H_AGREEMENT_THRESHOLD: {
+    value: 20, min: 10, max: 40,
+    unit: 'points',
+    description: 'H2H homeTeamBias threshold for H2H agreement (20-point bias needed)',
+    calibrationStatus: 'arbitrary',
+    source: 'How much H2H bias indicates agreement with odds favorite',
+  },
+  VIRT_REDIST_HIGH: {
+    value: 0.70, min: 0.50, max: 0.90,
+    unit: 'ratio',
+    description: 'Probability reduction ratio for 3-3 scores in virtual redistribution',
+    calibrationStatus: 'heuristic',
+    source: '3-3 is very rare in virtual football; 70% of probability redistributed',
+  },
+  VIRT_REDIST_LOW: {
+    value: 0.40, min: 0.20, max: 0.60,
+    unit: 'ratio',
+    description: 'Probability reduction ratio for 3-2/3-1 scores in virtual redistribution',
+    calibrationStatus: 'heuristic',
+    source: '3-2, 3-1 less rare; 40% of probability redistributed',
+  },
+  HALF_TIME_FACTOR: {
+    value: 0.46, min: 0.35, max: 0.55,
+    unit: 'ratio',
+    description: 'Lambda scaling factor for half-time score prediction (46% of goals in 1st half)',
+    calibrationStatus: 'arbitrary',
+    source: 'Football stats: ~46% of goals scored in first half on average',
+  },
+  NEW_SEASON_BOOST: {
+    value: 0.22, min: 0.10, max: 0.35,
+    unit: 'goals/match',
+    description: 'Lambda boost for favorite in new season mode (no historical data)',
+    calibrationStatus: 'arbitrary',
+    source: 'Compensates for lack of form data at season start',
+  },
+  NEW_SEASON_LAMBDA_MAX: {
+    value: 3.0, min: 2.5, max: 3.5,
+    unit: 'goals/match',
+    description: 'Lambda ceiling for new season boost (prevents runaway with boost added)',
+    calibrationStatus: 'heuristic',
+    source: 'Same as LAMBDA_MAX + margin for new season boost',
+  },
+  CONF_FLOOR: {
+    value: 25, min: 15, max: 35,
+    unit: '%',
+    description: 'Absolute confidence floor (never predict below 25% confidence)',
+    calibrationStatus: 'heuristic',
+    source: 'Even with no data, 25% floor prevents meaningless predictions',
   },
 };
 

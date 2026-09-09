@@ -12,7 +12,11 @@ import { signUserToken } from './_lib/auth.js';
 import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { errorResponse, methodNotAllowed, rateLimited, invalidInput, internalError, serviceUnavailable, successResponse } from './_lib/errors.js';
+import { validateEmail, validatePurpose, validateCode, validateDuration, validateDeviceId, sanitizeString } from './_lib/validate.js';
+import { createLogger, redactEmail, redactIp, redactToken } from './_lib/logger.js';
+
+const log = createLogger('auth');
 
 // ── Rate limiting: per email AND per IP (shared module, Phase I) ──
 const authEmailLimiter = createRateLimiter('auth-email', { max: 3, windowMs: 15 * 60 * 1000 });
@@ -27,8 +31,8 @@ const authIpLimiter = createRateLimiter('auth-ip', { max: 3, windowMs: 15 * 60 *
 async function handleRequest(req, res) {
   const resend = await getResend();
   if (!resend) {
-    console.error('[auth] Resend not configured');
-    return res.status(500).json({ success: false, error: 'Service not configured' });
+    log.error('Resend not configured');
+    return serviceUnavailable(res, 'Email service');
   }
 
   // ── Parse body ──
@@ -39,16 +43,18 @@ async function handleRequest(req, res) {
     return res.status(400).json({ success: false, error: 'JSON invalide' });
   }
 
-  const email = String(body.email || '').trim().toLowerCase();
-  const purpose = String(body.purpose || '').trim();
+  const rawEmail = validateEmail(body.email);
+  const rawPurpose = validatePurpose(body.purpose);
 
-  if (!email || !EMAIL_RE.test(email)) {
-    return res.status(400).json({ success: false, error: 'Email invalide' });
+  if (!rawEmail) {
+    return invalidInput(res, 'Email invalide', 'email');
   }
+  const email = rawEmail;
 
-  if (purpose !== 'activate' && purpose !== 'login' && purpose !== 'migrate') {
-    return res.status(400).json({ success: false, error: "Purpose doit être 'activate', 'login' ou 'migrate'" });
+  if (!rawPurpose) {
+    return invalidInput(res, "Purpose doit être 'activate', 'login' ou 'migrate'", 'purpose');
   }
+  const purpose = rawPurpose;
 
   // ── If purpose='activate', validate code + durationDays ──
   // ── If purpose='migrate', extract device_id from request ──
@@ -57,13 +63,15 @@ async function handleRequest(req, res) {
     const code = String(body.code || '').trim();
     const durationDays = parseInt(body.durationDays, 10);
 
-    if (!code || code.length < 4 || code.length > 50) {
-      return res.status(400).json({ success: false, error: 'Code invalide' });
+    const sanitizedCode = sanitizeString(code, 50);
+    if (!sanitizedCode || sanitizedCode.length < 4) {
+      return invalidInput(res, 'Code invalide', 'code');
     }
-    if (isNaN(durationDays) || durationDays < 1 || durationDays > 365) {
-      return res.status(400).json({ success: false, error: 'Durée invalide (1-365 jours)' });
+    const validDuration = validateDuration(durationDays);
+    if (!validDuration) {
+      return invalidInput(res, 'Durée invalide (1-365 jours)', 'durationDays');
     }
-    payload = { code, durationDays };
+    payload = { code: sanitizedCode, durationDays: validDuration };
   }
 
   if (purpose === 'migrate') {
@@ -71,22 +79,21 @@ async function handleRequest(req, res) {
     // (not used for auth). The actual migration happens in handleVerify when the
     // user clicks the magic link. device_id here is informational only.
     // Prefer x-device-id header; body.device_id is legacy fallback.
-    const deviceId = req.headers['x-device-id'] || String(body.device_id || '').trim();
+    const rawDeviceId = req.headers['x-device-id'] || String(body.device_id || '').trim();
+    const deviceId = validateDeviceId(rawDeviceId);
     if (!deviceId || !/^dev-[a-z0-9]{8,}$/.test(deviceId)) {
-      return res.status(400).json({ success: false, error: 'Appareil non reconnu' });
+      return invalidInput(res, 'Appareil non reconnu', 'device_id');
     }
     const ip = getClientIp(req);
-    console.warn(`[auth/migrate] device_id=${deviceId} ip=${ip}`);
+    log.warn('Migrate request received', { device_id: deviceId, ip });
     payload = { device_id: deviceId };
   }
 
   // ── Rate limit ──
   const ip = getClientIp(req);
-  if (!authEmailLimiter.check(email.toLowerCase()).allowed || !authIpLimiter.check(ip).allowed) {
-    return res.status(429).json({
-      success: false,
-      error: 'Trop de demandes. Réessaie dans quelques minutes.',
-    });
+  if (!authEmailLimiter.check(email).allowed || !authIpLimiter.check(ip).allowed) {
+    log.warn('Rate limited', { email, ip });
+    return rateLimited(res, 900);
   }
 
   // ── Generate token (cryptographically secure) ──
@@ -107,9 +114,9 @@ async function handleRequest(req, res) {
     `;
     await sql.end();
   } catch (err) {
-    console.error('[auth/request] DB error:', err.message);
+    log.error('DB error inserting magic link', undefined, { cause: err });
     try { await sql.end(); } catch { /* */ }
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    return internalError(res, err);
   }
 
   // ── Send email via Resend ──
@@ -134,14 +141,11 @@ async function handleRequest(req, res) {
   try {
     await resend.emails.send({ from: RESEND_FROM, to: email, subject, html });
   } catch (err) {
-    console.error('[auth/request] Resend error:', err.message);
+    log.error('Resend send error', undefined, { cause: err });
   }
 
   // ── ALWAYS return the same response (prevents email enumeration) ──
-  return res.status(200).json({
-    success: true,
-    message: 'Si cet email est valide, un lien a été envoyé.',
-  });
+  return successResponse(res, { message: 'Si cet email est valide, un lien a été envoyé.' });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -159,12 +163,12 @@ async function handleVerify(req, res) {
       const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
       token = String(body.token || '').trim();
     } catch {
-      return res.status(400).json({ success: false, error: 'JSON invalide' });
+      return invalidInput(res, 'JSON invalide');
     }
   }
 
   if (!token || token.length < 16) {
-    return res.status(400).json({ success: false, error: 'Token manquant ou invalide' });
+    return invalidInput(res, 'Token manquant ou invalide', 'token');
   }
 
   // ── Hash to look up in DB ──
@@ -185,10 +189,7 @@ async function handleVerify(req, res) {
 
     if (!link) {
       await sql.end();
-      return res.status(400).json({
-        success: false,
-        error: 'Lien invalide, expiré ou déjà utilisé.',
-      });
+      return invalidInput(res, 'Lien invalide, expiré ou déjà utilisé.', 'token');
     }
 
     // ── Mark as used IMMEDIATELY (single-use) ──
@@ -211,7 +212,7 @@ async function handleVerify(req, res) {
 
     if (!userId) {
       await sql.end();
-      return res.status(500).json({ success: false, error: 'Erreur lors de la création du compte' });
+      return internalError(res, null, 'Erreur lors de la création du compte');
     }
 
     // ── Safely parse payload (JSONB may come back as string or object) ──
@@ -233,7 +234,7 @@ async function handleVerify(req, res) {
           AND expires_at > NOW()
       `;
       migratedCount = result.count;
-      console.log(`[auth/verify] Migrated ${migratedCount} premium activation(s) from device ${deviceId} to user ${userId}`);
+      log.info('Migrated premium activations', { device_id: deviceId, userId, migratedCount });
     }
 
     // ── If purpose='activate': finalize premium activation ──
@@ -243,9 +244,9 @@ async function handleVerify(req, res) {
       const { code, durationDays } = parsedPayload;
 
       if (!code) {
-        console.error('[auth/verify] activate link missing code in payload', { linkId: link.id });
+        log.error('Activate link missing code in payload', { linkId: link.id });
         await sql.end();
-        return res.status(400).json({ success: false, error: 'Lien invalide: données manquantes' });
+        return invalidInput(res, 'Lien invalide: données manquantes', 'code');
       }
 
       premiumResult = await sql.begin(async (tx) => {
@@ -320,9 +321,9 @@ async function handleVerify(req, res) {
       } : {}),
     });
   } catch (err) {
-    console.error('[auth/verify] Error:', err.message, err.stack);
+    log.error('Verify error', undefined, { cause: err });
     try { await sql.end(); } catch { /* */ }
-    return res.status(500).json({ success: false, error: 'Erreur serveur' });
+    return internalError(res, err);
   }
 }
 
@@ -370,7 +371,7 @@ async function handleLatestApk(req, res) {
 
     return res.status(200).json({ url });
   } catch (err) {
-    console.error('[auth/latest-apk] Error:', err.message);
+    log.error('Latest APK fetch error', undefined, { cause: err });
     // Stale fallback
     if (_apkCache.url) {
       return res.status(200).json({ url: _apkCache.url });
@@ -406,9 +407,9 @@ export default async function handler(req, res) {
       return await handleLatestApk(req, res);
     }
 
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return methodNotAllowed(res, ['GET', 'POST']);
   } catch (err) {
-    console.error('[auth] UNHANDLED:', err.message, err.stack);
-    return res.status(500).json({ success: false, error: 'Erreur serveur interne' });
+    log.error('Unhandled error', undefined, { cause: err });
+    return internalError(res, err, 'Erreur serveur interne');
   }
 }

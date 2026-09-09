@@ -3,23 +3,24 @@
 // Reçoit les données scrapées et les stocke dans scraped_data (Neon/Postgres)
 // Authentifié par SCRAPER_PUSH_KEY (header x-push-key)
 
+import crypto from 'crypto';
 import { setCorsHeaders } from './_lib/cors.js';
-import postgres from 'postgres';
+import { createSql } from './_lib/db.js';
+import { errorResponse, methodNotAllowed, invalidInput, internalError, unauthorized, successResponse } from './_lib/errors.js';
+import { createLogger } from './_lib/logger.js';
+
+const log = createLogger('push-odds');
 
 const NEON_URL = process.env.NEON_DATABASE_URL;
 const SCRAPER_PUSH_KEY = process.env.SCRAPER_PUSH_KEY;
 
-// Timing-safe comparison to prevent timing attacks
 function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  const encoder = new TextEncoder();
-  const aBytes = encoder.encode(a);
-  const bBytes = encoder.encode(b);
-  const result = new Uint8Array(aBytes.length);
-  for (let i = 0; i < aBytes.length; i++) {
-    result[i] = aBytes[i] ^ bBytes[i];
-  }
-  return result.every(byte => byte === 0);
+  try {
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    if (aBuf.length !== bBuf.length) return false;
+    return crypto.timingSafeEqual(aBuf, bBuf);
+  } catch { return false; }
 }
 
 export default async function handler(req, res) {
@@ -33,34 +34,34 @@ export default async function handler(req, res) {
 
   // Only POST allowed
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return methodNotAllowed(res, ['POST']);
   }
 
   // Check SCRAPER_PUSH_KEY
   if (!SCRAPER_PUSH_KEY) {
-    console.error('[push-odds] SCRAPER_PUSH_KEY not configured');
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    log.error('SCRAPER_PUSH_KEY not configured');
+    return internalError(res, null, 'Server not configured');
   }
 
   const pushKey = req.headers['x-push-key'];
   if (!pushKey || !timingSafeEqual(pushKey, SCRAPER_PUSH_KEY)) {
-    return res.status(401).json({ success: false, error: 'Invalid push key' });
+    return unauthorized(res, 'Invalid push key');
   }
 
   // Check Neon connection
   if (!NEON_URL) {
-    console.error('[push-odds] NEON_DATABASE_URL not configured');
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    log.error('NEON_DATABASE_URL not configured');
+    return internalError(res, null, 'Server not configured');
   }
 
-  const sql = postgres(NEON_URL);
+  const sql = createSql();
 
   try {
     const body = req.body;
     const { matches, results, ranking, league } = body;
 
     if (!matches && !results && !ranking) {
-      return res.status(400).json({ success: false, error: 'No data provided' });
+      return invalidInput(res, 'No data provided');
     }
 
     const leagueSlug = league || '';
@@ -88,7 +89,7 @@ export default async function handler(req, res) {
         await upsertScrapedData('matches', matches);
         upsertResults.push(true);
       } catch (e) {
-        console.error('[push-odds] Error upserting matches:', e.message);
+        log.error('Error upserting matches', undefined, { cause: e });
         upsertResults.push(false);
       }
     }
@@ -99,7 +100,7 @@ export default async function handler(req, res) {
         await upsertScrapedData('results', results);
         upsertResults.push(true);
       } catch (e) {
-        console.error('[push-odds] Error upserting results:', e.message);
+        log.error('Error upserting results', undefined, { cause: e });
         upsertResults.push(false);
       }
     }
@@ -110,15 +111,14 @@ export default async function handler(req, res) {
         await upsertScrapedData('ranking', ranking);
         upsertResults.push(true);
       } catch (e) {
-        console.error('[push-odds] Error upserting ranking:', e.message);
+        log.error('Error upserting ranking', undefined, { cause: e });
         upsertResults.push(false);
       }
     }
 
     const successCount = upsertResults.filter(Boolean).length;
 
-    return res.status(200).json({
-      success: true,
+    return successResponse(res, {
       saved: {
         matches: matches?.length || 0,
         results: results?.length || 0,
@@ -129,8 +129,8 @@ export default async function handler(req, res) {
     });
 
   } catch (error) {
-    console.error('[push-odds] Error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Unknown error' });
+    log.error('Handler error', undefined, { cause: error });
+    return internalError(res, error);
   } finally {
     await sql.end();
   }

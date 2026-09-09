@@ -25,6 +25,10 @@
 
 import crypto from 'crypto';
 import { createSql } from './_lib/db.js';
+import { errorResponse, internalError, unauthorized } from './_lib/errors.js';
+import { createLogger } from './_lib/logger.js';
+
+const log = createLogger('auto-playout');
 
 // ─── Configuration ─────────────────────────────────────────────────────
 
@@ -75,13 +79,14 @@ const API_HEADERS = CONF_BEARER
   ? { ...HEADERS, 'Authorization': `Bearer ${CONF_BEARER}` }
   : HEADERS;
 
-// Timing-safe comparison
+// Timing-safe comparison (uses Node.js crypto.timingSafeEqual)
 function timingSafeEqual(a, b) {
-  const encoder = new TextEncoder();
-  const aBuf = Buffer.from(encoder.encode(a));
-  const bBuf = Buffer.from(encoder.encode(b));
-  if (aBuf.length !== bBuf.length) return false;
-  return crypto.timingSafeEqual(aBuf, bBuf);
+  try {
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    if (aBuf.length !== bBuf.length) return false;
+    return crypto.timingSafeEqual(aBuf, bBuf);
+  } catch { return false; }
 }
 
 // ─── Utility ───────────────────────────────────────────────────────────
@@ -627,7 +632,7 @@ export default async function handler(req, res) {
     // ?manual=true only skips timing gates (e.g. "starts within 30 min"), never auth.
     // CRON key is mandatory in ALL cases (cron-job.org, Vercel Cron, manual, dev).
     if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
-      return res.status(401).json({ error: 'Unauthorized' });
+      return unauthorized(res);
     }
 
     isManual = req.query.manual === 'true';
@@ -646,7 +651,7 @@ export default async function handler(req, res) {
     res.unstable_waitUntil(runPlayout(expectedCronKey));
 
   } catch (error) {
-    console.error('[auto-playout] Handler error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    log.error('Handler error', undefined, { cause: error });
+    return internalError(res, error);
   }
 }

@@ -10,12 +10,15 @@
 // WHY: /results has OFFICIAL final scores. DB (playout) is for early alerts only.
 
 import crypto from 'crypto';
-import postgres from 'postgres';
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
+import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
+import { errorResponse, methodNotAllowed, invalidInput, internalError, unauthorized, successResponse } from './_lib/errors.js';
+import { createLogger, redactToken } from './_lib/logger.js';
+
+const log = createLogger('verify-predictions');
 
 const API_BASE = 'https://hg-event-api-prod.sporty-tech.net/api/instantleagues';
-const NEON_DATABASE_URL = process.env.NEON_DATABASE_URL;
 
 const LEAGUES = [
   { id: '8035', name: 'English League' },
@@ -40,14 +43,15 @@ const HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0',
 };
 
-// ─── Utilities ─────────────────────────────────────────────────────────────
+// ─── Utilities (shared with auto-playout) ────────────────────────────────────
 
 function timingSafeEqual(a, b) {
-  const encoder = new TextEncoder();
-  const aBuf = Buffer.from(encoder.encode(a));
-  const bBuf = Buffer.from(encoder.encode(b));
-  if (aBuf.length !== bBuf.length) return false;
-  return crypto.timingSafeEqual(aBuf, bBuf);
+  try {
+    const aBuf = Buffer.from(a);
+    const bBuf = Buffer.from(b);
+    if (aBuf.length !== bBuf.length) return false;
+    return crypto.timingSafeEqual(aBuf, bBuf);
+  } catch { return false; }
 }
 
 function norm(name) {
@@ -272,10 +276,10 @@ export default async function handler(req, res) {
 
   try {
     if (!NEON_DATABASE_URL) {
-      return res.status(500).json({ error: 'NEON_DATABASE_URL not configured' });
+      return internalError(res, null, 'NEON_DATABASE_URL not configured');
     }
 
-    const sql = postgres(NEON_DATABASE_URL);
+    const sql = createSql();
 
     // ── Mode detection: CRON vs CLIENT ──
     // Security: key is ONLY accepted via x-cron-key header (not query string)
@@ -302,10 +306,7 @@ export default async function handler(req, res) {
         // Priority 2: device auth (HMAC — legacy)
         const authedDeviceId = await requireAuth(req);
         if (!authedDeviceId) {
-          return res.status(401).json({
-            success: false,
-            error: 'Authentication required',
-          });
+          return unauthorized(res);
         }
         deviceId = authedDeviceId;
         console.log(`[verify] Mode: CLIENT (device: ${deviceId})`);
@@ -402,7 +403,7 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     const elapsed = Date.now() - startTime;
-    console.error(`[verify] Error (${elapsed}ms):`, error);
-    return res.status(500).json({ error: 'Internal server error', elapsed });
+      log.error('Verification error', undefined, { cause: error });
+    return internalError(res, error);
   }
 }

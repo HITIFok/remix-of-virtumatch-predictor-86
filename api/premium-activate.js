@@ -11,7 +11,11 @@ import { requireAuth, requireUserAuth } from './_lib/auth.js';
 import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
 import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { errorResponse, methodNotAllowed, rateLimited, invalidInput, internalError, unauthorized, successResponse, serviceUnavailable } from './_lib/errors.js';
+import { validateEmail, sanitizeString } from './_lib/validate.js';
+import { createLogger, redactEmail } from './_lib/logger.js';
+
+const log = createLogger('premium-activate');
 
 // ── Rate limiting (shared module with cleanup, Phase I) ──
 const activateLimiter = createRateLimiter('premium-activate', { max: 15, windowMs: 60 * 60 * 1000 });
@@ -48,7 +52,7 @@ async function sendActivationMagicLink(email, code, durationDays) {
 <p style="color:#888;font-size:14px;">Ce lien expire dans 15 minutes. Si tu n'as pas fait cette demande, ignore cet email.</p>
 </div>`;
 
-  if (RESEND_API_KEY) {
+  if (process.env.RESEND_API_KEY) {
     try {
       const resend = await getResend();
       if (resend) {
@@ -59,10 +63,10 @@ async function sendActivationMagicLink(email, code, durationDays) {
           html,
         });
       } else {
-        console.error('[premium-activate] Resend not available');
+        log.error('Resend not available');
       }
     } catch (err) {
-      console.error('[premium-activate] Resend error:', err.message);
+      log.error('Resend send error', undefined, { cause: err });
     }
   }
 }
@@ -75,7 +79,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end('');
 
   if (!NEON_DATABASE_URL) {
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    return internalError(res, null, 'Server not configured');
   }
 
   // ─── GET: Check premium status ─────────────────────────────────────────
@@ -84,7 +88,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return methodNotAllowed(res, ['GET', 'POST']);
   }
 
   return handlePost(req, res);
@@ -111,15 +115,15 @@ async function handleGet(req, res) {
         expires_at: isPremium ? result.expires_at : null,
       });
     } catch (err) {
-      console.error('[premium-activate GET] Error:', err.message);
-      return res.status(500).json({ premium: false, error: 'Failed to check premium status' });
+      log.error('Premium status check error (user auth)', undefined, { cause: err });
+      return internalError(res, err, 'Failed to check premium status');
     }
   }
 
   // Fallback: device auth (legacy — temporary, removed after Phase 5 migration)
   const deviceId = await requireAuth(req);
   if (!deviceId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    return unauthorized(res);
   }
 
   try {
@@ -135,8 +139,8 @@ async function handleGet(req, res) {
       expires_at: isPremium ? (result?.expires_at || null) : null,
     });
   } catch (err) {
-    console.error('[premium-activate GET] Error:', err.message);
-    return res.status(500).json({ premium: false, error: 'Failed to check premium status' });
+    log.error('Premium status check error (device auth)', undefined, { cause: err });
+    return internalError(res, err, 'Failed to check premium status');
   }
 }
 
@@ -147,7 +151,7 @@ async function handlePost(req, res) {
   try {
     body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
   } catch {
-    return res.status(400).json({ success: false, error: 'Invalid JSON body' });
+    return invalidInput(res, 'Invalid JSON body');
   }
 
   const bodyStr = JSON.stringify(body);
@@ -158,18 +162,21 @@ async function handlePost(req, res) {
   const email = String(body.email || '').trim().toLowerCase();
   const code = String(body.code || '').trim();
 
-  if (!code || code.length < 4 || code.length > 50) {
-    return res.status(400).json({ success: false, error: 'Invalid code' });
+  const sanitizedCode = sanitizeString(code, 50);
+  if (!sanitizedCode || sanitizedCode.length < 4) {
+    return invalidInput(res, 'Invalid code', 'code');
   }
 
   // ── NEW FLOW: email provided → trigger magic link ──
-  if (email && EMAIL_RE.test(email)) {
-    if (!RESEND_API_KEY) {
-      return res.status(500).json({ success: false, error: 'Service not configured' });
+  const validEmail = validateEmail(email);
+  if (validEmail) {
+    if (!process.env.RESEND_API_KEY) {
+      return serviceUnavailable(res, 'Email service');
     }
 
-    if (!activateLimiter.check(email).allowed) {
-      return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
+    if (!activateLimiter.check(validEmail).allowed) {
+      log.warn('Rate limited', { email: validEmail });
+      return rateLimited(res, 3600);
     }
 
     // Look up the code to validate it exists and get duration
@@ -177,12 +184,12 @@ async function handlePost(req, res) {
     try {
       const [codeRow] = await sql`
         SELECT id, duration_days, used, used_by_device
-        FROM access_codes WHERE code = ${code}
+        FROM access_codes WHERE code = ${sanitizedCode}
       `;
 
       if (!codeRow) {
         await sql.end();
-        return res.status(400).json({ success: false, error: 'Code non trouvé' });
+        return invalidInput(res, 'Code non trouvé', 'code');
       }
 
       // If used by a different user, reject early
@@ -190,23 +197,20 @@ async function handlePost(req, res) {
         const [user] = await sql`SELECT id FROM users WHERE email = ${email}`;
         if (!user || codeRow.used_by_device !== user.id) {
           await sql.end();
-          return res.status(400).json({ success: false, error: 'Code déjà utilisé' });
+          return invalidInput(res, 'Code déjà utilisé', 'code');
         }
       }
 
       const durationDays = codeRow.duration_days || 30;
       await sql.end();
 
-      await sendActivationMagicLink(email, code, durationDays);
+      await sendActivationMagicLink(validEmail, sanitizedCode, durationDays);
 
-      return res.status(200).json({
-        success: true,
-        message: 'Si cet email est valide, un lien a été envoyé.',
-      });
+      return successResponse(res, { message: 'Si cet email est valide, un lien a été envoyé.' });
     } catch (err) {
-      console.error('[premium-activate POST magic-link] Error:', err.message);
+      log.error('Magic link flow error', undefined, { cause: err });
       try { await sql.end(); } catch { /* */ }
-      return res.status(500).json({ success: false, error: 'Erreur serveur' });
+      return internalError(res, err);
     }
   }
 
@@ -214,11 +218,12 @@ async function handlePost(req, res) {
   // Kept for backward compat with existing frontend (removed after Phase 4)
   const authedDeviceId = await requireAuth(req);
   if (!authedDeviceId) {
-    return res.status(401).json({ success: false, error: 'Authentication required' });
+    return unauthorized(res);
   }
 
   if (!activateLimiter.check(authedDeviceId).allowed) {
-    return res.status(429).json({ success: false, error: 'Too many attempts. Try again later.' });
+    log.warn('Rate limited (legacy)', { device_id: authedDeviceId });
+    return rateLimited(res, 3600);
   }
 
   try {
@@ -227,7 +232,7 @@ async function handlePost(req, res) {
     const result = await sql.begin(async (tx) => {
       const [codeRow] = await tx`
         SELECT id, code, duration_days, used, used_at, used_by_device
-        FROM access_codes WHERE code = ${code} FOR UPDATE
+        FROM access_codes WHERE code = ${sanitizedCode} FOR UPDATE
       `;
 
       if (!codeRow) return { success: false, error: 'Code not found' };
@@ -303,7 +308,7 @@ async function handlePost(req, res) {
     }
     return res.status(400).json({ success: false, valid: false, days: 0, error: result.error });
   } catch (err) {
-    console.error('[premium-activate POST legacy] Error:', err.message);
-    return res.status(500).json({ success: false, valid: false, days: 0, error: 'Server error' });
+    log.error('Legacy activation error', undefined, { cause: err });
+    return internalError(res, err, 'Server error');
   }
 }

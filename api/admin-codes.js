@@ -15,6 +15,11 @@ import { setCorsHeaders, isOriginAllowed } from './_lib/cors.js';
 import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
+import { errorResponse, methodNotAllowed, rateLimited, invalidInput, internalError, unauthorized, notFound, successResponse } from './_lib/errors.js';
+import { validateDeviceId, sanitizeString, validateDuration } from './_lib/validate.js';
+import { createLogger, redactIp } from './_lib/logger.js';
+
+const log = createLogger('admin-codes');
 const ADMIN_TOKEN_SECRET = process.env.ADMIN_TOKEN_SECRET;
 const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -83,8 +88,8 @@ function parseBody(req) {
 
 async function handleLogin(req, res, body) {
   if (!NEON_DATABASE_URL) {
-    console.error('[admin/login] NEON_DATABASE_URL manquant');
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    log.error('NEON_DATABASE_URL missing');
+    return internalError(res, null, 'Server not configured');
   }
 
   // Rate limiting
@@ -93,15 +98,13 @@ async function handleLogin(req, res, body) {
 
   if (!rateLimit.allowed) {
     res.setHeader('Retry-After', String(rateLimit.retryAfter));
-    return res.status(429).json({
-      success: false,
-      error: `Trop de tentatives. Réessayez dans ${rateLimit.retryAfter} secondes.`,
-    });
+    log.warn('Rate limited login', { ip: clientIp });
+    return rateLimited(res, rateLimit.retryAfter);
   }
 
   const { password } = body;
   if (!password || typeof password !== 'string' || password.length > 128) {
-    return res.status(400).json({ success: false, error: 'Password manquant ou invalide' });
+    return invalidInput(res, 'Password manquant ou invalide', 'password');
   }
 
   try {
@@ -126,8 +129,8 @@ async function handleLogin(req, res, body) {
       expiresIn: SESSION_DURATION_MS,
     });
   } catch (err) {
-    console.error('[admin/login] Exception:', err.message);
-    return res.status(200).json({ success: false, error: 'Erreur serveur' });
+    log.error('Login exception', undefined, { cause: err });
+    return internalError(res, err);
   }
 }
 
@@ -364,12 +367,12 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'GET' && req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
+    return methodNotAllowed(res, ['GET', 'POST']);
   }
 
   if (!ADMIN_TOKEN_SECRET) {
-    console.error('[admin] ADMIN_TOKEN_SECRET manquant');
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    log.error('ADMIN_TOKEN_SECRET missing');
+    return internalError(res, null, 'Server not configured');
   }
 
   const action = String(req.query?.action || '').trim();
@@ -382,7 +385,7 @@ export default async function handler(req, res) {
     const isSameHost = req.headers.host?.includes('vercel.app') || req.headers.host?.includes('localhost');
     const isAllowed = isOriginAllowed(origin, req.headers.host || '') || (!origin && isSameHost);
     if (!isAllowed) {
-      return res.status(403).json({ success: false, error: 'Origin non autorisé' });
+      return unauthorized(res, 'Origin non autorisé');
     }
     return await handleLogin(req, res, body);
   }
@@ -393,14 +396,14 @@ export default async function handler(req, res) {
 
   // ── All other routes require Bearer admin token ──
   if (!NEON_DATABASE_URL) {
-    return res.status(500).json({ success: false, error: 'Server not configured' });
+    return internalError(res, null, 'Server not configured');
   }
 
   const sql = createSql();
 
   const token = extractToken(req);
   if (!verifyToken(token).valid) {
-    return res.status(401).json({ success: false, error: 'Session admin invalide ou expirée' });
+    return unauthorized(res, 'Session admin invalide ou expirée');
   }
 
   try {
@@ -410,7 +413,7 @@ export default async function handler(req, res) {
 
     return await handlePost(req, res, body);
   } catch (err) {
-    console.error('[admin] Exception:', err.message);
-    return res.status(200).json({ success: false, error: 'Erreur serveur' });
+    log.error('Admin handler exception', undefined, { cause: err });
+    return internalError(res, err);
   }
 }
