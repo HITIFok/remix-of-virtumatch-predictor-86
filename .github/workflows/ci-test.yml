@@ -1,0 +1,86 @@
+# Phase J — CI Test Pipeline
+# Runs ALL test suites on every push and PR to main:
+#   1. Frontend tests (vitest run)
+#   2. API security tests (vitest run --config vitest.api.config.ts)
+#   3. TypeScript type-check (tsc --noEmit)
+#   4. Coefficient validation at startup
+#   5. Vite production build
+
+name: CI Test Suite
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+
+      - name: Frontend tests
+        run: npx vitest run
+
+      - name: API security + calibration tests
+        run: npx vitest run --config vitest.api.config.ts
+
+      - name: Vite production build
+        run: npm run build
+
+  coefficient-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate prediction coefficients
+        run: |
+          node -e "
+            const { validateCoefficients, getArbitraryCount, getCalibrationPriorities } = require('./src/lib/prediction-config');
+            const result = validateCoefficients();
+            if (!result.valid) {
+              console.error('COEFFICIENT VALIDATION FAILED:');
+              result.errors.forEach(e => console.error('  ✗', e));
+              process.exit(1);
+            }
+            console.log('✓ All coefficients valid');
+            console.log('✓ Conservation laws pass');
+            result.warnings.forEach(w => console.warn('  ⚠', w));
+            const arbCount = getArbitraryCount();
+            console.log('Arbitrary coefficients (priority for calibration):', arbCount);
+            const priorities = getCalibrationPriorities();
+            console.log('Calibration priority order:');
+            priorities.slice(0, 6).forEach(p => console.log('  ', p.name, '→', p.def.calibrationStatus));
+          "

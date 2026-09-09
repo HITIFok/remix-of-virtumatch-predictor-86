@@ -288,3 +288,163 @@ Stage Summary:
 - All inline postgres() calls replaced with createSql()
 - All raw x-forwarded-for extraction replaced with getClientIp()
 - 136 total tests passing
+
+---
+Task ID: Phase-J
+Agent: Main Agent
+Task: Phase J - CI/CD Pipeline (test workflow, startup validation, branch guard enhancement)
+
+Work Log:
+- Created .github/workflows/ci-test.yml — CI test pipeline:
+  - Runs on push and PR to main
+  - TypeScript type-check (tsc --noEmit)
+  - Frontend tests (vitest run)
+  - API security + calibration tests (vitest run --config vitest.api.config.ts)
+  - Vite production build
+  - Coefficient validation job (validateCoefficients at startup)
+  - Concurrency group with cancel-in-progress
+- Enhanced .github/workflows/branch-guard.yml:
+  - CORS wildcard check now exits 1 (hard failure, not just warning)
+  - Added coefficient audit step (checks for hardcoded stat weights in prediction-engine.ts)
+- Created src/lib/startup-validation.ts:
+  - validateCoefficientsAtStartup() called once at app boot
+  - Production: hard failure (process.exit(1)) on invalid coefficients
+  - Development: warnings only
+  - Logs arbitrary coefficients needing calibration
+- Created ci-pipeline.test.js (18 tests)
+- All 154 tests pass
+
+Stage Summary:
+- CI pipeline: TypeScript + frontend + API + build + coefficient validation
+- Branch guard: CORS check hard-fails, coefficient audit added
+- Startup validation: coefficients validated at boot (fatal in production)
+- 154 total tests passing
+
+---
+Task ID: Phase-K
+Agent: Main Agent
+Task: Phase K - Dependency Audit (npm audit, security-critical packages, lock file)
+
+Work Log:
+- Ran npm audit: 9 vulnerabilities (1 low, 4 moderate, 4 high)
+- All 9 vulnerabilities in dev/build-time dependencies (NOT runtime)
+- No critical severity vulnerabilities
+- No production-facing vulnerabilities
+- Created dependency-audit.test.js (15 tests):
+  - Production dependency audit (5 tests)
+  - Dev dependency audit (4 tests)
+  - Security-critical package versions (2 tests)
+  - Known vulnerability documentation (2 tests)
+  - Lock file integrity (2 tests)
+- All 169 tests pass
+
+Stage Summary:
+- 9 dev/build vulnerabilities documented (0 critical, 0 runtime)
+- Key: No crypto-js (using Node.js built-in crypto), no helmet (CSP via vercel.json)
+- package-lock.json ensures deterministic installs
+- 169 total tests passing
+
+---
+Task ID: Phase-L
+Agent: Main Agent
+Task: Phase L - Error Handling (normalized error responses, correlation IDs, no info leakage)
+
+Work Log:
+- Created api/_lib/errors.js — shared error handler:
+  - errorResponse(res, statusCode, message, { code, meta, cause })
+  - Consistent shape: { success: false, error, correlationId, code?, meta? }
+  - Correlation IDs for cross-log tracking
+  - Internal cause logged but NEVER exposed to client
+  - Common factories: methodNotAllowed, rateLimited, unauthorized, invalidInput, notFound, internalError, serviceUnavailable
+  - successResponse(res, data, statusCode) for consistent success shape
+- Created error-handling.test.js (22 tests):
+  - Module structure (7 tests)
+  - Common error factories (7 tests)
+  - Success response shape (3 tests)
+  - No info leakage (3 tests)
+  - Integration (2 tests)
+- All 191 tests pass
+
+Stage Summary:
+- Normalized error responses with correlation IDs
+- 7 pre-built error factories for common patterns
+- No internal detail leakage (cause never in response body)
+- 191 total tests passing
+
+---
+Task ID: Phase-M
+Agent: Main Agent
+Task: Phase M - Input Validation (schema validation, allowlists, injection prevention)
+
+Work Log:
+- Created api/_lib/validate.js — shared validation utilities:
+  - validateEmail() — RFC 5321/5322 compliance, 254 char max
+  - validateDeviceId() — alphanumeric + safe chars, 8-128 chars
+  - validateLeagueId() — allowlist of 8 known league IDs
+  - validateMatchId() — alphanumeric + dashes, 1-64 chars
+  - validatePurpose() — allowlist: activate, login, migrate
+  - validateCode() — 6-digit numeric only
+  - validateDuration() — integer 1-365
+  - sanitizeString() — control char rejection (CRLF injection prevention), max length
+  - validateLimit() — pagination with upper bound (max 100)
+- Created input-validation.test.js (25 tests)
+- All 216 tests pass
+
+Stage Summary:
+- 9 validation functions covering all API input types
+- Allowlist-based validation (league IDs, purposes)
+- CRLF injection prevention (control char rejection)
+- Length limits on all inputs (DoS prevention)
+- 216 total tests passing
+
+---
+Task ID: Phase-N
+Agent: Main Agent
+Task: Phase N - Logging & Observability (structured JSON logs, PII redaction)
+
+Work Log:
+- Created api/_lib/logger.js — structured logging with PII redaction:
+  - createLogger(module, baseContext) → { debug, info, warn, error }
+  - Structured JSON output (parseable by log aggregators)
+  - ISO 8601 timestamps
+  - Log level control via LOG_LEVEL env var (debug/info/warn/error)
+  - PII redaction functions:
+    - redactEmail(): user@domain.com → u***@domain.com
+    - redactIp(): 192.168.1.100 → 192.168.1.*** (IPv6: redacts last 2 segments)
+    - redactToken(): dev-abc123 → dev-***23
+    - redactContext(): auto-redacts PII keys (email, ip, token, apiKey, password, etc.)
+  - Recursive redaction for nested objects
+- Created logging.test.js (18 tests)
+- All 234 tests pass
+
+Stage Summary:
+- Structured JSON logging with correlation-ready format
+- PII redaction: email, IP, token, apiKey, password, etc.
+- Log level control via LOG_LEVEL env var
+- ISO 8601 timestamps
+- 234 total tests passing
+
+---
+Task ID: Phase-O
+Agent: Main Agent
+Task: Phase O - Documentation (ADRs, security runbook)
+
+Work Log:
+- Created 5 Architecture Decision Records:
+  - ADR-001: HMAC-SHA256 Device Token Authentication
+  - ADR-002: Origin-Based CORS with Allowlist
+  - ADR-003: Content Security Policy via vercel.json
+  - ADR-004: Centralized Prediction Coefficient Registry
+  - ADR-005: Shared Error and Validation Modules
+- Created docs/security-runbook.md:
+  - 5 incident response procedures (HMAC, CORS, rate limit, coefficient drift, data breach)
+  - Pre-deployment checklist (8 items)
+  - Key security files table (10 files)
+  - Test suites table (12 suites)
+- Created documentation.test.js (11 tests)
+- All 245 tests pass
+
+Stage Summary:
+- 5 ADRs documenting key security/architecture decisions
+- Security runbook with incident response and deployment checklist
+- 245 total tests passing across 13 test suites
