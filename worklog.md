@@ -146,3 +146,55 @@ Stage Summary:
 - 5 inline style attributes converted to CSS classes
 - CSP is now: script-src 'self' 'sha256-...' https://cdn.jsdelivr.net; style-src 'self' 'sha256-...' https://cdn.jsdelivr.net
 - Zero inline style attributes remain in index.html
+
+---
+Task ID: Phase-E
+Agent: Main Agent
+Task: Phase E - Rate limiting distribué (Upstash Redis + fallback in-memory)
+
+Work Log:
+- Installed @upstash/ratelimit and @upstash/redis packages
+- Rewrote middleware.js with dual-mode rate limiting:
+  - Distributed mode: Upstash Redis when UPSTASH_REDIS_REST_URL is configured
+  - Fallback mode: in-memory Map() when Redis is not available
+  - Graceful degradation: if Redis call fails, falls back to in-memory
+- Added V-01 migration security: stricter rate limit (10 req/min) for HMAC fallback requests
+  - Requests with Authorization: Device <token> → standard limit (30 req/min)
+  - Requests without HMAC token → strict limit (10 req/min)
+- Added proper rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+- Created ratelimit.test.js (8 tests): in-memory fallback, 429 headers, non-API routes, strict HMAC limit
+- All 69 tests pass
+
+Stage Summary:
+- middleware.js: dual-mode rate limiting (Redis + in-memory fallback)
+- V-01 migration: stricter 10 req/min for plain x-device-id fallback
+- Standard 30 req/min for HMAC-authenticated requests
+- 8 new rate limiting tests
+
+---
+Task ID: Phase-F+G
+Agent: Main Agent
+Task: Phase F (Backtesting) + Phase G (Coefficient Audit) du moteur de prédiction
+
+Work Log:
+- Created scripts/backtest_prediction_engine.js — comprehensive backtesting analysis
+- Inventoried 17 hardcoded coefficients with values, units, line numbers, descriptions
+- Tested 8 match types covering full spectrum: favori fort, équilibré, nul probable, domination, serré
+- Analyzed sensitivity of 4 key coefficients: VIRTUAL_AVG_GOALS, AI_WEIGHT, STAT_WEIGHT_SPLIT, CONF_CAP
+- Identified 5 key findings:
+  1. VIRTUAL_AVG_GOALS=1.3 is most impactful, needs empirical validation
+  2. 70/20/10 split has potential double-counting in cross-term
+  3. AI_WEIGHT=35% is reasonable but arbitrary without data
+  4. CONF_CAP=82% is prudent but needs calibration
+  5. topVirtualBonus priors are not empirically based
+- Generated 5 calibration recommendations by priority
+- Created backtest.test.js (16 tests): coefficient audit, range validation, probability conservation
+- All 85 tests pass
+
+Stage Summary:
+- 17 coefficients inventoried and documented
+- Sensitivity analysis for 4 key coefficients
+- 8 match types tested across full odds spectrum
+- Backtesting report: /home/z/my-project/download/backtest-phase-f.txt
+- Key risk: VIRTUAL_AVG_GOALS and 70/20/10 split need empirical validation
+- 16 backtesting/coefficient tests added

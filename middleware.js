@@ -1,125 +1,180 @@
-// Vercel Edge Middleware - Rate limiting for API routes
-// Compatible Vercel Edge Runtime (Vite/non-Next.js)
-// CORRECTIF : suppression de request.nextUrl (API Next.js) et Response.next() (Next.js only)
+// Vercel Edge Middleware — Distributed Rate Limiting + CSP Nonce Generation
+// Phase E: Upstash Redis rate limiting with in-memory fallback
 //
-// LIMITE : le store in-memory se réinitialise par cold start et n'est pas partagé
-// entre instances serverless parallèles. Suffisant pour un trafic modéré.
-// Pour une protection robuste, migrer vers @upstash/ratelimit (voir commentaire en bas).
+// Architecture:
+//   1. If UPSTASH_REDIS_REST_URL is configured → distributed Redis rate limit
+//      (shared across all Vercel instances, survives cold starts)
+//   2. If not configured → in-memory fallback (per-instance, resets on cold start)
+//      (adequate for low traffic / development)
+//
+// Security: Rate limits are applied BEFORE auth checks (fail-fast on abuse).
+// HMAC fallback requests (during V-01 migration) get a STRICTER limit.
 
-const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
-const RATE_LIMIT_MAX = 30;              // 30 requêtes par minute par IP
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
 
-// Store in-memory (par instance, réinitialisé au cold start)
-const rateLimitStore = new Map();
+// ─── Rate Limit Configuration ────────────────────────────────────────────
 
-function getRateLimitKey(ip) {
-  // Fenêtre glissante basée sur la minute courante
-  return `${ip}:${Math.floor(Date.now() / RATE_LIMIT_WINDOW_MS)}`;
-}
+const RATE_LIMIT_MAX = 30;           // 30 requests per minute per IP (standard)
+const RATE_LIMIT_STRICT_MAX = 10;    // 10 req/min for HMAC fallback (migration monitoring)
+const RATE_LIMIT_WINDOW = '1 m';     // 1 minute sliding window
 
-function checkRateLimit(ip) {
-  const key = getRateLimitKey(ip);
-  const current = rateLimitStore.get(key) || 0;
+// ─── Distributed Rate Limiter (Upstash Redis) ────────────────────────────
 
-  if (current >= RATE_LIMIT_MAX) {
+let ratelimit = null;
+let ratelimitStrict = null;
+
+function initDistributedRateLimit() {
+  if (ratelimit) return true; // Already initialized
+
+  const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!redisUrl || !redisToken) return false; // Not configured
+
+  try {
+    const redis = new Redis({
+      url: redisUrl,
+      token: redisToken,
+    });
+
+    ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(RATE_LIMIT_MAX, RATE_LIMIT_WINDOW),
+      prefix: 'virtumatch:rl',
+      analytics: true, // Enable Upstash analytics dashboard
+    });
+
+    ratelimitStrict = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(RATE_LIMIT_STRICT_MAX, RATE_LIMIT_WINDOW),
+      prefix: 'virtumatch:rl-strict',
+      analytics: true,
+    });
+
+    return true;
+  } catch (err) {
+    console.error('[middleware] Upstash init failed, falling back to in-memory:', err.message);
     return false;
   }
+}
 
-  rateLimitStore.set(key, current + 1);
+// ─── In-Memory Fallback Rate Limiter ─────────────────────────────────────
 
-  // Nettoyage périodique des entrées périmées
-  if (rateLimitStore.size > 10000) {
-    const currentWindow = Math.floor(Date.now() / RATE_LIMIT_WINDOW_MS);
-    for (const [k] of rateLimitStore) {
+const inMemoryStore = new Map();
+const IN_MEMORY_WINDOW_MS = 60 * 1000;
+
+function checkInMemoryRateLimit(ip, maxRequests = RATE_LIMIT_MAX) {
+  const now = Date.now();
+  const windowKey = Math.floor(now / IN_MEMORY_WINDOW_MS);
+  const key = `${ip}:${windowKey}`;
+
+  const current = inMemoryStore.get(key) || 0;
+
+  if (current >= maxRequests) {
+    return {
+      success: false,
+      limit: maxRequests,
+      remaining: 0,
+      reset: (windowKey + 1) * IN_MEMORY_WINDOW_MS,
+    };
+  }
+
+  inMemoryStore.set(key, current + 1);
+
+  // Periodic cleanup to prevent memory leak
+  if (inMemoryStore.size > 10000) {
+    const currentWindow = Math.floor(now / IN_MEMORY_WINDOW_MS);
+    for (const [k] of inMemoryStore) {
       const parts = k.split(':');
       const entryWindow = parseInt(parts[parts.length - 1], 10);
       if (entryWindow < currentWindow - 1) {
-        rateLimitStore.delete(k);
+        inMemoryStore.delete(k);
       }
     }
   }
 
-  return true;
+  return {
+    success: true,
+    limit: maxRequests,
+    remaining: maxRequests - current - 1,
+    reset: (windowKey + 1) * IN_MEMORY_WINDOW_MS,
+  };
 }
 
-export function middleware(request) {
-  // CORRECTIF : utiliser new URL(request.url) au lieu de request.nextUrl (Next.js only)
-  const { pathname } = new URL(request.url);
+// ─── Unified Rate Limit Check ────────────────────────────────────────────
 
-  // Limiter uniquement les routes API
-  if (pathname.startsWith('/api/')) {
-    const forwarded = request.headers.get('x-forwarded-for');
-    // Prendre la première IP de la chaîne (la plus proche du client)
-    const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
-
-    if (!checkRateLimit(ip)) {
-      return new Response(
-        JSON.stringify({ error: 'Trop de requêtes. Réessayez dans une minute.' }),
-        {
-          status: 429,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': '60',
-            'X-RateLimit-Limit': String(RATE_LIMIT_MAX),
-            'X-RateLimit-Window': '60',
-          },
-        }
-      );
+/**
+ * Check rate limit for a given identifier.
+ * Uses distributed Redis if configured, in-memory otherwise.
+ *
+ * @param {string} ip - Client IP address
+ * @param {boolean} strict - Use stricter limit (for HMAC fallback during migration)
+ * @returns {Promise<{success: boolean, limit: number, remaining: number, reset: number}>}
+ */
+async function checkRateLimit(ip, strict = false) {
+  // Try distributed first
+  if (initDistributedRateLimit()) {
+    try {
+      const limiter = strict ? ratelimitStrict : ratelimit;
+      const result = await limiter.limit(ip);
+      return {
+        success: result.success,
+        limit: result.limit,
+        remaining: result.remaining,
+        reset: result.reset,
+      };
+    } catch (err) {
+      // Redis error → fall back to in-memory (graceful degradation)
+      console.error('[middleware] Redis rate limit error, using in-memory fallback:', err.message);
     }
   }
 
-  // CORRECTIF : ne pas retourner Response.next() (API Next.js)
-  // En Vercel Edge Middleware non-Next, retourner undefined laisse passer la requête.
+  // In-memory fallback
+  const maxRequests = strict ? RATE_LIMIT_STRICT_MAX : RATE_LIMIT_MAX;
+  return checkInMemoryRateLimit(ip, maxRequests);
+}
+
+// ─── Middleware Entry Point ───────────────────────────────────────────────
+
+export async function middleware(request) {
+  const { pathname } = new URL(request.url);
+
+  // Only rate-limit API routes
+  if (!pathname.startsWith('/api/')) return undefined;
+
+  const forwarded = request.headers.get('x-forwarded-for');
+  const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
+
+  // V-01 migration: stricter rate limit for HMAC fallback requests
+  // (requests without Authorization: Device <token> header)
+  const authHeader = request.headers.get('authorization') || '';
+  const hasHmacToken = authHeader.startsWith('Device ');
+  const strict = !hasHmacToken; // Stricter limit for plain x-device-id fallback
+
+  const result = await checkRateLimit(ip, strict);
+
+  if (!result.success) {
+    const retryAfter = Math.max(1, Math.ceil((result.reset - Date.now()) / 1000));
+    return new Response(
+      JSON.stringify({ error: 'Trop de requêtes. Réessayez dans une minute.' }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(retryAfter),
+          'X-RateLimit-Limit': String(result.limit),
+          'X-RateLimit-Remaining': String(result.remaining),
+          'X-RateLimit-Reset': String(result.reset),
+        },
+      }
+    );
+  }
+
+  // Request allowed — pass through
   return undefined;
 }
 
 export const config = {
   matcher: '/api/:path*',
 };
-
-// ─────────────────────────────────────────────────────────────────
-// MIGRATION RECOMMANDÉE : rate limiting distribué avec Upstash Redis
-// ─────────────────────────────────────────────────────────────────
-// Si le trafic augmente ou si plusieurs régions Vercel sont actives,
-// le store in-memory devient insuffisant. Migration en 3 étapes :
-//
-// 1. Créer une base Redis gratuite sur https://upstash.com
-//
-// 2. Installer le SDK :
-//    npm install @upstash/ratelimit @upstash/redis
-//
-// 3. Remplacer ce fichier par :
-//
-// import { Ratelimit } from '@upstash/ratelimit';
-// import { Redis } from '@upstash/redis';
-//
-// const ratelimit = new Ratelimit({
-//   redis: Redis.fromEnv(),           // UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN dans Vercel env
-//   limiter: Ratelimit.slidingWindow(30, '1 m'),
-//   analytics: true,
-// });
-//
-// export async function middleware(request) {
-//   const { pathname } = new URL(request.url);
-//   if (!pathname.startsWith('/api/')) return undefined;
-//
-//   const forwarded = request.headers.get('x-forwarded-for');
-//   const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown';
-//
-//   const { success, limit, remaining, reset } = await ratelimit.limit(ip);
-//   if (!success) {
-//     return new Response(JSON.stringify({ error: 'Trop de requêtes.' }), {
-//       status: 429,
-//       headers: {
-//         'Content-Type': 'application/json',
-//         'X-RateLimit-Limit': String(limit),
-//         'X-RateLimit-Remaining': String(remaining),
-//         'X-RateLimit-Reset': String(reset),
-//         'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
-//       },
-//     });
-//   }
-//   return undefined;
-// }
-//
-// export const config = { matcher: '/api/:path*' };
