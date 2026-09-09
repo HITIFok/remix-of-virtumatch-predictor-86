@@ -4,6 +4,8 @@
 // v2.0: Utilise teamStats, forme, H2H, IA, redistribution virtuelle
 // ============================================
 
+import { getConfig } from './prediction-config';
+
 export interface MatchInput {
   id?: string;
   home: string;
@@ -196,9 +198,9 @@ function calculate1X2FromLambdas(lambdaH: number, lambdaA: number): { pH: number
 function gridSearchLambdas(
   targetPH: number, targetPD: number, targetPA: number
 ): { lambdaH: number; lambdaA: number; error: number } {
-  const minLambda = 0.5;
-  const maxLambda = 3.0;
-  const step = 0.05;
+  const minLambda = _cfg.GRID_MIN_LAMBDA;
+  const maxLambda = _cfg.GRID_MAX_LAMBDA;
+  const step = _cfg.GRID_STEP;
 
   let bestLambdaH = 1.5;
   let bestLambdaA = 1.2;
@@ -238,7 +240,7 @@ interface TeamForm {
   goalsBalance: number;   // buts marqués - encaissés récents
 }
 
-const FORM_WEIGHTS = [1.5, 1.3, 1.2, 1.1, 1.0];
+const FORM_WEIGHTS = [_cfg.FORM_WEIGHT_0, _cfg.FORM_WEIGHT_1, _cfg.FORM_WEIGHT_2, _cfg.FORM_WEIGHT_3, _cfg.FORM_WEIGHT_4];
 const FORM_POINTS: Record<string, number> = { V: 3, N: 1, D: 0 };
 
 /**
@@ -363,7 +365,9 @@ function extractH2H(
 // ============================================
 
 // Moyenne virtuelle de buts par équipe par match
-const VIRTUAL_AVG_GOALS = 1.3;
+// Loaded from centralized coefficient registry (Phase H)
+const _cfg = getConfig();
+const VIRTUAL_AVG_GOALS = _cfg.VIRTUAL_AVG_GOALS;
 
 /**
  * Ajuste les lambdas en utilisant les statistiques des équipes (classement).
@@ -393,7 +397,7 @@ function adjustLambdasWithStats(
 
     // Force d'attaque home: augmente lambdaH
     // Faiblesse défensive home: augmente lambdaA (adversaire marque plus)
-    adjustedH = adjustedH * 0.70 + adjustedH * attackStrength * 0.20 + (lambdaA * defenseWeakness) * 0.10;
+    adjustedH = adjustedH * _cfg.STAT_BASE_WEIGHT + adjustedH * attackStrength * _cfg.STAT_ATTACK_WEIGHT + (lambdaA * defenseWeakness) * _cfg.STAT_DEF_WEIGHT;
   }
 
   // Ajustement attaque/défense pour l'équipe away
@@ -401,7 +405,7 @@ function adjustLambdasWithStats(
     const attackStrength = awayStats.avgGoalsScored / VIRTUAL_AVG_GOALS;
     const defenseWeakness = awayStats.avgGoalsConceded / VIRTUAL_AVG_GOALS;
 
-    adjustedA = adjustedA * 0.70 + adjustedA * attackStrength * 0.20 + (lambdaH * defenseWeakness) * 0.10;
+    adjustedA = adjustedA * _cfg.STAT_BASE_WEIGHT + adjustedA * attackStrength * _cfg.STAT_ATTACK_WEIGHT + (lambdaH * defenseWeakness) * _cfg.STAT_DEF_WEIGHT;
   }
 
   // Clamp aux bornes réalistes du football virtuel
@@ -429,15 +433,15 @@ function adjustLambdasWithHistory(
   // Si une équipe marque plus que la moyenne virtuelle, booster son lambda
   // Si elle encaisse plus, booster le lambda adverse
   if (homeForm.formScores.length >= 3) {
-    const attackBoost = (homeForm.avgScored - VIRTUAL_AVG_GOALS) * 0.15;
-    const defensePenalty = (homeForm.avgConceded - VIRTUAL_AVG_GOALS) * 0.10;
+    const attackBoost = (homeForm.avgScored - VIRTUAL_AVG_GOALS) * _cfg.FORM_ATTACK_BOOST;
+    const defensePenalty = (homeForm.avgConceded - VIRTUAL_AVG_GOALS) * _cfg.FORM_DEFENSE_PENALTY;
     adjustedH += attackBoost - defensePenalty * 0.5;
     adjustedA += defensePenalty * 0.3;
   }
 
   if (awayForm.formScores.length >= 3) {
-    const attackBoost = (awayForm.avgScored - VIRTUAL_AVG_GOALS) * 0.15;
-    const defensePenalty = (awayForm.avgConceded - VIRTUAL_AVG_GOALS) * 0.10;
+    const attackBoost = (awayForm.avgScored - VIRTUAL_AVG_GOALS) * _cfg.FORM_ATTACK_BOOST;
+    const defensePenalty = (awayForm.avgConceded - VIRTUAL_AVG_GOALS) * _cfg.FORM_DEFENSE_PENALTY;
     adjustedA += attackBoost - defensePenalty * 0.5;
     adjustedH += defensePenalty * 0.3;
   }
@@ -445,11 +449,11 @@ function adjustLambdasWithHistory(
   // ── Ajustement momentum (forme pondérée) ──
   // Équipe en bonne forme = léger boost, mauvaise forme = léger malus
   if (homeForm.formScores.length >= 3) {
-    const momentumBoost = (homeForm.momentumScore - 50) / 500; // -0.10 à +0.10
+    const momentumBoost = (homeForm.momentumScore - 50) / _cfg.MOMENTUM_SCALE; // bounded by ±50/500 = ±0.10
     adjustedH += momentumBoost;
   }
   if (awayForm.formScores.length >= 3) {
-    const momentumBoost = (awayForm.momentumScore - 50) / 500;
+    const momentumBoost = (awayForm.momentumScore - 50) / _cfg.MOMENTUM_SCALE;
     adjustedA += momentumBoost;
   }
 
@@ -457,8 +461,8 @@ function adjustLambdasWithHistory(
   // Si l'équipe home domine historiquement, léger boost
   if (h2h.totalMatches >= 2) {
     const h2hBoost = h2h.homeTeamBias / 200; // -0.15 à +0.15
-    adjustedH += h2hBoost * 0.5;
-    adjustedA -= h2hBoost * 0.3;
+    adjustedH += h2hBoost * _cfg.H2H_HOME_BOOST;
+    adjustedA -= h2hBoost * _cfg.H2H_AWAY_PENALTY;
   }
 
   // Calculer l'accord entre forme et favori
@@ -514,7 +518,7 @@ function blendWithAI(
   const aiEntry = scoreMatrix.find(s => s.score === aiScore);
 
   // Boost: augmenter la probabilité du score IA de 35% et réduire les autres
-  const AI_WEIGHT = 0.35;
+  const AI_WEIGHT = _cfg.AI_WEIGHT;
   const boosted = scoreMatrix.map(s => {
     if (s.score === aiScore) {
       return { ...s, prob: s.prob * (1 + AI_WEIGHT) };
@@ -546,7 +550,7 @@ function blendWithAI(
  *   2-2 (3%), 3-0 (1.5%), 0-3 (1%), 3-1 (0.5%)
  */
 function redistributeForVirtualFootball(scoreMatrix: ScoreMatrix[]): ScoreMatrix[] {
-  const VIRTUAL_CAP = 3; // Max 3 buts par équipe
+  const VIRTUAL_CAP = _cfg.VIRTUAL_CAP; // Max goals per team in virtual football
 
   // Scores "réalistes" en virtuel (priorité de redistribution)
   const priorityScores = new Set([
@@ -766,7 +770,7 @@ function calculateMultiFactorConfidence(
 ): number {
   // Base: probabilité implicite du favori, mais plafonnée pour le virtuel
   // En virtuel, l'aléa est plus fort → confiance plus conservatrice
-  let confidence = Math.min(favoriteProb * 85, 68); // Max base ~68% (au lieu de 95)
+  let confidence = Math.min(favoriteProb * _cfg.CONF_BASE_SCALE, _cfg.CONF_MAX_BASE); // Max base capped for virtual football
 
   // Bonus: les données statistiques confirment le favori
   if (formAgreement !== 0 && hasStatsData) {
@@ -807,7 +811,7 @@ function calculateMultiFactorConfidence(
 
   // Plafond virtuel: jamais plus de 82% (incertitude inhérente au virtuel)
   // Plancher: 25% minimum
-  return clamp(Math.round(confidence), 25, 82);
+  return clamp(Math.round(confidence), 25, _cfg.CONF_CAP);
 }
 
 // ============================================
