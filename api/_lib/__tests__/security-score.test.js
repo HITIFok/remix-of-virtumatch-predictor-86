@@ -40,10 +40,10 @@ describe('Phase AM: Security Score Dimensions', () => {
     }
   });
 
-  it('all dimensions score at least 70', () => {
+  it('all dimensions score at least 90', () => {
     for (const dim of SCORE_DIMENSIONS) {
       const result = dim.calculate();
-      expect(result.score).toBeGreaterThanOrEqual(70);
+      expect(result.score).toBeGreaterThanOrEqual(90);
     }
   });
 });
@@ -74,15 +74,15 @@ describe('Phase AM: Security Score Computation', () => {
 
   it('includes audit metadata', () => {
     const score = computeSecurityScore();
-    expect(score.auditPhases).toBeGreaterThanOrEqual(28);
-    expect(score.totalTests).toBeGreaterThanOrEqual(700);
-    expect(score.testFiles).toBeGreaterThanOrEqual(30);
+    expect(score.auditPhases).toBeGreaterThanOrEqual(37);
+    expect(score.totalTests).toBeGreaterThanOrEqual(875);
+    expect(score.testFiles).toBeGreaterThanOrEqual(38);
     expect(score.timestamp).toBeTruthy();
   });
 
-  it('score is at least B+ (80+)', () => {
+  it('score is A-range (90+)', () => {
     const score = computeSecurityScore();
-    expect(score.overallScore).toBeGreaterThanOrEqual(80);
+    expect(score.overallScore).toBeGreaterThanOrEqual(90);
   });
 });
 
@@ -148,12 +148,12 @@ describe('Phase AM: Improvement Recommendations', () => {
 describe('Phase AM: Compliance Summary', () => {
   it('returns comprehensive compliance dashboard data', () => {
     const summary = getComplianceSummary();
-    expect(summary.securityScore).toBeGreaterThanOrEqual(70);
+    expect(summary.securityScore).toBeGreaterThanOrEqual(90);
     expect(summary.grade).toBeTruthy();
     expect(typeof summary.owaspCompliant).toBe('boolean');
     expect(summary.vulnsMitigated).toBeTruthy();
-    expect(summary.testCoverage).toBeGreaterThanOrEqual(700);
-    expect(summary.auditPhases).toBeGreaterThanOrEqual(28);
+    expect(summary.testCoverage).toBeGreaterThanOrEqual(875);
+    expect(summary.auditPhases).toBeGreaterThanOrEqual(37);
   });
 
   it('OWASP is compliant', () => {

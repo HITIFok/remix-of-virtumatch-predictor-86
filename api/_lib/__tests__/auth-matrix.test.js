@@ -33,8 +33,8 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 1. Matrix completeness ────────────────────────────
 
   describe("matrix completeness", () => {
-    it("documents all 15 API endpoints", () => {
-      expect(API_AUTH_MATRIX.length).toBe(15);
+    it("documents all 16 API endpoints", () => {
+      expect(API_AUTH_MATRIX.length).toBe(16);
     });
 
     it("every entry has required fields", () => {

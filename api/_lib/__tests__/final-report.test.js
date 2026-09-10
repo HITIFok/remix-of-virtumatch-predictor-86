@@ -19,10 +19,10 @@ describe("Phase AH: Final Executive Security Report", () => {
   // ─── 1. Final test count ───────────────────────────────
 
   describe("final test suite state", () => {
-    it("has at least 31 test files in __tests__ directory", () => {
+    it("has at least 39 test files in __tests__ directory", () => {
       const testsDir = path.join(ROOT, "api", "_lib", "__tests__");
       const files = fs.readdirSync(testsDir).filter((f) => f.endsWith(".test.js"));
-      expect(files.length).toBeGreaterThanOrEqual(31);
+      expect(files.length).toBeGreaterThanOrEqual(39);
     });
 
     it("all expected test files exist", () => {
@@ -44,6 +44,8 @@ describe("Phase AH: Final Executive Security Report", () => {
         "owasp-compliance.test.js", "security-regression.test.js",
         "final-report.test.js",
         "attack-surface.test.js",
+        "sentry-production.test.js",
+        "refresh-token.test.js",
       ];
       expected.forEach((file) => {
         expect(fs.existsSync(path.join(testsDir, file))).toBe(true);
@@ -60,6 +62,8 @@ describe("Phase AH: Final Executive Security Report", () => {
       "db.js", "sentry.js", "secret-rotation.js", "e2e-config.js",
       "data-classification.js", "session-lifecycle.js",
       "auth-matrix.js", "owasp-compliance.js",
+      "attack-surface.js", "gdpr-compliance.js", "token-revocation.js",
+      "hmac-migration.js", "security-score.js",
     ];
 
     modules.forEach((mod) => {

@@ -213,6 +213,19 @@ export const API_AUTH_MATRIX = Object.freeze([
     riskLevel: 'MEDIUM',
     notes: 'GDPR data retention cron; requires CRON_SECRET; deletes expired magic_links (30d) + old predictions (365d)',
   },
+  {
+    endpoint: '/api/refresh-token',
+    methods: ['POST'],
+    authRequired: true,
+    authTypes: [AUTH_TYPES.USER_BEARER],
+    authFallback: null,
+    rateLimited: true,
+    rateLimit: '10 req/60min per IP',
+    corsEnabled: true,
+    isPublic: false,
+    riskLevel: 'LOW',
+    notes: 'Token rotation; requires active Bearer session; old token revoked on refresh; 7-day max session',
+  },
 ]);
 
 /**
