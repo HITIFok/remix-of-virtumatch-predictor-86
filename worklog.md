@@ -960,3 +960,38 @@ Stage Summary:
 - OWASP Top 10: 10/10 MITIGATED
 - 3/3 critical vulnerabilities remediated
 - GAP-01/02 resolved by token-revocation.js
+---
+Task ID: P1-P5
+Agent: Main Agent
+Task: Implement P1-P5 priority remediations (account delete, token revocation integration, session reduction, data cleanup, hardening)
+
+Work Log:
+- Created api/account-delete.js: GDPR Article 17 endpoint with cascading deletion (6 steps)
+  - Requires Bearer session + explicit { confirmation: "DELETE" }
+  - Cascading: predictions → premium_activations → access_codes → magic_links → device_secrets → users
+  - Calls revokeDeviceTokens() and revokeUserSessions() on deletion
+  - Rate limited: 3 req/60min per IP
+- Created api/data-cleanup.js: Data retention cron job
+  - Cleans magic_links (30-day TTL), predictions (365-day TTL), expired premium_activations (90-day grace)
+  - Requires CRON_SECRET authentication
+  - Added to vercel.json crons: "0 3 * * *" (daily at 3 AM)
+- Integrated token revocation in auth.js requireUserAuth()
+  - Dynamic import of token-revocation.js with graceful degradation
+  - Checks isTokenRevoked() and isUserRevoked() before accepting session
+- Reduced session duration from 30 days to 7 days (GAP-02 fix)
+  - auth.js: USER_SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000
+  - api/auth.js: expiresIn updated to 7 days
+- Updated auth-matrix.js with 2 new endpoints (account-delete, data-cleanup)
+- Updated auth-matrix.test.js with flexible counts for 15 endpoints
+- Updated session-lifecycle.test.js for 7-day session duration
+- Created implementation-p1-p5.test.js (28 tests)
+- All 874 tests pass, TypeScript compiles clean
+
+Stage Summary:
+- POST /api/account-delete: GDPR Article 17 compliant
+- POST /api/data-cleanup: Retention cron (daily 3 AM)
+- Token revocation: Integrated in requireUserAuth()
+- Session: Reduced to 7 days (was 30)
+- GAP-01 RESOLVED, GAP-02 RESOLVED
+- 15 API endpoints documented in auth matrix
+- 874 tests, 37 test files

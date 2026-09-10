@@ -236,8 +236,8 @@ describe("Phase AD: Session & Token Lifecycle", () => {
       expect(authLib).toMatch(/7\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
     });
 
-    it("defines 30-day user session duration", () => {
-      expect(authLib).toMatch(/30\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
+    it("defines 7-day user session duration (reduced from 30, GAP-02 fix)", () => {
+      expect(authLib).toMatch(/7\s*\*\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/);
     });
 
     it("supports HMAC_ONLY feature flag", () => {

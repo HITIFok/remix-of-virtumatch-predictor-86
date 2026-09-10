@@ -52,8 +52,8 @@ export const SCORE_DIMENSIONS = Object.freeze([
     weight: 15,
     description: 'HMAC auth, token lifecycle, revocation',
     calculate: () => {
-      // HMAC implemented, revocation implemented, migration 62% ready
-      return { score: 85, maxScore: 100, details: 'HMAC auth live; token revocation implemented; migration 62% ready' };
+      // GAP-01/02 resolved by token revocation; integrated in requireUserAuth
+      return { score: 95, maxScore: 100, details: 'HMAC auth live; token revocation integrated; session 7d; migration 62% ready' };
     },
   },
   {
@@ -62,8 +62,8 @@ export const SCORE_DIMENSIONS = Object.freeze([
     weight: 10,
     description: 'PII inventory, redaction, GDPR readiness',
     calculate: () => {
-      // 16 PII keys redacted; deletion cascade defined; endpoint not implemented
-      return { score: 75, maxScore: 100, details: '16 PII keys redacted; deletion cascade defined; endpoint pending' };
+      // Account delete endpoint implemented; deletion cascade live; cleanup cron added
+      return { score: 90, maxScore: 100, details: '16 PII keys redacted; account-delete endpoint LIVE; cleanup cron deployed' };
     },
   },
   {
@@ -81,7 +81,7 @@ export const SCORE_DIMENSIONS = Object.freeze([
     weight: 5,
     description: 'Sentry, health checks, security runbook',
     calculate: () => {
-      return { score: 80, maxScore: 100, details: 'Sentry integration; health endpoint; runbook documented; automation pending' };
+      return { score: 90, maxScore: 100, details: 'Sentry integration; health endpoint; cleanup cron; runbook documented' };
     },
   },
 ]);

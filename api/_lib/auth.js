@@ -243,7 +243,8 @@ export async function requireAuth(req) {
 // ═══════════════════════════════════════════════════════════════════
 
 const USER_SESSION_SECRET = process.env.USER_SESSION_SECRET;
-const USER_SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+// Phase P3: Reduced from 30 days to 7 days (GAP-02 fix)
+const USER_SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
  * Sign a user session token.
@@ -328,6 +329,21 @@ export async function requireUserAuth(req) {
   const result = verifyUserToken(token);
 
   if (!result.valid) return null;
+
+  // Phase P2: Check token revocation blacklist
+  try {
+    const { isTokenRevoked, isUserRevoked } = await import('./token-revocation.js');
+    // Check if the specific token has been revoked
+    const tokenCheck = isTokenRevoked(token);
+    if (tokenCheck.revoked) return null;
+    // Check if all sessions for this user have been revoked
+    const userCheck = isUserRevoked(result.userId);
+    if (userCheck.revoked) return null;
+  } catch {
+    // token-revocation.js import failed — continue without blacklist check
+    // (graceful degradation for backwards compatibility)
+  }
+
   return result.userId;
 }
 

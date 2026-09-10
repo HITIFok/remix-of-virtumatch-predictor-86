@@ -306,7 +306,7 @@ async function handleVerify(req, res) {
     return res.status(200).json({
       success: true,
       token: sessionToken,
-      expiresIn: 30 * 24 * 60 * 60 * 1000,
+      expiresIn: 7 * 24 * 60 * 60 * 1000, // Phase P3: 7 days (was 30)
       email: link.email,
       ...(premiumResult ? {
         premium: {

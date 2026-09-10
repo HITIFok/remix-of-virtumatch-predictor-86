@@ -187,6 +187,32 @@ export const API_AUTH_MATRIX = Object.freeze([
     riskLevel: 'LOW',
     notes: 'Monitoring/uptime endpoint; returns DB status, memory, version',
   },
+  {
+    endpoint: '/api/account-delete',
+    methods: ['POST'],
+    authRequired: true,
+    authTypes: [AUTH_TYPES.USER_BEARER],
+    authFallback: null,
+    rateLimited: true,
+    rateLimit: '3 req/60min per IP',
+    corsEnabled: true,
+    isPublic: false,
+    riskLevel: 'HIGH',
+    notes: 'GDPR Article 17; requires Bearer session + explicit { confirmation: "DELETE" }; cascading deletion of all PII',
+  },
+  {
+    endpoint: '/api/data-cleanup',
+    methods: ['POST'],
+    authRequired: true,
+    authTypes: [AUTH_TYPES.CRON_KEY],
+    authFallback: null,
+    rateLimited: false,
+    rateLimit: 'None',
+    corsEnabled: true,
+    isPublic: false,
+    riskLevel: 'MEDIUM',
+    notes: 'GDPR data retention cron; requires CRON_SECRET; deletes expired magic_links (30d) + old predictions (365d)',
+  },
 ]);
 
 /**
