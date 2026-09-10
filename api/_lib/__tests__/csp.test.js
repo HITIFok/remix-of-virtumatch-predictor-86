@@ -131,10 +131,11 @@ describe('V-03: CSP — positive security controls', () => {
     expect(imgSrc).toContain('https://lh3.googleusercontent.com');
   });
 
-  it('includes script-src with self and cdn.jsdelivr.net', () => {
+  it('includes script-src with self (CDN removed in Phase AB)', () => {
     const scriptSrc = cspValue.match(/script-src\s+([^;]+)/)?.[1] || '';
     expect(scriptSrc).toContain("'self'");
-    expect(scriptSrc).toContain('https://cdn.jsdelivr.net');
+    // cdn.jsdelivr.net was removed from CSP in Phase AB (supply chain audit)
+    expect(scriptSrc).not.toContain('cdn.jsdelivr.net');
   });
 });
 

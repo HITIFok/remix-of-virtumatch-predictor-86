@@ -63,6 +63,8 @@ export function redactContext(ctx) {
   const PII_KEYS = new Set([
     'email', 'ip', 'ipAddress', 'clientIp',
     'token', 'deviceToken', 'deviceId', 'device_id',
+    'userId', 'user_id',
+    'device_secret', 'deviceSecret',
     'apiKey', 'api_key', 'secret', 'password',
     'authorization', 'cookie',
   ]);
