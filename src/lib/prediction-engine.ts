@@ -738,7 +738,7 @@ function detectSpecialSituations(
   // Alerte D: classement écarté mais cotes serrées
   if (homeStats && awayStats && homeStats.played >= 3 && awayStats.played >= 3) {
     const rankDiff = Math.abs(homeStats.position - awayStats.position);
-    if (rankDiff >= 5 && delta < 0.10) antiTrapAlerts++;
+    if (rankDiff >= _cfg.ANTI_TRAP_RANK_DIFF && delta < _cfg.ANTI_TRAP_DELTA_THRESHOLD) antiTrapAlerts++;
   }
 
   // Alerte E: IA en désaccord avec le favori
@@ -797,8 +797,8 @@ function calculateMultiFactorConfidence(
 
   // Pénalité: cotes très serrées (match incertain)
   const oddsGap = favoriteProb - Math.max(0, 1 - favoriteProb * 2);
-  if (oddsGap < 0.05) confidence -= 10;
-  else if (oddsGap < 0.10) confidence -= 5;
+  if (oddsGap < _cfg.ODDS_GAP_SEVERE) confidence -= 10;
+  else if (oddsGap < _cfg.ODDS_GAP_MODERATE) confidence -= 5;
 
   // Pénalité: pas de données du tout
   if (!hasStatsData && homeForm.formScores.length === 0) {

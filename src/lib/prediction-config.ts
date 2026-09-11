@@ -80,6 +80,11 @@ export interface CoefficientRegistry {
   NEW_SEASON_BOOST: number;
   NEW_SEASON_LAMBDA_MAX: number;
   CONF_FLOOR: number;
+  // Anti-trap & odds gap thresholds
+  ANTI_TRAP_RANK_DIFF: number;
+  ANTI_TRAP_DELTA_THRESHOLD: number;
+  ODDS_GAP_SEVERE: number;
+  ODDS_GAP_MODERATE: number;
 }
 
 // ─── Coefficient Definitions (with bounds and metadata) ──────────────────
@@ -362,6 +367,35 @@ export const COEFFICIENT_DEFINITIONS: Record<string, CoefficientDefinition> = {
     description: 'Absolute confidence floor (never predict below 25% confidence)',
     calibrationStatus: 'heuristic',
     source: 'Even with no data, 25% floor prevents meaningless predictions',
+  },
+  // Anti-trap & odds gap thresholds (extracted from hardcoded values)
+  ANTI_TRAP_RANK_DIFF: {
+    value: 5, min: 3, max: 10,
+    unit: 'positions',
+    description: 'Minimum rank difference to trigger anti-trap alert (rankDiff >= threshold)',
+    calibrationStatus: 'heuristic',
+    source: 'Betting trap detection: large rank gap + close odds = potential trap',
+  },
+  ANTI_TRAP_DELTA_THRESHOLD: {
+    value: 0.10, min: 0.05, max: 0.20,
+    unit: 'probability',
+    description: 'Delta threshold for anti-trap alert (delta < threshold means odds too close)',
+    calibrationStatus: 'heuristic',
+    source: 'If favorite/underdog odds gap is below this, suspicious',
+  },
+  ODDS_GAP_SEVERE: {
+    value: 0.05, min: 0.01, max: 0.10,
+    unit: 'probability',
+    description: 'Severe odds gap threshold (oddsGap < this → -10 confidence)',
+    calibrationStatus: 'heuristic',
+    source: 'Very tight odds = high uncertainty, big confidence penalty',
+  },
+  ODDS_GAP_MODERATE: {
+    value: 0.10, min: 0.05, max: 0.20,
+    unit: 'probability',
+    description: 'Moderate odds gap threshold (oddsGap < this → -5 confidence)',
+    calibrationStatus: 'heuristic',
+    source: 'Moderately tight odds = some uncertainty, smaller penalty',
   },
 };
 
