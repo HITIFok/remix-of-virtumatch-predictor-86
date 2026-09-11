@@ -55,6 +55,17 @@ jobs:
         run: |
           if grep -r 'Access-Control-Allow-Origin.*\*' api/ --include='*.js' 2>/dev/null; then
             echo "WARNING: Wildcard CORS detected in Vercel API routes!"
+            exit 1
           else
             echo "CORS API: OK (no wildcard in Vercel API routes)"
           fi
+
+      - name: Audit — check no hardcoded coefficients in prediction-engine
+        run: |
+          # Verify prediction-engine.ts uses config imports, not hardcoded values
+          ENGINE="src/lib/prediction-engine.ts"
+          if grep -E '(0\.70|0\.20|0\.10)' "$ENGINE" | grep -v '_cfg\.' | grep -v '//'; then
+            echo "FAIL: Hardcoded stat weights found in prediction-engine.ts"
+            exit 1
+          fi
+          echo "Coefficient centralization: OK"
