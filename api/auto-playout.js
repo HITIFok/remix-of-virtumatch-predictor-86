@@ -1,5 +1,6 @@
 // Vercel Serverless Function — auto-playout v5 (ESM)
 // Cron job: fetches playout results at multiple intervals around expectedStart
+// Also handles data-cleanup via x-cron-action: data-cleanup header
 //
 // Strategy (v5 — 5s post-start playout exploit):
 //   Responds 202 Accepted immediately, then runs all work in background
@@ -24,8 +25,9 @@
 // External: cron-job.org calls this endpoint every minute
 
 import crypto from 'crypto';
-import { createSql } from './_lib/db.js';
-import { errorResponse, internalError, unauthorized } from './_lib/errors.js';
+import { setCorsHeaders } from './_lib/cors.js';
+import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
+import { errorResponse, methodNotAllowed, unauthorized, internalError, successResponse } from './_lib/errors.js';
 import { createLogger } from './_lib/logger.js';
 
 const log = createLogger('auto-playout');
@@ -617,6 +619,68 @@ async function runPlayout(expectedCronKey) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// DATA CLEANUP — x-cron-action: data-cleanup
+// GDPR data retention cron: removes expired magic_links (30d) + old predictions (365d)
+// ═══════════════════════════════════════════════════════════════════
+
+const CLEANUP_CRON_SECRET = process.env.CRON_SECRET;
+const cleanupLog = createLogger('data-cleanup');
+
+async function handleDataCleanup(req, res) {
+  // ── Authenticate cron call ──
+  const authHeader = req.headers['authorization'] || '';
+  const providedSecret = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  if (CLEANUP_CRON_SECRET && providedSecret !== CLEANUP_CRON_SECRET) {
+    cleanupLog.warn('Unauthorized cleanup attempt');
+    return unauthorized(res, 'CRON_SECRET required');
+  }
+
+  if (!NEON_DATABASE_URL) {
+    return internalError(res, null, 'Database not configured');
+  }
+
+  const sql = createSql();
+  const results = {};
+
+  try {
+    // ── CLEANUP-01: Expired magic links (30-day retention) ──
+    const magicResult = await sql`
+      DELETE FROM magic_links
+      WHERE created_at < NOW() - INTERVAL '30 days'
+    `;
+    results.magic_links_deleted = Number(magicResult.count);
+
+    // ── CLEANUP-02: Old predictions (365-day retention) ──
+    const predResult = await sql`
+      DELETE FROM predictions
+      WHERE created_at < NOW() - INTERVAL '365 days'
+    `;
+    results.predictions_deleted = Number(predResult.count);
+
+    // ── CLEANUP-03: Expired premium activations (cleanup) ──
+    const premResult = await sql`
+      DELETE FROM premium_activations
+      WHERE expires_at < NOW() - INTERVAL '90 days'
+    `;
+    results.expired_premium_deleted = Number(premResult.count);
+
+    await sql.end();
+
+    cleanupLog.info('Data retention cleanup completed', results);
+
+    return successResponse(res, {
+      message: 'Data retention cleanup completed',
+      ...results,
+    });
+  } catch (err) {
+    cleanupLog.error('Data cleanup failed', undefined, { cause: err });
+    try { await sql.end(); } catch { /* */ }
+    return internalError(res, err, 'Data cleanup failed');
+  }
+}
+
 // ─── Main handler (responds immediately, runs work in background) ──────
 
 export default async function handler(req, res) {
@@ -633,6 +697,11 @@ export default async function handler(req, res) {
     // CRON key is mandatory in ALL cases (cron-job.org, Vercel Cron, manual, dev).
     if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
       return unauthorized(res);
+    }
+
+    // ── Check for data-cleanup action via header ──
+    if (req.headers['x-cron-action'] === 'data-cleanup') {
+      return await handleDataCleanup(req, res);
     }
 
     isManual = req.query.manual === 'true';

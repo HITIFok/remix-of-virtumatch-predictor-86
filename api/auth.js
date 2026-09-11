@@ -1,26 +1,36 @@
 // Vercel Serverless Function — Magic Link Auth (unified)
 // Routes (single function to stay within Vercel Hobby 12-function limit):
-//   POST ?action=request  → Send magic link email (body: { email, purpose, code?, durationDays? })
+//   POST ?action=request       → Send magic link email (body: { email, purpose, code?, durationDays? })
 //   GET  ?action=verify&token=xxx  → Verify magic link from email
 //   POST ?action=verify         → Verify magic link from body { token }
 //   GET  ?action=latest-apk     → Fetch latest GitHub Actions APK artifact URL
+//   POST ?action=refresh-token → Refresh session token (token rotation)
+//   POST ?action=delete-account → GDPR Article 17 account deletion
 
 import crypto from 'crypto';
 import { setCorsHeaders } from './_lib/cors.js';
 import { createSql } from './_lib/db.js';
-import { signUserToken } from './_lib/auth.js';
+import { signUserToken, requireUserAuth } from './_lib/auth.js';
+import { revokeToken, revokeDeviceTokens, revokeUserSessions } from './_lib/token-revocation.js';
 import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
-import { errorResponse, methodNotAllowed, rateLimited, invalidInput, internalError, serviceUnavailable, successResponse } from './_lib/errors.js';
+import { errorResponse, methodNotAllowed, rateLimited, invalidInput, internalError, unauthorized, serviceUnavailable, successResponse } from './_lib/errors.js';
 import { validateEmail, validatePurpose, validateCode, validateDuration, validateDeviceId, sanitizeString } from './_lib/validate.js';
 import { createLogger, redactEmail, redactIp, redactToken } from './_lib/logger.js';
+import { captureException } from './_lib/sentry.js';
 
 const log = createLogger('auth');
 
 // ── Rate limiting: per email AND per IP (shared module, Phase I) ──
 const authEmailLimiter = createRateLimiter('auth-email', { max: 3, windowMs: 15 * 60 * 1000 });
 const authIpLimiter = createRateLimiter('auth-ip', { max: 3, windowMs: 15 * 60 * 1000 });
+
+// ── Rate limiting: refresh-token (10/hour per IP) ──
+const refreshLimiter = createRateLimiter('refresh-token', { max: 10, windowMs: 60 * 60 * 1000 });
+
+// ── Rate limiting: account-delete (3/hour per IP) ──
+const deleteLimiter = createRateLimiter('account-delete', { max: 3, windowMs: 60 * 60 * 1000 });
 
 // ═══════════════════════════════════════════════════════════════════
 // REQUEST — POST ?action=request
@@ -381,11 +391,165 @@ async function handleLatestApk(req, res) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// REFRESH TOKEN — POST ?action=refresh-token
+// Token rotation: revokes old token, issues new one.
+// ═══════════════════════════════════════════════════════════════════
+
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function handleRefreshToken(req, res) {
+  // ── Rate limit ──
+  const ip = getClientIp(req);
+  if (!refreshLimiter.check(ip).allowed) {
+    log.warn('Rate limited', { ip });
+    return rateLimited(res, 3600);
+  }
+
+  // ── Authenticate with current session token ──
+  const authHeader = req.headers['authorization'] || '';
+  const currentToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+
+  const userId = await requireUserAuth(req);
+  if (!userId) {
+    return unauthorized(res, 'Session authentifiée requise (Bearer token)');
+  }
+
+  // ── Rotate token ──
+  try {
+    // 1. Revoke the old token (single-use rotation — prevents replay)
+    revokeToken(currentToken, 'TOKEN_REFRESH');
+
+    // 2. Issue a new token
+    const newToken = signUserToken(userId);
+
+    // 3. Log the refresh event
+    log.info('Token refreshed', { userId });
+
+    return successResponse(res, {
+      token: newToken,
+      expiresIn: Math.floor(SEVEN_DAYS_MS / 1000), // 604800 seconds
+      message: 'Token refreshed successfully',
+    });
+  } catch (err) {
+    log.error('Token refresh failed', { userId }, { cause: err });
+    captureException(err, { module: 'refresh-token' });
+    return internalError(res, err, 'Erreur lors du rafraîchissement du token');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DELETE ACCOUNT — POST ?action=delete-account
+// GDPR Article 17: Cascading deletion of all user data.
+// ═══════════════════════════════════════════════════════════════════
+
+async function handleDeleteAccount(req, res) {
+  // ── Rate limit ──
+  const ip = getClientIp(req);
+  if (!deleteLimiter.check(ip).allowed) {
+    log.warn('Rate limited', { ip });
+    return rateLimited(res, 3600);
+  }
+
+  // ── Authenticate via Bearer session token ──
+  const userId = await requireUserAuth(req);
+  if (!userId) {
+    return unauthorized(res, 'Session authentifiée requise (Bearer token)');
+  }
+
+  // ── Parse body ──
+  let body;
+  try {
+    body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+  } catch {
+    return invalidInput(res, 'JSON invalide');
+  }
+
+  // ── Require explicit confirmation ──
+  if (body.confirmation !== 'DELETE') {
+    return invalidInput(res, 'Confirmation requise: { confirmation: "DELETE" }', 'confirmation');
+  }
+
+  // ── Perform cascading deletion ──
+  const sql = createSql();
+  const deletionResults = {};
+
+  try {
+    // Look up user email and device_id for the cascade
+    const [user] = await sql`SELECT email FROM users WHERE id = ${userId}`;
+    if (!user) {
+      await sql.end();
+      return invalidInput(res, 'Utilisateur non trouvé');
+    }
+    const email = user.email;
+
+    // Find device_id(s) associated with this user
+    const devices = await sql`
+      SELECT device_id FROM device_secrets
+      WHERE device_id IN (
+        SELECT DISTINCT device_id FROM predictions WHERE user_id = ${userId}
+        UNION
+        SELECT DISTINCT device_id FROM premium_activations WHERE user_id = ${userId}
+      )
+    `;
+    const deviceIds = devices.map(d => d.device_id);
+
+    // Step 1: Delete predictions
+    const predResult = await sql`DELETE FROM predictions WHERE user_id = ${userId}`;
+    deletionResults.predictions = Number(predResult.count);
+
+    // Step 2: Delete premium activations
+    const premResult = await sql`DELETE FROM premium_activations WHERE user_id = ${userId}`;
+    deletionResults.premium_activations = Number(premResult.count);
+
+    // Step 3: Dereference device from access codes
+    for (const deviceId of deviceIds) {
+      await sql`UPDATE access_codes SET used_by_device = NULL WHERE used_by_device = ${deviceId}`;
+    }
+
+    // Step 4: Delete magic links
+    const magicResult = await sql`DELETE FROM magic_links WHERE email = ${email}`;
+    deletionResults.magic_links = Number(magicResult.count);
+
+    // Step 5: Delete device secrets (invalidates all HMAC tokens)
+    for (const deviceId of deviceIds) {
+      await sql`DELETE FROM device_secrets WHERE device_id = ${deviceId}`;
+      // Revoke device tokens in blacklist
+      revokeDeviceTokens(deviceId, 'USER_REQUEST');
+    }
+
+    // Step 6: Revoke all user sessions
+    revokeUserSessions(userId, 'USER_REQUEST');
+
+    // Step 7: Delete user record (parent table — last)
+    await sql`DELETE FROM users WHERE id = ${userId}`;
+    deletionResults.users = 1;
+
+    await sql.end();
+
+    log.info('Account deleted (GDPR Article 17)', {
+      userId,
+      devicesDeleted: deviceIds.length,
+      predictionsDeleted: deletionResults.predictions,
+    });
+
+    return successResponse(res, {
+      message: 'Compte supprimé définitivement. Toutes les données personnelles ont été effacées.',
+      deleted: deletionResults,
+      devicesRevoked: deviceIds.length,
+    });
+  } catch (err) {
+    log.error('Account deletion failed', { userId }, { cause: err });
+    try { await sql.end(); } catch { /* */ }
+    return internalError(res, err, 'Erreur lors de la suppression du compte');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Main handler — dispatch by action query param
 // ═══════════════════════════════════════════════════════════════════
 
 export default async function handler(req, res) {
-  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type');
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(204).end('');
 
@@ -405,6 +569,16 @@ export default async function handler(req, res) {
     // GET ?action=latest-apk
     if (req.method === 'GET' && action === 'latest-apk') {
       return await handleLatestApk(req, res);
+    }
+
+    // POST ?action=refresh-token
+    if (req.method === 'POST' && action === 'refresh-token') {
+      return await handleRefreshToken(req, res);
+    }
+
+    // POST ?action=delete-account
+    if (req.method === 'POST' && action === 'delete-account') {
+      return await handleDeleteAccount(req, res);
     }
 
     return methodNotAllowed(res, ['GET', 'POST']);

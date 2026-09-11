@@ -97,13 +97,13 @@ describe('Phase AP: Sentry Event Filtering', () => {
     expect(SENTRY_SRC).toContain('ETIMEDOUT');
   });
 
-  it('filters health check transactions from performance', () => {
+  it('filters health check transactions from performance (via verify-predictions)', () => {
     expect(SENTRY_SRC).toContain('beforeSendTransaction');
-    expect(SENTRY_SRC).toContain('/api/health');
+    expect(SENTRY_SRC).toContain('action=health');
   });
 
-  it('filters data cleanup transactions (cron spam)', () => {
-    expect(SENTRY_SRC).toContain('/api/data-cleanup');
+  it('filters data cleanup transactions (via auto-playout x-cron-action)', () => {
+    expect(SENTRY_SRC).toContain('data-cleanup');
   });
 });
 

@@ -101,8 +101,8 @@ export async function initSentry() {
       // Filter performance transactions
       beforeSendTransaction(event) {
         // Don't track health check or data-cleanup spam
-        if (event.transaction?.startsWith('/api/health')) return null;
-        if (event.transaction?.startsWith('/api/data-cleanup')) return null;
+        if (event.transaction?.startsWith('/api/verify-predictions') && event.request?.url?.includes('action=health')) return null;
+        if (event.transaction?.startsWith('/api/auto-playout') && event.request?.headers?.['x-cron-action'] === 'data-cleanup') return null;
         return event;
       },
 

@@ -1,7 +1,7 @@
 // Phase S — Health Check & Monitoring Tests
 //
 // Tests verify:
-//   1. /api/health endpoint exists
+//   1. Health check action exists in verify-predictions.js (GET ?action=health)
 //   2. Health check returns proper structure
 //   3. Coefficient validation at startup
 //   4. Memory usage tracking
@@ -13,14 +13,20 @@ import { resolve } from 'path';
 
 const cwd = process.cwd();
 
-const healthSource = readFileSync(resolve(cwd, 'api/health.js'), 'utf8');
+// Health check is now merged into verify-predictions.js as GET ?action=health
+const healthSource = readFileSync(resolve(cwd, 'api/verify-predictions.js'), 'utf8');
 
 // ── Health Endpoint Structure ────────────────────────────────────────────
 
-describe('Phase S: /api/health endpoint', () => {
+describe('Phase S: /api/health endpoint (via verify-predictions.js)', () => {
 
-  it('health.js exists in api/ directory', () => {
-    expect(existsSync(resolve(cwd, 'api/health.js'))).toBe(true);
+  it('health action exists in verify-predictions.js', () => {
+    expect(healthSource).toContain('health');
+    expect(healthSource).toContain('handleHealthCheck');
+  });
+
+  it('standalone health.js no longer exists', () => {
+    expect(existsSync(resolve(cwd, 'api/health.js'))).toBe(false);
   });
 
   it('returns 200 for healthy, 503 for degraded', () => {
@@ -46,11 +52,6 @@ describe('Phase S: /api/health endpoint', () => {
   it('uses setCorsHeaders for CORS', () => {
     expect(healthSource).toContain("from './_lib/cors.js'");
     expect(healthSource).toContain('setCorsHeaders');
-  });
-
-  it('only allows GET method', () => {
-    expect(healthSource).toContain("'GET, OPTIONS'");
-    expect(healthSource).toContain('405');
   });
 });
 

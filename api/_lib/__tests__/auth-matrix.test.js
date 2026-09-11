@@ -2,7 +2,7 @@
  * Phase AE — API Authorization Matrix Tests
  *
  * Validates:
- * - All 13 API endpoints documented
+ * - All 12 API endpoints documented (consolidated from 16)
  * - Auth requirements for each endpoint
  * - Public vs authenticated endpoint classification
  * - Rate limiting coverage
@@ -33,8 +33,8 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 1. Matrix completeness ────────────────────────────
 
   describe("matrix completeness", () => {
-    it("documents all 16 API endpoints", () => {
-      expect(API_AUTH_MATRIX.length).toBe(16);
+    it("documents all 12 API endpoints", () => {
+      expect(API_AUTH_MATRIX.length).toBe(12);
     });
 
     it("every entry has required fields", () => {
@@ -71,15 +71,14 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(authed.length).toBeGreaterThanOrEqual(5);
     });
 
-    it("5 endpoints are fully public", () => {
+    it("4 endpoints are fully public", () => {
       const public_ = getPublicEndpoints();
-      expect(public_.length).toBeGreaterThanOrEqual(5);
+      expect(public_.length).toBeGreaterThanOrEqual(4);
       const paths = public_.map((e) => e.endpoint);
       expect(paths).toContain("/api/auth");
       expect(paths).toContain("/api/device-register");
       expect(paths).toContain("/api/matches");
       expect(paths).toContain("/api/fetch-live");
-      expect(paths).toContain("/api/health");
     });
 
     it("predictions requires User Bearer or Device HMAC", () => {
@@ -109,19 +108,24 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(verify.authTypes).toContain(AUTH_TYPES.DEVICE_HMAC);
       expect(verify.authTypes).toContain(AUTH_TYPES.CRON_KEY);
     });
+
+    it("auth endpoint supports User Bearer for refresh-token and delete-account actions", () => {
+      const auth = getEndpointInfo("/api/auth");
+      expect(auth.authTypes).toContain(AUTH_TYPES.USER_BEARER);
+    });
   });
 
   // ─── 3. Rate limiting coverage ─────────────────────────
 
   describe("rate limiting coverage", () => {
-    it("at least 6 endpoints have explicit rate limiting", () => {
+    it("at least 5 endpoints have explicit rate limiting", () => {
       const rated = API_AUTH_MATRIX.filter((e) => e.rateLimited);
-      expect(rated.length).toBeGreaterThanOrEqual(6);
+      expect(rated.length).toBeGreaterThanOrEqual(5);
     });
 
     it("endpoints without explicit rate limiting rely on middleware", () => {
       const unrated = getUnratedEndpoints();
-      expect(unrated.length).toBeGreaterThanOrEqual(8);
+      expect(unrated.length).toBeGreaterThanOrEqual(5);
     });
 
     it("public endpoints with sensitive actions have rate limiting", () => {
@@ -148,7 +152,7 @@ describe("Phase AE: API Authorization Matrix", () => {
   describe("risk levels", () => {
     it("majority of endpoints are LOW risk", () => {
       const low = getEndpointsByRisk("LOW");
-      expect(low.length).toBeGreaterThan(7);
+      expect(low.length).toBeGreaterThan(5);
     });
 
     it("MEDIUM risk endpoints are documented", () => {
@@ -163,7 +167,8 @@ describe("Phase AE: API Authorization Matrix", () => {
     it("HIGH risk endpoints are documented and controlled", () => {
       const high = getEndpointsByRisk("HIGH");
       const critical = getEndpointsByRisk("CRITICAL");
-      // account-delete is HIGH risk but requires auth + confirmation
+      // account-delete is now merged into auth.js as action=delete-account
+      // HIGH risk is tracked in the auth entry notes
       expect(critical.length).toBe(0);
       for (const h of high) {
         expect(h.authRequired).toBe(true);
@@ -183,7 +188,7 @@ describe("Phase AE: API Authorization Matrix", () => {
   describe("CORS consistency", () => {
     it("majority of endpoints have CORS enabled", () => {
       const withCors = API_AUTH_MATRIX.filter((e) => e.corsEnabled);
-      expect(withCors.length).toBeGreaterThanOrEqual(13);
+      expect(withCors.length).toBeGreaterThanOrEqual(10);
     });
 
     it("auto-playout is the only endpoint without CORS (cron-only)", () => {
@@ -196,11 +201,11 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 6. Auth type distribution ─────────────────────────
 
   describe("auth type distribution", () => {
-    it("User Bearer is used in at least 5 endpoints", () => {
+    it("User Bearer is used in at least 4 endpoints", () => {
       const userBearer = API_AUTH_MATRIX.filter(
         (e) => e.authTypes.includes(AUTH_TYPES.USER_BEARER)
       );
-      expect(userBearer.length).toBeGreaterThanOrEqual(5);
+      expect(userBearer.length).toBeGreaterThanOrEqual(4);
     });
 
     it("Device HMAC is used in 4 endpoints", () => {
@@ -217,11 +222,11 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(admin.length).toBe(2);
     });
 
-    it("Cron Key is used in at least 3 endpoints", () => {
+    it("Cron Key is used in at least 2 endpoints", () => {
       const cron = API_AUTH_MATRIX.filter(
         (e) => e.authTypes.includes(AUTH_TYPES.CRON_KEY)
       );
-      expect(cron.length).toBeGreaterThanOrEqual(3);
+      expect(cron.length).toBeGreaterThanOrEqual(2);
     });
 
     it("Scraper Key is used in 1 endpoint", () => {
@@ -262,7 +267,7 @@ describe("Phase AE: API Authorization Matrix", () => {
       const safePublicEndpoints = publicEndpoints.filter(
         (e) => e.endpoint !== "/api/auth" && e.endpoint !== "/api/device-register"
       );
-      // matches, fetch-live, health should only have GET
+      // matches, fetch-live should only have GET (fetch-live has POST for mode changes)
       safePublicEndpoints.forEach((e) => {
         if (e.endpoint === "/api/fetch-live") return; // fetch-live has POST for mode changes
         expect(e.methods).toEqual(["GET"]);
@@ -284,6 +289,41 @@ describe("Phase AE: API Authorization Matrix", () => {
       );
       expect(withDelete.length).toBe(1);
       expect(withDelete[0].endpoint).toBe("/api/predictions");
+    });
+  });
+
+  // ─── 9. Consolidated endpoint action routing ────────────
+
+  describe("consolidated endpoint action routing", () => {
+    it("auth.js supports refresh-token action", () => {
+      const src = fs.readFileSync(path.join(apiDir, "auth.js"), "utf-8");
+      expect(src).toContain("refresh-token");
+      expect(src).toContain("handleRefreshToken");
+    });
+
+    it("auth.js supports delete-account action", () => {
+      const src = fs.readFileSync(path.join(apiDir, "auth.js"), "utf-8");
+      expect(src).toContain("delete-account");
+      expect(src).toContain("handleDeleteAccount");
+    });
+
+    it("auto-playout.js supports data-cleanup action via header", () => {
+      const src = fs.readFileSync(path.join(apiDir, "auto-playout.js"), "utf-8");
+      expect(src).toContain("data-cleanup");
+      expect(src).toContain("handleDataCleanup");
+    });
+
+    it("verify-predictions.js supports health action", () => {
+      const src = fs.readFileSync(path.join(apiDir, "verify-predictions.js"), "utf-8");
+      expect(src).toContain("health");
+      expect(src).toContain("handleHealthCheck");
+    });
+
+    it("standalone endpoint files no longer exist", () => {
+      expect(fs.existsSync(path.join(apiDir, "refresh-token.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "account-delete.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "data-cleanup.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "health.js"))).toBe(false);
     });
   });
 });

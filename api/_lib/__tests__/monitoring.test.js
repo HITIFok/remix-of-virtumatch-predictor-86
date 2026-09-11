@@ -1,5 +1,6 @@
 // Phase Y — Monitoring & Error Tracking Tests
 // Verifies Sentry integration and health monitoring
+// Updated: health check now in verify-predictions.js as GET ?action=health
 
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
@@ -43,17 +44,18 @@ describe('Phase Y: Monitoring & Error Tracking', () => {
   });
 
   describe('health endpoint monitoring', () => {
-    it('health.js exists', () => {
-      expect(fs.existsSync(path.join(LIB_DIR, '..', 'health.js'))).toBe(true);
+    it('health action exists in verify-predictions.js', () => {
+      const src = fs.readFileSync(path.join(LIB_DIR, '..', 'verify-predictions.js'), 'utf8');
+      expect(src).toContain('handleHealthCheck');
     });
 
-    it('health.js returns 503 for degraded state', () => {
-      const src = fs.readFileSync(path.join(LIB_DIR, '..', 'health.js'), 'utf8');
+    it('health check returns 503 for degraded state', () => {
+      const src = fs.readFileSync(path.join(LIB_DIR, '..', 'verify-predictions.js'), 'utf8');
       expect(src).toContain('503');
     });
 
-    it('health.js checks database connectivity', () => {
-      const src = fs.readFileSync(path.join(LIB_DIR, '..', 'health.js'), 'utf8');
+    it('health check verifies database connectivity', () => {
+      const src = fs.readFileSync(path.join(LIB_DIR, '..', 'verify-predictions.js'), 'utf8');
       expect(src).toMatch(/SELECT 1|database/i);
     });
   });

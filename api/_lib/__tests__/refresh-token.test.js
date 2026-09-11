@@ -1,24 +1,25 @@
 // Phase AQ (P7) — Refresh Token Endpoint Tests
 // Validates token rotation, rate limiting, auth requirements,
 // revocation of old token, and security properties.
+// Now merged into auth.js as POST ?action=refresh-token
 
 import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
-const ENDPOINT_SRC = fs.readFileSync(path.join(ROOT, 'api', 'refresh-token.js'), 'utf8');
+const ENDPOINT_SRC = fs.readFileSync(path.join(ROOT, 'api', 'auth.js'), 'utf8');
 
 // ─── Endpoint Structure ───────────────────────────────────────────────────
 
 describe('Phase AQ: Refresh Token Endpoint Structure', () => {
-  it('api/refresh-token.js exists', () => {
-    expect(fs.existsSync(path.join(ROOT, 'api', 'refresh-token.js'))).toBe(true);
+  it('refresh-token action exists in auth.js', () => {
+    expect(fs.existsSync(path.join(ROOT, 'api', 'auth.js'))).toBe(true);
+    expect(ENDPOINT_SRC).toContain('refresh-token');
   });
 
-  it('accepts only POST method', () => {
-    expect(ENDPOINT_SRC).toContain('methodNotAllowed');
-    expect(ENDPOINT_SRC).toContain("['POST']");
+  it('standalone refresh-token.js no longer exists', () => {
+    expect(fs.existsSync(path.join(ROOT, 'api', 'refresh-token.js'))).toBe(false);
   });
 
   it('handles CORS preflight (OPTIONS)', () => {
@@ -98,7 +99,6 @@ describe('Phase AQ: Refresh Token Rate Limiting', () => {
 
 describe('Phase AQ: Refresh Token Error Handling', () => {
   it('uses shared error factories', () => {
-    expect(ENDPOINT_SRC).toContain('methodNotAllowed');
     expect(ENDPOINT_SRC).toContain('unauthorized');
     expect(ENDPOINT_SRC).toContain('internalError');
     expect(ENDPOINT_SRC).toContain('successResponse');
@@ -106,12 +106,10 @@ describe('Phase AQ: Refresh Token Error Handling', () => {
 
   it('uses structured logger', () => {
     expect(ENDPOINT_SRC).toContain('createLogger');
-    expect(ENDPOINT_SRC).toContain('refresh-token');
   });
 
   it('integrates Sentry for error capture', () => {
     expect(ENDPOINT_SRC).toContain('captureException');
-    expect(ENDPOINT_SRC).toContain('refresh-token');
   });
 
   it('logs refresh success with userId', () => {
@@ -128,9 +126,14 @@ describe('Phase AQ: Refresh Token Error Handling', () => {
 
 describe('Phase AQ: Refresh Token Security Properties', () => {
   it('old token is revoked BEFORE new token is issued', () => {
-    // Find positions of revokeToken and signUserToken in source
-    const revokePos = ENDPOINT_SRC.indexOf('revokeToken(currentToken');
-    const signPos = ENDPOINT_SRC.indexOf('signUserToken(userId)');
+    // Find the handleRefreshToken function and check order within it
+    const handlerStart = ENDPOINT_SRC.indexOf('async function handleRefreshToken');
+    const handlerEnd = ENDPOINT_SRC.indexOf('async function handleDeleteAccount');
+    expect(handlerStart).toBeGreaterThan(-1);
+    expect(handlerEnd).toBeGreaterThan(-1);
+    const handlerSrc = ENDPOINT_SRC.substring(handlerStart, handlerEnd);
+    const revokePos = handlerSrc.indexOf('revokeToken(currentToken');
+    const signPos = handlerSrc.indexOf('signUserToken(userId)');
     expect(revokePos).toBeGreaterThan(-1);
     expect(signPos).toBeGreaterThan(-1);
     expect(revokePos).toBeLessThan(signPos);

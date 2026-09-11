@@ -19,7 +19,7 @@
       "schedule": "0 6 * * *"
     },
     {
-      "path": "/api/data-cleanup",
+      "path": "/api/auto-playout",
       "schedule": "0 3 * * *"
     }
   ],

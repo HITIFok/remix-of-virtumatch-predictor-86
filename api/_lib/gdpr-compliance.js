@@ -18,7 +18,7 @@ export const LEGAL_BASIS = Object.freeze({
 export const DATA_SUBJECT_RIGHTS = Object.freeze([
   { article: 15, right: 'Access', description: 'Right to obtain confirmation of processing and access to personal data', implemented: true, endpoint: 'GET /api/auth (user session)' },
   { article: 16, right: 'Rectification', description: 'Right to correct inaccurate personal data', implemented: false, endpoint: 'NOT_IMPLEMENTED' },
-  { article: 17, right: 'Erasure', description: 'Right to be forgotten — delete all personal data', implemented: false, endpoint: 'POST /api/account-delete' },
+  { article: 17, right: 'Erasure', description: 'Right to be forgotten — delete all personal data', implemented: false, endpoint: 'POST /api/auth?action=delete-account' },
   { article: 18, right: 'Restriction', description: 'Right to restrict processing of personal data', implemented: false, endpoint: 'NOT_IMPLEMENTED' },
   { article: 20, right: 'Portability', description: 'Right to receive personal data in machine-readable format', implemented: false, endpoint: 'NOT_IMPLEMENTED' },
   { article: 21, right: 'Objection', description: 'Right to object to processing based on legitimate interest', implemented: true, endpoint: 'Device registration is opt-in' },
@@ -165,7 +165,7 @@ export function getGdprGaps() {
     type: 'ENDPOINT',
     article: 17,
     right: 'Erasure',
-    description: 'POST /api/account-delete endpoint not implemented',
+    description: 'POST /api/auth?action=delete-account endpoint not implemented',
     severity: 'HIGH',
   });
 
