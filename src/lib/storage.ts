@@ -233,6 +233,25 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
       headers: authHeaders,
     });
 
+    // 401 Unauthorized with Bearer token → session likely expired on server side
+    // (e.g. USER_SESSION_SECRET rotated, or token expired with clock skew).
+    // Clear the stale user session so next call uses device auth instead.
+    if (res.status === 401 && userSession) {
+      console.warn('[verifyPremium] 401 with Bearer token — clearing stale user session');
+      clearUserSession();
+      // Retry with device auth headers (no Bearer token)
+      const retryHeaders = await getAuthHeaders();
+      const retryRes = await fetch(url, { method: 'GET', headers: retryHeaders });
+      if (!retryRes.ok) return 'offline';
+      const retryData = await retryRes.json();
+      if (!retryData.premium) { clearAccess(); return false; }
+      if (retryData.expires_at) {
+        const access = getAccess();
+        setAccess(access ? access.code : 'server-restore', 0, retryData.expires_at);
+      }
+      return true;
+    }
+
     // Server error (500, 502, etc.) → don't clear, treat as offline
     if (!res.ok) return 'offline';
 

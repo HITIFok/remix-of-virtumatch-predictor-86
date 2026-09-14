@@ -98,6 +98,9 @@ export function usePredictions() {
       const url = `${config.api.predictions}?device_id=${encodeURIComponent(deviceId)}`;
       const res = await fetch(url, { headers: authHeaders });
       if (!res.ok) {
+        if (res.status === 401) {
+          console.warn('[usePredictions] 401 Unauthorized — auth headers sent:', Object.keys(authHeaders).join(', '));
+        }
         setPredictions([]);
         setStats(null);
         return;

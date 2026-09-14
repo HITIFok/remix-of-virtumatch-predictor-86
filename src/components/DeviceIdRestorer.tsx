@@ -28,21 +28,27 @@ export function DeviceIdRestorer({ children, onRestored }: DeviceIdRestorerProps
       if (lsId && lsId.startsWith('dev-')) {
         // localStorage already has device_id — good to go
         getDeviceId(); // warm the cache
-        // Pre-register for HMAC auth (non-blocking for UX)
-        initDeviceAuth().catch(() => {});
-        setReady(true);
-        return;
+      } else {
+        // localStorage is empty — try to restore from IndexedDB
+        // This MUST complete before any API calls happen
+        const restoredId = await restoreDeviceId();
+        if (restoredId) {
+          console.log(`[DeviceIdRestorer] Restored device ID, reloading data...`);
+          onRestored?.();
+        }
       }
 
-      // localStorage is empty — try to restore from IndexedDB
-      // This MUST complete before any API calls happen
-      const restoredId = await restoreDeviceId();
-      if (restoredId) {
-        console.log(`[DeviceIdRestorer] Restored device ID, reloading data...`);
-        onRestored?.();
+      // CRITICAL: Await DeviceAuth initialization before rendering children.
+      // Previously this was fire-and-forget (.catch(() => {})), which caused
+      // a race condition: components would mount and make API calls before
+      // DeviceAuth was ready, resulting in missing auth headers → 401 errors.
+      try {
+        await initDeviceAuth();
+        console.log('[DeviceIdRestorer] DeviceAuth initialized successfully');
+      } catch (err) {
+        // Non-fatal: components will fall back to x-device-id header
+        console.warn('[DeviceIdRestorer] DeviceAuth init failed (will use fallback):', err);
       }
-      // Pre-register for HMAC auth
-      initDeviceAuth().catch(() => {});
     } catch (err) {
       console.warn('[DeviceIdRestorer] Restore failed:', err);
     } finally {

@@ -315,19 +315,24 @@ export async function restoreDeviceId(): Promise<string | null> {
  * Usage: fetch(url, { headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' } })
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
+  const deviceId = getDeviceId();
+
   // Priority 1: User session (email-based magic link) — Bearer token
+  // IMPORTANT: Always include x-device-id as fallback so the server can
+  // fall through to device auth if the Bearer token is expired/invalid.
+  // Without x-device-id, a failed Bearer token → no fallback → 401.
   try {
     const { getUserSession } = await import('./storage');
     const userSession = getUserSession();
     if (userSession) {
       return {
         'Authorization': `Bearer ${userSession.token}`,
+        'x-device-id': deviceId, // Fallback for server when Bearer fails
       };
     }
   } catch { /* storage import failed, continue with device auth */ }
 
   // Priority 2: Device auth (HMAC token) — V-01 FIX: always attempt HMAC first
-  const deviceId = getDeviceId();
   const secret = await ensureRegistered(deviceId);
 
   if (secret) {
