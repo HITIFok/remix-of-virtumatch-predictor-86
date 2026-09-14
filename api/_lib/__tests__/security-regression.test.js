@@ -38,8 +38,9 @@ describe("Phase AG: Security Regression Suite", () => {
       expect(scriptSrc).not.toContain("unsafe-inline");
     });
 
-    it("CSP has SHA-256 hash for inline script", () => {
-      expect(csp).toMatch(/sha256-[A-Za-z0-9+/=]+/);
+    it("CSP has NO sha256 hashes (inline scripts externalized, style uses unsafe-inline)", () => {
+      // Hashes in style-src would disable 'unsafe-inline' per CSP spec
+      expect(csp).not.toMatch(/sha256-[A-Za-z0-9+/=]+/);
     });
 
     it("CSP has frame-ancestors none (clickjacking protection)", () => {

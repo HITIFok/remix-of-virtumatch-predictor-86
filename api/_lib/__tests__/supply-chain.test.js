@@ -54,8 +54,8 @@ describe("Phase AB: Supply Chain & Subresource Integrity", () => {
       expect(scriptSrc).toContain("'self'");
     });
 
-    it("CSP still contains SHA-256 hash for inline scripts", () => {
-      expect(cspHeader).toMatch(/sha256-[A-Za-z0-9+/=]+/);
+    it("CSP has no SHA-256 hashes (inline scripts externalized, hash would disable unsafe-inline in style-src)", () => {
+      expect(cspHeader).not.toMatch(/sha256-[A-Za-z0-9+/=]+/);
     });
   });
 

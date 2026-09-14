@@ -4,7 +4,7 @@
 //   - 'unsafe-inline' is REMOVED from script-src (XSS protection effective)
 //   - style-src allows 'unsafe-inline' (required by React/Radix UI inline styles)
 //   - Inline scripts moved to external files (loading-handler.js)
-//   - style-src retains SHA-256 hash for the <style> block in index.html
+//   - style-src has 'unsafe-inline' without hash (hash would disable unsafe-inline per CSP spec)
 //   - Inline style attributes in index.html are converted to CSS classes
 
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -50,9 +50,11 @@ describe('V-03 fix: unsafe-inline removed from CSP', () => {
     expect(scriptSrc).not.toContain("'unsafe-inline'");
   });
 
-  it('style-src contains SHA-256 hash for inline style', () => {
+  it('style-src has unsafe-inline WITHOUT hash (hash disables unsafe-inline per spec)', () => {
     const styleSrc = cspValue.match(/style-src\s+([^;]+)/)?.[1] || '';
-    expect(styleSrc).toContain("'sha256-");
+    expect(styleSrc).toContain("'unsafe-inline'");
+    // No hash in style-src — presence of hash would make 'unsafe-inline' a no-op
+    expect(styleSrc).not.toContain("'sha256-");
   });
 
   it('no inline <script> blocks in index.html (moved to external files)', () => {
@@ -62,10 +64,10 @@ describe('V-03 fix: unsafe-inline removed from CSP', () => {
     expect(nonEmptyInline.length).toBe(0);
   });
 
-  it('specific style hash matches inline <style> in index.html', () => {
+  it('style-src contains unsafe-inline for React/Radix UI dynamic styles', () => {
     const styleSrc = cspValue.match(/style-src\s+([^;]+)/)?.[1] || '';
-    // Must contain the exact hash for the loading/error CSS
-    expect(styleSrc).toContain("'sha256-QjTmAxQeAK1KZTv/r/v9krpmyGlvW5iHfCan6CkO3gQ='");
+    expect(styleSrc).toContain("'unsafe-inline'");
+    expect(styleSrc).toContain("'self'");
   });
 });
 
