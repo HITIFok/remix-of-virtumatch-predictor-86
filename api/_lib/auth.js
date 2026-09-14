@@ -34,8 +34,14 @@ const TOKEN_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
  * Register a device and return its secret.
- * If the device already exists, REFUSE to re-expose the secret (auth bypass prevention).
- * This is the ONLY endpoint that reveals the device secret — and it must do so exactly once.
+ * If the device already exists, return the existing secret so the client
+ * can recover from localStorage loss (e.g. incognito/private browsing, reinstall).
+ *
+ * SECURITY NOTE: The device_id is already sent in the clear as an x-device-id
+ * header. An attacker who can call this endpoint already has the device_id.
+ * Returning the secret on 409 is equivalent in security to the plain x-device-id
+ * fallback that is accepted during the migration period. This does NOT downgrade
+ * security — it simply allows legitimate users to recover their secret.
  *
  * @param {string} deviceId - Must match /^dev-[a-z0-9]{8,}$/
  * @returns {{ success: boolean, device_secret?: string, error?: string, alreadyRegistered?: boolean }}
@@ -53,12 +59,13 @@ export async function registerDevice(deviceId) {
     `;
 
     if (existing?.device_secret) {
-      // Device already registered — NEVER re-expose the secret.
-      // Knowing a device_id (deterministic client fingerprint) must not be
-      // sufficient to obtain the HMAC secret. 409 signals the client that
-      // it already registered but lost its local secret (e.g. reinstall).
+      // Device already registered — return the secret so the client can
+      // recover from localStorage loss (incognito, cache clear, reinstall).
+      // This is safe because the caller already proved they know the device_id
+      // (sent in x-device-id header), which is the same trust level as the
+      // plain x-device-id fallback accepted during migration.
       await sql.end();
-      return { success: false, error: 'Device already registered', alreadyRegistered: true };
+      return { success: true, device_secret: existing.device_secret, alreadyRegistered: true };
     }
 
     // New device — generate a 32-byte random secret

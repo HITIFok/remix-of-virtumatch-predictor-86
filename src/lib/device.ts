@@ -110,6 +110,9 @@ export async function readDeviceIdFromIDB(): Promise<string | null> {
 let cachedId: string | null = null;
 let cachedSecret: string | null = null;
 let registrationPromise: Promise<string | null> | null = null;
+// Track devices that returned 409 (already registered without local secret)
+// so we don't keep retrying in a loop (e.g. incognito/private browsing)
+let secretLostDeviceIds: Set<string> = new Set();
 
 // ─── HMAC Token Generation (Web Crypto API — async) ────────────────────────
 
@@ -170,6 +173,13 @@ async function ensureRegistered(deviceId: string): Promise<string | null> {
     }
   } catch { /* ignore */ }
 
+  // Check if this device previously returned 409 (already registered, secret lost)
+  // This happens in incognito/private browsing where localStorage is empty
+  if (secretLostDeviceIds.has(deviceId)) {
+    // Don't retry — just use the plain x-device-id fallback
+    return null;
+  }
+
   // No secret found — register with server
   console.log('[DeviceAuth] No secret found, registering device...');
   try {
@@ -178,6 +188,29 @@ async function ensureRegistered(deviceId: string): Promise<string | null> {
       headers: { 'Content-Type': 'application/json', 'x-device-id': deviceId },
       body: JSON.stringify({ device_id: deviceId }),
     });
+
+    if (res.status === 409) {
+      // Device already registered but we don't have the secret locally.
+      // This is common in incognito/private browsing.
+      // The server may return the secret in the 409 response body.
+      try {
+        const data = await res.json();
+        if (data?.device_secret) {
+          // Server returned the secret — store it
+          const secret = data.device_secret;
+          cachedSecret = secret;
+          try { localStorage.setItem(SECRET_KEY, secret); } catch { /* */ }
+          saveToIDB(IDB_KEY_SECRET, secret);
+          console.log('[DeviceAuth] Secret recovered from 409 response');
+          return secret;
+        }
+      } catch { /* response body parse failed */ }
+
+      // No secret in response — mark this device as "secret lost" to stop retrying
+      secretLostDeviceIds.add(deviceId);
+      console.warn('[DeviceAuth] Device already registered (409) — local secret lost. Using plain x-device-id fallback.');
+      return null;
+    }
 
     if (!res.ok) {
       console.error('[DeviceAuth] Registration failed:', res.status);

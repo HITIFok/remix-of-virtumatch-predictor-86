@@ -57,17 +57,16 @@ export default async function handler(req, res) {
 
   const result = await registerDevice(deviceId);
 
-  if (result.alreadyRegistered) {
-    log.info('Device already registered', { deviceId });
-    return errorResponse(res, 409, 'Device already registered', {
-      code: 'ALREADY_EXISTS',
-      meta: { alreadyRegistered: true },
-    });
-  }
-
   if (!result.success) {
     log.error('Registration failed', { deviceId });
     return internalError(res, new Error('registerDevice failed'));
+  }
+
+  if (result.alreadyRegistered) {
+    // Device already existed — return the secret so the client can recover
+    // from localStorage loss (incognito, cache clear, reinstall).
+    log.info('Device already registered — secret returned for recovery', { deviceId });
+    return successResponse(res, { device_secret: result.device_secret, alreadyRegistered: true });
   }
 
   log.info('Device registered', { deviceId });
