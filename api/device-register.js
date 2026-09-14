@@ -18,7 +18,7 @@ const log = createLogger('device-register');
 const registerLimiter = createRateLimiter('device-register', { max: 5, windowMs: 60 * 1000 });
 
 export default async function handler(req, res) {
-  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, x-device-id');
+  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-device-id');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');

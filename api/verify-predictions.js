@@ -329,7 +329,7 @@ async function handleHealthCheck(req, res) {
 // ─── Main handler ──────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization, x-cron-key');
+  setCorsHeaders(req, res, 'GET, POST, OPTIONS', 'Content-Type, Authorization, x-device-id, x-cron-key');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');

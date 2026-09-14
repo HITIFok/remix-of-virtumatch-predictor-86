@@ -74,7 +74,7 @@ async function sendActivationMagicLink(email, code, durationDays) {
 // ═══════════════════════════════════════════════════════════════════
 
 export default async function handler(req, res) {
-  setCorsHeaders(req, res, 'POST, GET, OPTIONS', 'Content-Type, Authorization');
+  setCorsHeaders(req, res, 'POST, GET, OPTIONS', 'Content-Type, Authorization, x-device-id');
 
   if (req.method === 'OPTIONS') return res.status(204).end('');
 

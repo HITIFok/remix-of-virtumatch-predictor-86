@@ -52,7 +52,7 @@ export function isOriginAllowed(origin, reqHost, reqHeaders) {
   return false;
 }
 
-export function setCorsHeaders(req, res, methods = 'POST, OPTIONS', headers = 'Content-Type, Authorization') {
+export function setCorsHeaders(req, res, methods = 'POST, OPTIONS', headers = 'Content-Type, Authorization, x-device-id') {
   const origin = req.headers.origin || '';
   if (isOriginAllowed(origin, req.headers.host || '', req.headers)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
