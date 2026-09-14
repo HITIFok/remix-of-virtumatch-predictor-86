@@ -84,6 +84,13 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Force new SW to activate immediately (skip waiting + claim clients)
+        // This ensures CSP header changes take effect right after deployment
+        skipWaiting: true,
+        clientsClaim: true,
+        // Navigation requests: NetworkFirst to always get fresh CSP headers
+        navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/.*\.neon\.tech\/.*/i,
