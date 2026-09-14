@@ -1,4 +1,24 @@
 ---
+Task ID: CI-Fix
+Agent: main
+Task: Fix CI coefficient-validation job (require() → tsx for ESM/TypeScript)
+
+Work Log:
+- Diagnosed: ci-test.yml coefficient-validation job uses `require('./src/lib/prediction-config')` which fails because:
+  1. Project uses `"type": "module"` (ESM), but `require()` is CJS
+  2. prediction-config.ts is TypeScript — Node.js can't load .ts directly
+- Fixed: Changed `node -e "const { ... } = require('...')"` to `npx tsx -e "import { ... } from '...'"`
+- Added `tsx` as devDependency (was available via npx cache but not in package.json — would fail in CI)
+- Verified: coefficient validation runs successfully with tsx
+- Verified: all 938 API tests pass
+- Verified: TypeScript compiles clean (tsc --noEmit)
+
+Stage Summary:
+- ci-test.yml: coefficient-validation job now uses `npx tsx` with ESM imports
+- tsx@4.23.13 added as devDependency for reliable CI execution
+- All coefficients valid, conservation laws pass, 15 arbitrary coefficients flagged
+
+---
 Task ID: 3
 Agent: main
 Task: Fix analyze-match 500 error (Vercel timeout on "Prédire tous les matchs")

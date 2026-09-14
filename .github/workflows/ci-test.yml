@@ -67,8 +67,8 @@ jobs:
 
       - name: Validate prediction coefficients
         run: |
-          node -e "
-            const { validateCoefficients, getArbitraryCount, getCalibrationPriorities } = require('./src/lib/prediction-config');
+          npx tsx -e "
+            import { validateCoefficients, getArbitraryCount, getCalibrationPriorities } from './src/lib/prediction-config';
             const result = validateCoefficients();
             if (!result.valid) {
               console.error('COEFFICIENT VALIDATION FAILED:');
