@@ -141,25 +141,7 @@
     <!-- Vite entry point -->
     <script type="module" src="/src/main.tsx"></script>
     
-    <script>
-      // Hide loading after app mounts
-      window.addEventListener('load', function() {
-        setTimeout(function() {
-          var loading = document.getElementById('loading');
-          if (loading) loading.style.display = 'none';
-        }, 500);
-      });
-      
-      // Show error if JS fails
-      window.onerror = function(msg, url, line) {
-        var loading = document.getElementById('loading');
-        var error = document.getElementById('error');
-        var errorDetail = document.getElementById('error-detail');
-        if (loading) loading.style.display = 'none';
-        if (error) error.classList.add('show');
-        if (errorDetail) errorDetail.textContent = msg + ' (' + line + ')';
-        return false;
-      };
-    </script>
+    <!-- Loading/error handler (external for CSP compliance) -->
+    <script src="/loading-handler.js"></script>
   </body>
 </html>

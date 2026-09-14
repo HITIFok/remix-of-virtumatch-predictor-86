@@ -208,12 +208,13 @@ describe('P5: Production Hardening', () => {
     expect(headers).toContain('X-Frame-Options');
   });
 
-  it('CSP has no unsafe-inline', () => {
+  it('CSP has no unsafe-inline in script-src (style-src allows it for React/Radix UI)', () => {
     const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf-8'));
     const csp = vercel.headers
       .find(h => h.source === '/(.*)')
       ?.headers.find(h => h.key === 'Content-Security-Policy')?.value || '';
-    expect(csp).not.toContain('unsafe-inline');
+    const scriptSrc = csp.match(/script-src\s+([^;]+)/)?.[1] || '';
+    expect(scriptSrc).not.toContain('unsafe-inline');
     expect(csp).not.toContain('unsafe-eval');
   });
 });

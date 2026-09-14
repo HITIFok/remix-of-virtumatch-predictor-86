@@ -6,6 +6,9 @@
 
 import { getConfig } from './prediction-config';
 
+// Initialize coefficient config ONCE at module load (must be before any _cfg usage)
+const _cfg = getConfig();
+
 export interface MatchInput {
   id?: string;
   home: string;
@@ -366,7 +369,7 @@ function extractH2H(
 
 // Moyenne virtuelle de buts par équipe par match
 // Loaded from centralized coefficient registry (Phase H)
-const _cfg = getConfig();
+// (_cfg already initialized at top of file)
 const VIRTUAL_AVG_GOALS = _cfg.VIRTUAL_AVG_GOALS;
 
 /**
