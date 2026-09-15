@@ -256,6 +256,25 @@ export async function verifyPremium(): Promise<boolean | 'offline'> {
     if (!res.ok) return 'offline';
 
     const data = await res.json();
+
+    // If server says NOT premium but we have a Bearer token, the token might be
+    // expired/invalid — the server silently fell through to device auth (which
+    // has no premium linked). Verify the Bearer token by making a probe request
+    // WITHOUT x-device-id to force 401 if the token is bad.
+    if (!data.premium && userSession) {
+      const probeRes = await fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${userSession.token}` },
+      });
+      if (probeRes.status === 401) {
+        // Bearer token is definitively expired/invalid on server side
+        console.warn('[verifyPremium] Bearer token rejected by server — clearing stale session. Re-login required.');
+        clearUserSession();
+        return 'offline'; // Don't clear premium cache — let user re-login
+      }
+      // Bearer token is valid but user genuinely has no premium
+    }
+
     // Server explicitly says NOT premium → clear localStorage
     if (!data.premium) { clearAccess(); return false; }
 
