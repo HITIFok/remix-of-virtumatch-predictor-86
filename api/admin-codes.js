@@ -149,7 +149,7 @@ function handleVerify(req, res, body) {
 // Code management handlers (require Bearer admin token)
 // ═══════════════════════════════════════════════════════════════════
 
-async function handleGet(req, res, action) {
+async function handleGet(req, res, action, sql) {
   if (action === 'migrate') {
     const devices = await sql`
       SELECT
@@ -195,7 +195,7 @@ async function handleGet(req, res, action) {
   });
 }
 
-async function handlePost(req, res, body) {
+async function handlePost(req, res, body, sql) {
   // ── Delete code (body has codeId) ──
   if (body.codeId) {
     const { codeId } = body;
@@ -410,10 +410,10 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      return await handleGet(req, res, action);
+      return await handleGet(req, res, action, sql);
     }
 
-    return await handlePost(req, res, body);
+    return await handlePost(req, res, body, sql);
   } catch (err) {
     log.error('Admin handler exception', undefined, { cause: err });
     return internalError(res, err);
