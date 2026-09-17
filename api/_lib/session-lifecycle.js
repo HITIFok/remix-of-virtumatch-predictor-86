@@ -40,7 +40,7 @@ export const TOKEN_REGISTRY = Object.freeze([
     signingKey: 'USER_SESSION_SECRET (env var)',
     verification: 'timing-safe HMAC verification',
     revocable: true,
-    revocationMethod: 'Token blacklist (in-memory, pending Redis migration) + rotate USER_SESSION_SECRET to invalidate ALL sessions',
+    revocationMethod: 'Token blacklist (Redis primary with in-memory fallback — FIX-04) + rotate USER_SESSION_SECRET to invalidate ALL sessions',
     singleUse: false,
     refreshable: true, // Refresh token endpoint available
     rotationAutomated: false,
@@ -87,8 +87,8 @@ export const TOKEN_SECURITY_GAPS = Object.freeze([
     severity: 'HIGH',
     description: 'No token revocation mechanism — compromised tokens remain valid until expiry',
     affectedTokens: [TOKEN_TYPES.USER_SESSION, TOKEN_TYPES.DEVICE_HMAC, TOKEN_TYPES.ADMIN_SESSION],
-    mitigation: 'Implement token blacklist (Redis) or reduce session lifetime',
-    status: 'DOCUMENTED',
+    mitigation: 'Token blacklist implemented with Redis primary + in-memory fallback (FIX-04). Resolved.',
+    status: 'RESOLVED',
   },
   {
     id: 'GAP-02',
@@ -127,8 +127,8 @@ export const TOKEN_SECURITY_GAPS = Object.freeze([
     severity: 'LOW',
     description: 'No refresh token endpoint for user sessions',
     affectedTokens: [TOKEN_TYPES.USER_SESSION],
-    mitigation: 'Consider refresh token flow for seamless re-authentication',
-    status: 'DEFERRED',
+    mitigation: 'Refresh token endpoint implemented (POST /api/auth?action=refresh-token) — rotates old token and issues new one',
+    status: 'RESOLVED',
   },
 ]);
 

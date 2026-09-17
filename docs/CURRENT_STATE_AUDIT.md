@@ -3,7 +3,8 @@
 **Date**: 2026-09-17  
 **Auditeur**: Principal Software Engineer + Security Engineer + ML/Statistics Engineer  
 **Repository**: https://github.com/HITIFok/remix-of-virtumatch-predictor-86  
-**Méthode**: Analyse statique du code actuel — aucun fichier modifié pendant l'audit
+**Méthode**: Analyse statique du code actuel — aucun fichier modifié pendant l'audit  
+**Dernière mise à jour**: 2026-09-17 — P0+P1 fixes appliqués (voir SECURITY_REMEDIATION_PLAN.md)
 
 ---
 
@@ -13,9 +14,11 @@ Le projet VirtuMatch est une application PWA de prédiction de football virtuel 
 
 **Les 3 problèmes les plus urgents** :
 
-1. **HMAC_ONLY=false en production** — le fallback `x-device-id` permet l'usurpation d'identité de n'importe quel appareil pour les opérations POST/PUT (insertion de prédictions, activation premium)
-2. **Token revocation non fonctionnel en serverless** — la blacklist est in-memory, perdue à chaque cold start ; les tokens révoqués sont acceptés
+1. **HMAC_ONLY=false en production** — le fallback `x-device-id` permet l'usurpation d'identité de n'importe quel appareil pour les opérations POST/PUT (insertion de prédictions, activation premium). ⚠️ Code prêt, activation en attente de monitoring.
+2. ~~**Token revocation non fonctionnel en serverless**~~ — ✅ **RÉSOLU** : Redis (Upstash) comme backend principal avec in-memory fallback (FIX-04).
 3. **0 coefficient empiriquement validé** — les 22 coefficients du moteur de prédiction sont tous heuristiques ou arbitraires ; aucun n'a été calibré sur un TRAIN set et validé sur un TEST temporel indépendant
+
+**Fixes appliqués (P0+P1)** : FIX-01 à FIX-12, FIX-15, FIX-16 — voir `docs/SECURITY_REMEDIATION_PLAN.md` pour le détail.
 
 ---
 
@@ -59,10 +62,10 @@ Le projet VirtuMatch est une application PWA de prédiction de football virtuel 
 **Partiellement**. Le CSP est défini dans `vercel.json` avec des directives strictes (`script-src 'self'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`). Cependant :
 
 - `style-src 'self' 'unsafe-inline'` — nécessaire pour shadcn/ui + Tailwind, mais affaiblit la protection XSS via CSS
-- `connect-src 'self' https://*.vercel.app` — le wildcard `*.vercel.app` est trop large ; autorise les connexions vers n'importe quel déploiement Vercel
+- ~~`connect-src 'self' https://*.vercel.app`~~ — ✅ **CORRIGÉ (FIX-11)** : restreint à `https://virtual-match-hitifproject.vercel.app`
 - Aucun nonce ou hash pour les scripts inline (le PWA `loading-handler.js` pourrait être concerné)
 
-**Statut**: ⚠️ PARTIELLEMENT CORRIGÉ — `unsafe-inline` CSS et `connect-src` trop large
+**Statut**: ⚠️ PARTIELLEMENT CORRIGÉ — `unsafe-inline` CSS reste (nécessaire pour Tailwind)
 
 ---
 

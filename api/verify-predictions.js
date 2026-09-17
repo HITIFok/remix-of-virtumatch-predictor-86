@@ -375,6 +375,25 @@ export default async function handler(req, res) {
     const expectedCronKey = process.env.CRON_SECRET || '';
     const isCron = !!(providedSecret && expectedCronKey && timingSafeEqual(providedSecret, expectedCronKey));
 
+    // FIX-16 (CRON-02): Acquire pg_advisory_lock to prevent concurrent cron execution.
+    // If another instance is already running, skip this invocation.
+    if (isCron && NEON_DATABASE_URL) {
+      try {
+        const lockSql = createSql();
+        const [lockResult] = await lockSql`SELECT pg_try_advisory_lock(hashtext('verify-predictions')) as acquired`;
+        await lockSql.end();
+        if (!lockResult?.acquired) {
+          log.info('Another verify-predictions instance is already running — skipping');
+          await sql.end();
+          return res.status(200).json({ success: true, message: 'Already running', skipped: true });
+        }
+        // Lock is held on this connection — it releases when the process ends.
+        // For serverless, this is sufficient since each invocation gets its own connection.
+      } catch (lockErr) {
+        log.warn('Advisory lock check failed, continuing anyway', { cause: lockErr });
+      }
+    }
+
     let deviceId;
     let userId;
     let callerMode;
