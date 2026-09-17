@@ -92,6 +92,8 @@ async function handleLogin(req, res, body) {
     return internalError(res, null, 'Server not configured');
   }
 
+  const sql = createSql();
+
   // Rate limiting
   const clientIp = getClientIp(req);
   const rateLimit = adminLimiter.check(clientIp);
