@@ -136,6 +136,7 @@ async function handleLogin(req, res, body) {
   } finally {
     try { await sql.end(); } catch { /* ignore */ }
   }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Verify handler — POST ?action=verify
@@ -422,3 +423,4 @@ export default async function handler(req, res) {
   } finally {
     try { await sql.end(); } catch { /* ignore */ }
   }
+}
