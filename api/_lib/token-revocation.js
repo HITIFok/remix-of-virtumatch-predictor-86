@@ -1,13 +1,67 @@
 // Token Revocation & Session Invalidation
 // Phase AK — Implements token blacklist mechanism for GAP-01 and GAP-02.
-// Uses Upstash Redis when available, in-memory Set fallback otherwise.
+// FIX-04: Uses Upstash Redis when available (survives cold starts),
+// in-memory Map fallback otherwise.
 
 import crypto from 'crypto';
 
+// ─── Upstash Redis Backend (FIX-04: AUTH-03) ─────────────────────────────────
+
+const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || '';
+const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const REDIS_KEY_PREFIX = 'virtumatch:revoke:';
+const hasRedis = !!(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
+
 /**
- * Revocation entry
- * @typedef {{ id: string, tokenHash: string, reason: string, revokedAt: number, expiresAt: number }} RevocationEntry
+ * Set a key in Redis with TTL (seconds). Uses Upstash REST API.
  */
+async function redisSet(key, value, ttlSeconds) {
+  if (!hasRedis) return false;
+  try {
+    const res = await fetch(`${UPSTASH_REDIS_REST_URL}/set/${REDIS_KEY_PREFIX}${key}/${encodeURIComponent(JSON.stringify(value))}?EX=${ttlSeconds}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get a key from Redis. Returns parsed value or null.
+ */
+async function redisGet(key) {
+  if (!hasRedis) return null;
+  try {
+    const res = await fetch(`${UPSTASH_REDIS_REST_URL}/get/${REDIS_KEY_PREFIX}${key}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return null;
+    const { result } = await res.json();
+    if (!result) return null;
+    return JSON.parse(result);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete a key from Redis.
+ */
+async function redisDel(key) {
+  if (!hasRedis) return false;
+  try {
+    const res = await fetch(`${UPSTASH_REDIS_REST_URL}/del/${REDIS_KEY_PREFIX}${key}`, {
+      headers: { Authorization: `Bearer ${UPSTASH_REDIS_REST_TOKEN}` },
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 // ─── In-Memory Blacklist (fallback) ────────────────────────────────────────
 
@@ -51,13 +105,14 @@ export function hashTokenForBlacklist(token) {
 
 /**
  * Add a token to the revocation blacklist.
+ * FIX-04: Redis primary backend, in-memory fallback.
  *
  * @param {string} token - The raw token to revoke
  * @param {string} reason - One of REVOCATION_REASONS
  * @param {number} [expiresAt] - When this blacklist entry expires (token natural expiry)
- * @returns {{ success: boolean, id: string, tokenHash: string }}
+ * @returns {Promise<{ success: boolean, id: string, tokenHash: string, backend: string }>}
  */
-export function revokeToken(token, reason, expiresAt) {
+export async function revokeToken(token, reason, expiresAt) {
   if (!token || typeof token !== 'string') {
     return { success: false, id: null, tokenHash: null };
   }
@@ -72,26 +127,28 @@ export function revokeToken(token, reason, expiresAt) {
 
   // Default expiry: 30 days from now (max token lifetime)
   const entryExpiry = expiresAt || (now + 30 * 24 * 60 * 60 * 1000);
+  const entry = { id, reason, revokedAt: now, expiresAt: entryExpiry };
 
-  memoryBlacklist.set(tokenHash, {
-    id,
-    reason,
-    revokedAt: now,
-    expiresAt: entryExpiry,
-  });
+  // FIX-04: Redis primary, in-memory fallback
+  const ttlSeconds = Math.max(1, Math.ceil((entryExpiry - now) / 1000));
+  const redisOk = await redisSet(tokenHash, entry, ttlSeconds);
+  if (!redisOk) {
+    // Fallback to in-memory
+    memoryBlacklist.set(tokenHash, entry);
 
-  // Periodic cleanup of expired blacklist entries
-  if (now - lastCleanup > CLEANUP_INTERVAL_MS) {
-    cleanupExpiredEntries();
-    lastCleanup = now;
+    // Periodic cleanup of expired blacklist entries
+    if (now - lastCleanup > CLEANUP_INTERVAL_MS) {
+      cleanupExpiredEntries();
+      lastCleanup = now;
+    }
+
+    // Overflow protection
+    if (memoryBlacklist.size > BLACKLIST_MAX_ENTRIES) {
+      cleanupExpiredEntries();
+    }
   }
 
-  // Overflow protection
-  if (memoryBlacklist.size > BLACKLIST_MAX_ENTRIES) {
-    cleanupExpiredEntries();
-  }
-
-  return { success: true, id, tokenHash };
+  return { success: true, id, tokenHash, backend: redisOk ? 'redis' : 'memory' };
 }
 
 /**
@@ -100,9 +157,9 @@ export function revokeToken(token, reason, expiresAt) {
  *
  * @param {string} deviceId
  * @param {string} reason
- * @returns {{ success: boolean, id: string }}
+ * @returns {Promise<{ success: boolean, id: string, backend: string }>}
  */
-export function revokeDeviceTokens(deviceId, reason) {
+export async function revokeDeviceTokens(deviceId, reason) {
   if (!deviceId || typeof deviceId !== 'string') {
     return { success: false, id: null };
   }
@@ -112,15 +169,15 @@ export function revokeDeviceTokens(deviceId, reason) {
   const deviceHash = hashTokenForBlacklist(`device:${deviceId}`);
   const id = `dev-rev-${crypto.randomBytes(8).toString('hex')}`;
   const now = Date.now();
+  const entry = { id, reason, revokedAt: now, expiresAt: now + 90 * 24 * 60 * 60 * 1000 };
 
-  memoryBlacklist.set(deviceHash, {
-    id,
-    reason,
-    revokedAt: now,
-    expiresAt: now + 90 * 24 * 60 * 60 * 1000, // 90 days max
-  });
+  const ttlSeconds = 90 * 24 * 60 * 60; // 90 days max
+  const redisOk = await redisSet(deviceHash, entry, ttlSeconds);
+  if (!redisOk) {
+    memoryBlacklist.set(deviceHash, entry);
+  }
 
-  return { success: true, id };
+  return { success: true, id, backend: redisOk ? 'redis' : 'memory' };
 }
 
 /**
@@ -129,9 +186,9 @@ export function revokeDeviceTokens(deviceId, reason) {
  *
  * @param {string} userId
  * @param {string} reason
- * @returns {{ success: boolean, id: string }}
+ * @returns {Promise<{ success: boolean, id: string, backend: string }>}
  */
-export function revokeUserSessions(userId, reason) {
+export async function revokeUserSessions(userId, reason) {
   if (!userId || typeof userId !== 'string') {
     return { success: false, id: null };
   }
@@ -139,28 +196,33 @@ export function revokeUserSessions(userId, reason) {
   const userHash = hashTokenForBlacklist(`user:${userId}`);
   const id = `user-rev-${crypto.randomBytes(8).toString('hex')}`;
   const now = Date.now();
+  const entry = { id, reason, revokedAt: now, expiresAt: now + 30 * 24 * 60 * 60 * 1000 };
 
-  memoryBlacklist.set(userHash, {
-    id,
-    reason,
-    revokedAt: now,
-    expiresAt: now + 30 * 24 * 60 * 60 * 1000, // 30 days max session
-  });
+  const ttlSeconds = 30 * 24 * 60 * 60; // 30 days max session
+  const redisOk = await redisSet(userHash, entry, ttlSeconds);
+  if (!redisOk) {
+    memoryBlacklist.set(userHash, entry);
+  }
 
-  return { success: true, id };
+  return { success: true, id, backend: redisOk ? 'redis' : 'memory' };
 }
 
 /**
  * Check if a token has been revoked.
+ * FIX-04: Checks Redis first, then in-memory fallback.
  *
  * @param {string} token - The raw token to check
- * @returns {{ revoked: boolean, reason?: string, revokedAt?: number }}
+ * @returns {Promise<{ revoked: boolean, reason?: string, revokedAt?: number }>}
  */
-export function isTokenRevoked(token) {
+export async function isTokenRevoked(token) {
   const tokenHash = hashTokenForBlacklist(token);
   if (!tokenHash) return { revoked: false };
 
-  const entry = memoryBlacklist.get(tokenHash);
+  // FIX-04: Check Redis first, then in-memory fallback
+  let entry = await redisGet(tokenHash);
+  if (!entry) {
+    entry = memoryBlacklist.get(tokenHash);
+  }
   if (!entry) return { revoked: false };
 
   // Check if the blacklist entry itself has expired
@@ -180,13 +242,16 @@ export function isTokenRevoked(token) {
  * Check if all tokens for a device have been revoked.
  *
  * @param {string} deviceId
- * @returns {{ revoked: boolean, reason?: string, revokedAt?: number }}
+ * @returns {Promise<{ revoked: boolean, reason?: string, revokedAt?: number }>}
  */
-export function isDeviceRevoked(deviceId) {
+export async function isDeviceRevoked(deviceId) {
   const deviceHash = hashTokenForBlacklist(`device:${deviceId}`);
   if (!deviceHash) return { revoked: false };
 
-  const entry = memoryBlacklist.get(deviceHash);
+  let entry = await redisGet(deviceHash);
+  if (!entry) {
+    entry = memoryBlacklist.get(deviceHash);
+  }
   if (!entry) return { revoked: false };
 
   if (Date.now() > entry.expiresAt) {
@@ -205,13 +270,16 @@ export function isDeviceRevoked(deviceId) {
  * Check if all sessions for a user have been revoked.
  *
  * @param {string} userId
- * @returns {{ revoked: boolean, reason?: string, revokedAt?: number }}
+ * @returns {Promise<{ revoked: boolean, reason?: string, revokedAt?: number }>}
  */
-export function isUserRevoked(userId) {
+export async function isUserRevoked(userId) {
   const userHash = hashTokenForBlacklist(`user:${userId}`);
   if (!userHash) return { revoked: false };
 
-  const entry = memoryBlacklist.get(userHash);
+  let entry = await redisGet(userHash);
+  if (!entry) {
+    entry = memoryBlacklist.get(userHash);
+  }
   if (!entry) return { revoked: false };
 
   if (Date.now() > entry.expiresAt) {
@@ -230,10 +298,11 @@ export function isUserRevoked(userId) {
  * Remove a token from the blacklist (e.g., after secret rotation grace period).
  *
  * @param {string} token
- * @returns {boolean} - true if the token was un-revoked
+ * @returns {Promise<boolean>} - true if the token was un-revoked
  */
-export function unrevokeToken(token) {
+export async function unrevokeToken(token) {
   const tokenHash = hashTokenForBlacklist(token);
+  await redisDel(tokenHash);
   return memoryBlacklist.delete(tokenHash);
 }
 
@@ -261,6 +330,7 @@ export function getBlacklistStats() {
     expiredEntries,
     maxEntries: BLACKLIST_MAX_ENTRIES,
     byReason,
+    redisEnabled: hasRedis,
   };
 }
 
@@ -291,14 +361,14 @@ export const GAPS_ADDRESSED = Object.freeze([
     gapId: 'GAP-01',
     severity: 'HIGH',
     description: 'No token revocation mechanism',
-    resolution: 'Token blacklist with SHA-256 hashes, auto-expiry, device-level revocation',
+    resolution: 'Token blacklist with SHA-256 hashes, auto-expiry, device-level revocation, Redis primary backend (FIX-04)',
     status: 'IMPLEMENTED',
   },
   {
     gapId: 'GAP-02',
     severity: 'HIGH',
     description: '30-day sessions without revocation',
-    resolution: 'User-level session revocation (revokeUserSessions), admin-triggered or user-triggered',
+    resolution: 'User-level session revocation (revokeUserSessions), admin-triggered or user-triggered, Redis primary (FIX-04)',
     status: 'IMPLEMENTED',
   },
 ]);

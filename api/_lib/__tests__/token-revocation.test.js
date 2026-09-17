@@ -51,39 +51,39 @@ describe('Phase AK: Token Hashing', () => {
 // ─── Token Revocation ─────────────────────────────────────────────────────
 
 describe('Phase AK: Token Revocation', () => {
-  it('revokes a valid token', () => {
-    const result = revokeToken('my-hmac-token', REVOCATION_REASONS.SECURITY_INCIDENT);
+  it('revokes a valid token', async () => {
+    const result = await revokeToken('my-hmac-token', REVOCATION_REASONS.SECURITY_INCIDENT);
     expect(result.success).toBe(true);
     expect(result.id).toMatch(/^rev-/);
     expect(result.tokenHash).toBeTruthy();
   });
 
-  it('rejects invalid token input', () => {
-    const result = revokeToken('', REVOCATION_REASONS.USER_REQUEST);
+  it('rejects invalid token input', async () => {
+    const result = await revokeToken('', REVOCATION_REASONS.USER_REQUEST);
     expect(result.success).toBe(false);
   });
 
-  it('rejects invalid reason', () => {
-    const result = revokeToken('my-token', 'INVALID_REASON');
+  it('rejects invalid reason', async () => {
+    const result = await revokeToken('my-token', 'INVALID_REASON');
     expect(result.success).toBe(false);
   });
 
-  it('revoked token is detected by isTokenRevoked', () => {
-    revokeToken('compromised-token', REVOCATION_REASONS.SECURITY_INCIDENT);
-    const check = isTokenRevoked('compromised-token');
+  it('revoked token is detected by isTokenRevoked', async () => {
+    await revokeToken('compromised-token', REVOCATION_REASONS.SECURITY_INCIDENT);
+    const check = await isTokenRevoked('compromised-token');
     expect(check.revoked).toBe(true);
     expect(check.reason).toBe(REVOCATION_REASONS.SECURITY_INCIDENT);
   });
 
-  it('non-revoked token is not flagged', () => {
-    const check = isTokenRevoked('clean-token');
+  it('non-revoked token is not flagged', async () => {
+    const check = await isTokenRevoked('clean-token');
     expect(check.revoked).toBe(false);
   });
 
-  it('stores all revocation reasons', () => {
+  it('stores all revocation reasons', async () => {
     const reasons = Object.values(REVOCATION_REASONS);
     for (const reason of reasons) {
-      const result = revokeToken(`token-${reason}`, reason);
+      const result = await revokeToken(`token-${reason}`, reason);
       expect(result.success).toBe(true);
     }
   });
@@ -92,26 +92,26 @@ describe('Phase AK: Token Revocation', () => {
 // ─── Device-Level Revocation ──────────────────────────────────────────────
 
 describe('Phase AK: Device-Level Revocation', () => {
-  it('revokes all tokens for a device', () => {
-    const result = revokeDeviceTokens('dev-abc12345', REVOCATION_REASONS.SECURITY_INCIDENT);
+  it('revokes all tokens for a device', async () => {
+    const result = await revokeDeviceTokens('dev-abc12345', REVOCATION_REASONS.SECURITY_INCIDENT);
     expect(result.success).toBe(true);
     expect(result.id).toMatch(/^dev-rev-/);
   });
 
-  it('revoked device is detected by isDeviceRevoked', () => {
-    revokeDeviceTokens('dev-victim123', REVOCATION_REASONS.ADMIN_ACTION);
-    const check = isDeviceRevoked('dev-victim123');
+  it('revoked device is detected by isDeviceRevoked', async () => {
+    await revokeDeviceTokens('dev-victim123', REVOCATION_REASONS.ADMIN_ACTION);
+    const check = await isDeviceRevoked('dev-victim123');
     expect(check.revoked).toBe(true);
     expect(check.reason).toBe(REVOCATION_REASONS.ADMIN_ACTION);
   });
 
-  it('non-revoked device is not flagged', () => {
-    const check = isDeviceRevoked('dev-clean1234');
+  it('non-revoked device is not flagged', async () => {
+    const check = await isDeviceRevoked('dev-clean1234');
     expect(check.revoked).toBe(false);
   });
 
-  it('rejects invalid device ID', () => {
-    const result = revokeDeviceTokens('', REVOCATION_REASONS.USER_REQUEST);
+  it('rejects invalid device ID', async () => {
+    const result = await revokeDeviceTokens('', REVOCATION_REASONS.USER_REQUEST);
     expect(result.success).toBe(false);
   });
 });
@@ -119,26 +119,26 @@ describe('Phase AK: Device-Level Revocation', () => {
 // ─── User Session Revocation ──────────────────────────────────────────────
 
 describe('Phase AK: User Session Revocation', () => {
-  it('revokes all sessions for a user', () => {
-    const result = revokeUserSessions('user-uuid-123', REVOCATION_REASONS.USER_REQUEST);
+  it('revokes all sessions for a user', async () => {
+    const result = await revokeUserSessions('user-uuid-123', REVOCATION_REASONS.USER_REQUEST);
     expect(result.success).toBe(true);
     expect(result.id).toMatch(/^user-rev-/);
   });
 
-  it('revoked user is detected by isUserRevoked', () => {
-    revokeUserSessions('user-uuid-456', REVOCATION_REASONS.SECURITY_INCIDENT);
-    const check = isUserRevoked('user-uuid-456');
+  it('revoked user is detected by isUserRevoked', async () => {
+    await revokeUserSessions('user-uuid-456', REVOCATION_REASONS.SECURITY_INCIDENT);
+    const check = await isUserRevoked('user-uuid-456');
     expect(check.revoked).toBe(true);
     expect(check.reason).toBe(REVOCATION_REASONS.SECURITY_INCIDENT);
   });
 
-  it('non-revoked user is not flagged', () => {
-    const check = isUserRevoked('user-uuid-789');
+  it('non-revoked user is not flagged', async () => {
+    const check = await isUserRevoked('user-uuid-789');
     expect(check.revoked).toBe(false);
   });
 
-  it('rejects invalid user ID', () => {
-    const result = revokeUserSessions('', REVOCATION_REASONS.USER_REQUEST);
+  it('rejects invalid user ID', async () => {
+    const result = await revokeUserSessions('', REVOCATION_REASONS.USER_REQUEST);
     expect(result.success).toBe(false);
   });
 });
@@ -146,17 +146,17 @@ describe('Phase AK: User Session Revocation', () => {
 // ─── Token Unrevocation ───────────────────────────────────────────────────
 
 describe('Phase AK: Token Unrevocation', () => {
-  it('removes a token from the blacklist', () => {
-    revokeToken('temp-revoked', REVOCATION_REASONS.SECRET_ROTATION);
-    expect(isTokenRevoked('temp-revoked').revoked).toBe(true);
+  it('removes a token from the blacklist', async () => {
+    await revokeToken('temp-revoked', REVOCATION_REASONS.SECRET_ROTATION);
+    expect((await isTokenRevoked('temp-revoked')).revoked).toBe(true);
 
-    const removed = unrevokeToken('temp-revoked');
+    const removed = await unrevokeToken('temp-revoked');
     expect(removed).toBe(true);
-    expect(isTokenRevoked('temp-revoked').revoked).toBe(false);
+    expect((await isTokenRevoked('temp-revoked')).revoked).toBe(false);
   });
 
-  it('returns false for non-blacklisted token', () => {
-    const removed = unrevokeToken('never-revoked');
+  it('returns false for non-blacklisted token', async () => {
+    const removed = await unrevokeToken('never-revoked');
     expect(removed).toBe(false);
   });
 });
@@ -170,10 +170,10 @@ describe('Phase AK: Blacklist Statistics', () => {
     expect(stats.activeEntries).toBe(0);
   });
 
-  it('tracks active entries by reason', () => {
-    revokeToken('t1', REVOCATION_REASONS.SECURITY_INCIDENT);
-    revokeToken('t2', REVOCATION_REASONS.USER_REQUEST);
-    revokeToken('t3', REVOCATION_REASONS.SECURITY_INCIDENT);
+  it('tracks active entries by reason', async () => {
+    await revokeToken('t1', REVOCATION_REASONS.SECURITY_INCIDENT);
+    await revokeToken('t2', REVOCATION_REASONS.USER_REQUEST);
+    await revokeToken('t3', REVOCATION_REASONS.SECURITY_INCIDENT);
 
     const stats = getBlacklistStats();
     expect(stats.totalEntries).toBe(3);

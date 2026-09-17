@@ -59,13 +59,12 @@ export async function registerDevice(deviceId) {
     `;
 
     if (existing?.device_secret) {
-      // Device already registered — return the secret so the client can
-      // recover from localStorage loss (incognito, cache clear, reinstall).
-      // This is safe because the caller already proved they know the device_id
-      // (sent in x-device-id header), which is the same trust level as the
-      // plain x-device-id fallback accepted during migration.
+      // FIX-05 (AUTH-02): Do NOT return the existing secret on 409.
+      // Previously, returning the secret allowed any caller who knows a device_id
+      // to obtain the HMAC secret and forge tokens. Now, the client must
+      // recover the secret from its own localStorage, or generate a new device_id.
       await sql.end();
-      return { success: true, device_secret: existing.device_secret, alreadyRegistered: true };
+      return { success: true, device_secret: null, alreadyRegistered: true };
     }
 
     // New device — generate a 32-byte random secret
@@ -341,10 +340,10 @@ export async function requireUserAuth(req) {
   try {
     const { isTokenRevoked, isUserRevoked } = await import('./token-revocation.js');
     // Check if the specific token has been revoked
-    const tokenCheck = isTokenRevoked(token);
+    const tokenCheck = await isTokenRevoked(token);
     if (tokenCheck.revoked) return null;
     // Check if all sessions for this user have been revoked
-    const userCheck = isUserRevoked(result.userId);
+    const userCheck = await isUserRevoked(result.userId);
     if (userCheck.revoked) return null;
   } catch {
     // token-revocation.js import failed — continue without blacklist check

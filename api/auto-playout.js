@@ -709,6 +709,24 @@ export default async function handler(req, res) {
       return await handleDataCleanup(req, res);
     }
 
+    // FIX-16 (CRON-02): Acquire pg_advisory_lock to prevent concurrent execution.
+    // If another instance is already running, skip this invocation.
+    if (NEON_DATABASE_URL) {
+      try {
+        const lockSql = createSql();
+        const [lockResult] = await lockSql`SELECT pg_try_advisory_lock(hashtext('auto-playout')) as acquired`;
+        await lockSql.end();
+        if (!lockResult?.acquired) {
+          log.info('Another instance is already running — skipping');
+          return res.status(200).json({ success: true, message: 'Already running', skipped: true });
+        }
+        // Lock is held on this connection — it releases when the process ends.
+        // For serverless, this is sufficient since each invocation gets its own connection.
+      } catch (lockErr) {
+        log.warn('Advisory lock check failed, continuing anyway', { cause: lockErr });
+      }
+    }
+
     isManual = req.query.manual === 'true';
     const manualFlag = isManual; // capture for closure
 

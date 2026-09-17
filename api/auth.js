@@ -417,7 +417,7 @@ async function handleRefreshToken(req, res) {
   // ── Rotate token ──
   try {
     // 1. Revoke the old token (single-use rotation — prevents replay)
-    revokeToken(currentToken, 'TOKEN_REFRESH');
+    await revokeToken(currentToken, 'TOKEN_REFRESH');
 
     // 2. Issue a new token
     const newToken = signUserToken(userId);
@@ -524,9 +524,9 @@ async function handleDeleteAccount(req, res) {
 
     // Revoke device tokens and sessions outside the transaction (in-memory only)
     for (const deviceId of deviceIds) {
-      revokeDeviceTokens(deviceId, 'USER_REQUEST');
+      await revokeDeviceTokens(deviceId, 'USER_REQUEST');
     }
-    revokeUserSessions(userId, 'USER_REQUEST');
+    await revokeUserSessions(userId, 'USER_REQUEST');
 
     await sql.end();
 
