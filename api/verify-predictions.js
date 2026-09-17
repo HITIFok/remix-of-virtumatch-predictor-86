@@ -16,6 +16,7 @@ import { requireAuth, requireUserAuth } from './_lib/auth.js';
 import { createSql, NEON_DATABASE_URL } from './_lib/db.js';
 import { errorResponse, methodNotAllowed, invalidInput, internalError, unauthorized, successResponse } from './_lib/errors.js';
 import { createLogger, redactToken } from './_lib/logger.js';
+import { validateCoefficients, getArbitraryCount } from './_lib/prediction-config.js';
 
 const log = createLogger('verify-predictions');
 
@@ -279,12 +280,65 @@ async function handleHealthCheck(req, res) {
     return unauthorized(res, 'Authentification requise');
   }
 
+  // ── Build health check response ──
   const checks = {
-    status: 'ok',
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
+    node: process.version,
+    env: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
   };
 
-  return res.status(200).json(checks);
+  // ── Database connectivity check ──
+  if (NEON_DATABASE_URL) {
+    try {
+      const dbStart = Date.now();
+      const sql = createSql();
+      await sql`SELECT 1`;
+      await sql.end();
+      checks.database = {
+        status: 'healthy',
+        latency_ms: Date.now() - dbStart,
+      };
+    } catch (dbErr) {
+      checks.database = {
+        status: 'degraded',
+        latency_ms: null,
+        error: dbErr.message,
+      };
+      checks.status = 'degraded';
+    }
+  } else {
+    checks.database = { status: 'not_configured' };
+  }
+
+  // ── Coefficient validation check ──
+  try {
+    const result = validateCoefficients();
+    const arbitraryCount = getArbitraryCount();
+    checks.coefficients = {
+      valid: result.valid,
+      arbitraryCount,
+      errors: result.errors.length,
+      warnings: result.warnings.length,
+    };
+    if (!result.valid) checks.status = 'degraded';
+  } catch (coefErr) {
+    checks.coefficients = { valid: false, error: coefErr.message };
+    checks.status = 'degraded';
+  }
+
+  // ── Memory usage tracking ──
+  const mem = process.memoryUsage();
+  checks.memory = {
+    heapUsed: Math.round(mem.heapUsed / 1024 / 1024),   // MB
+    heapTotal: Math.round(mem.heapTotal / 1024 / 1024),  // MB
+    rss: Math.round(mem.rss / 1024 / 1024),               // MB
+  };
+
+  // ── Return appropriate status code ──
+  const statusCode = checks.status === 'healthy' ? 200 : 503;
+  return res.status(statusCode).json(checks);
 }
 
 // ─── Main handler ──────────────────────────────────────────────────────────

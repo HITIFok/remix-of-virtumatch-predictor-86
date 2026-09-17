@@ -79,9 +79,9 @@ describe("Phase AD: Session & Token Lifecycle", () => {
       expect(device.expiryMs).toBe(7 * 24 * 60 * 60 * 1000);
     });
 
-    it("user session token expires in 30 days", () => {
+    it("user session token expires in 7 days (reduced from 30 — GAP-02 fix)", () => {
       const user = getTokenInfo(TOKEN_TYPES.USER_SESSION);
-      expect(user.expiryMs).toBe(30 * 24 * 60 * 60 * 1000);
+      expect(user.expiryMs).toBe(7 * 24 * 60 * 60 * 1000);
     });
 
     it("admin session token expires in 24 hours", () => {
@@ -113,15 +113,17 @@ describe("Phase AD: Session & Token Lifecycle", () => {
   // ─── 3. Token revocation ───────────────────────────────
 
   describe("token revocation capabilities", () => {
-    it("magic link is the only revocable token type", () => {
+    it("magic link and user session are revocable (GAP-02 fix added revocation)", () => {
       const revocable = TOKEN_REGISTRY.filter((t) => t.revocable);
-      expect(revocable.length).toBe(1);
-      expect(revocable[0].type).toBe(TOKEN_TYPES.MAGIC_LINK);
+      expect(revocable.length).toBe(2);
+      const revocableTypes = revocable.map((t) => t.type);
+      expect(revocableTypes).toContain(TOKEN_TYPES.MAGIC_LINK);
+      expect(revocableTypes).toContain(TOKEN_TYPES.USER_SESSION);
     });
 
-    it("3 token types are non-revocable (documented gap)", () => {
+    it("2 token types are non-revocable (device HMAC + admin session)", () => {
       const nonRevocable = getNonRevocableTokens();
-      expect(nonRevocable.length).toBe(3);
+      expect(nonRevocable.length).toBe(2);
     });
 
     it("non-revocable tokens have documented mitigation", () => {
@@ -169,7 +171,7 @@ describe("Phase AD: Session & Token Lifecycle", () => {
       expect(gap1.severity).toBe("HIGH");
     });
 
-    it("GAP-02 documents 30-day sessions without revocation", () => {
+    it("GAP-02 documents 7-day sessions with revocation and refresh", () => {
       const gap2 = TOKEN_SECURITY_GAPS.find((g) => g.id === "GAP-02");
       expect(gap2).toBeDefined();
       expect(gap2.affectedTokens).toContain(TOKEN_TYPES.USER_SESSION);
@@ -202,7 +204,7 @@ describe("Phase AD: Session & Token Lifecycle", () => {
       });
     });
 
-    it("USER_SESSION_SECRET has longest grace period (72h for 30-day sessions)", () => {
+    it("USER_SESSION_SECRET has longest grace period (72h for 7-day sessions)", () => {
       const userSecret = SECRET_ROTATION_SCHEDULE.find(
         (s) => s.secret === "USER_SESSION_SECRET"
       );
@@ -282,8 +284,8 @@ describe("Phase AD: Session & Token Lifecycle", () => {
       expect(isTokenRefreshable(TOKEN_TYPES.DEVICE_HMAC)).toBe(true);
     });
 
-    it("user session token is NOT refreshable (no endpoint)", () => {
-      expect(isTokenRefreshable(TOKEN_TYPES.USER_SESSION)).toBe(false);
+    it("user session token IS refreshable (refresh endpoint added — GAP-02 fix)", () => {
+      expect(isTokenRefreshable(TOKEN_TYPES.USER_SESSION)).toBe(true);
     });
 
     it("admin session token is NOT refreshable", () => {

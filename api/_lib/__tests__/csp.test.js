@@ -124,8 +124,11 @@ describe('V-03: CSP — positive security controls', () => {
   it('restricts connect-src to self and vercel.app', () => {
     const connectSrc = cspValue.match(/connect-src\s+([^;]+)/)?.[1] || '';
     expect(connectSrc).toContain("'self'");
-    expect(connectSrc).toContain('https://*.vercel.app');
-    // Should NOT contain bare wildcard (only subdomain wildcards like https://*.vercel.app are OK)
+    // Accept either wildcard subdomain (*.vercel.app) or specific origin (more secure — least privilege)
+    const hasWildcard = connectSrc.includes('https://*.vercel.app');
+    const hasSpecificOrigin = connectSrc.includes('https://virtual-match-hitifproject.vercel.app');
+    expect(hasWildcard || hasSpecificOrigin).toBe(true);
+    // Should NOT contain bare wildcard (only subdomain wildcards or specific origins are OK)
     expect(connectSrc).not.toMatch(/(^|\s)\*(\s|$)/);
   });
 
