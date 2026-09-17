@@ -629,10 +629,12 @@ const cleanupLog = createLogger('data-cleanup');
 
 async function handleDataCleanup(req, res) {
   // ── Authenticate cron call ──
-  const authHeader = req.headers['authorization'] || '';
-  const providedSecret = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const cleanupCronKey = req.headers['x-cron-key'] || '';
+  const cleanupAuthHeader = req.headers['authorization'] || '';
+  const cleanupBearerToken = cleanupAuthHeader.startsWith('Bearer ') ? cleanupAuthHeader.slice(7) : '';
+  const providedSecret = cleanupCronKey || cleanupBearerToken;
 
-  if (CLEANUP_CRON_SECRET && providedSecret !== CLEANUP_CRON_SECRET) {
+  if (CLEANUP_CRON_SECRET && !timingSafeEqual(providedSecret, CLEANUP_CRON_SECRET)) {
     cleanupLog.warn('Unauthorized cleanup attempt');
     return unauthorized(res, 'CRON_SECRET required');
   }
@@ -691,11 +693,14 @@ export default async function handler(req, res) {
     // Security: key is ONLY accepted via x-cron-key header.
     // Previously accepted via query param — removed to prevent secret leakage in logs.
     const cronKey = req.headers['x-cron-key'] || '';
+    const authHeader = req.headers['authorization'] || '';
+    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const providedSecret = cronKey || bearerToken;
     const expectedCronKey = process.env.CRON_SECRET || '';
 
     // ?manual=true only skips timing gates (e.g. "starts within 30 min"), never auth.
     // CRON key is mandatory in ALL cases (cron-job.org, Vercel Cron, manual, dev).
-    if (!expectedCronKey || !timingSafeEqual(cronKey, expectedCronKey)) {
+    if (!expectedCronKey || !timingSafeEqual(providedSecret, expectedCronKey)) {
       return unauthorized(res);
     }
 

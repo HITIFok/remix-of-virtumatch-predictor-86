@@ -35,14 +35,14 @@ export const TOKEN_REGISTRY = Object.freeze([
     type: TOKEN_TYPES.USER_SESSION,
     description: 'HMAC-SHA256 signed user session token (magic link verification)',
     format: 'base64url(timestamp).base64url(userId).base64url(hmac)',
-    expiryMs: 30 * 24 * 60 * 60 * 1000, // 30 days
-    expiryLabel: '30 days',
+    expiryMs: 7 * 24 * 60 * 60 * 1000, // 7 days (reduced from 30 days — GAP-02 fix)
+    expiryLabel: '7 days',
     signingKey: 'USER_SESSION_SECRET (env var)',
     verification: 'timing-safe HMAC verification',
-    revocable: false,
-    revocationMethod: 'None — rotate USER_SESSION_SECRET to invalidate ALL sessions',
+    revocable: true,
+    revocationMethod: 'Token blacklist (in-memory, pending Redis migration) + rotate USER_SESSION_SECRET to invalidate ALL sessions',
     singleUse: false,
-    refreshable: false, // No refresh endpoint — must re-authenticate
+    refreshable: true, // Refresh token endpoint available
     rotationAutomated: false,
     sourceFile: 'api/_lib/auth.js',
   },
@@ -93,10 +93,10 @@ export const TOKEN_SECURITY_GAPS = Object.freeze([
   {
     id: 'GAP-02',
     severity: 'HIGH',
-    description: '30-day user sessions with no revocation or refresh rotation',
+    description: '7-day user sessions with revocation and refresh rotation',
     affectedTokens: [TOKEN_TYPES.USER_SESSION],
-    mitigation: 'Reduce to 7 days or implement refresh token rotation',
-    status: 'DOCUMENTED',
+    mitigation: 'Reduced to 7 days. Refresh token endpoint added. Token revocation implemented (in-memory).',
+    status: 'RESOLVED',
   },
   {
     id: 'GAP-03',

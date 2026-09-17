@@ -3,6 +3,10 @@
 
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
+
+const analyzeLimiter = createRateLimiter('analyze-match', { max: 10, windowMs: 60 * 1000 });
 
 const maskKey = (key) => key ? `${key.substring(0, 6)}...${key.substring(key.length - 4)}` : 'NOT_SET';
 
@@ -571,6 +575,17 @@ export default async function handler(req, res) {
   }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // ── Rate limiting ──
+  const clientIp = getClientIp(req);
+  const rateLimit = analyzeLimiter.check(clientIp);
+  if (!rateLimit.allowed) {
+    return res.status(429).json({
+      success: false,
+      error: 'Trop de requêtes. Réessayez plus tard.',
+      retryAfter: rateLimit.retryAfter
+    });
   }
 
   // ── Global timeout: ensures we ALWAYS return JSON, never Vercel HTML ──

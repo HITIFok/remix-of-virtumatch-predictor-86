@@ -493,36 +493,40 @@ async function handleDeleteAccount(req, res) {
     `;
     const deviceIds = devices.map(d => d.device_id);
 
-    // Step 1: Delete predictions
-    const predResult = await sql`DELETE FROM predictions WHERE user_id = ${userId}`;
-    deletionResults.predictions = Number(predResult.count);
+    // Wrap all deletion operations in a transaction for atomicity
+    await sql.begin(async (tx) => {
+      // Step 1: Delete predictions
+      const predResult = await tx`DELETE FROM predictions WHERE user_id = ${userId}`;
+      deletionResults.predictions = Number(predResult.count);
 
-    // Step 2: Delete premium activations
-    const premResult = await sql`DELETE FROM premium_activations WHERE user_id = ${userId}`;
-    deletionResults.premium_activations = Number(premResult.count);
+      // Step 2: Delete premium activations
+      const premResult = await tx`DELETE FROM premium_activations WHERE user_id = ${userId}`;
+      deletionResults.premium_activations = Number(premResult.count);
 
-    // Step 3: Dereference device from access codes
+      // Step 3: Dereference device from access codes
+      for (const deviceId of deviceIds) {
+        await tx`UPDATE access_codes SET used_by_device = NULL WHERE used_by_device = ${deviceId}`;
+      }
+
+      // Step 4: Delete magic links
+      const magicResult = await tx`DELETE FROM magic_links WHERE email = ${email}`;
+      deletionResults.magic_links = Number(magicResult.count);
+
+      // Step 5: Delete device secrets (invalidates all HMAC tokens)
+      for (const deviceId of deviceIds) {
+        await tx`DELETE FROM device_secrets WHERE device_id = ${deviceId}`;
+      }
+
+      // Step 6: Delete user record (parent table — last)
+      await tx`DELETE FROM users WHERE id = ${userId}`;
+      deletionResults.users = 1;
+    });
+
+    // Revoke device tokens and sessions outside the transaction (in-memory only)
     for (const deviceId of deviceIds) {
-      await sql`UPDATE access_codes SET used_by_device = NULL WHERE used_by_device = ${deviceId}`;
-    }
-
-    // Step 4: Delete magic links
-    const magicResult = await sql`DELETE FROM magic_links WHERE email = ${email}`;
-    deletionResults.magic_links = Number(magicResult.count);
-
-    // Step 5: Delete device secrets (invalidates all HMAC tokens)
-    for (const deviceId of deviceIds) {
-      await sql`DELETE FROM device_secrets WHERE device_id = ${deviceId}`;
-      // Revoke device tokens in blacklist
       revokeDeviceTokens(deviceId, 'USER_REQUEST');
     }
-
-    // Step 6: Revoke all user sessions
     revokeUserSessions(userId, 'USER_REQUEST');
-
-    // Step 7: Delete user record (parent table — last)
-    await sql`DELETE FROM users WHERE id = ${userId}`;
-    deletionResults.users = 1;
 
     await sql.end();
 

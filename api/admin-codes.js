@@ -133,8 +133,9 @@ async function handleLogin(req, res, body) {
   } catch (err) {
     log.error('Login exception', undefined, { cause: err });
     return internalError(res, err);
+  } finally {
+    try { await sql.end(); } catch { /* ignore */ }
   }
-}
 
 // ═══════════════════════════════════════════════════════════════════
 // Verify handler — POST ?action=verify
@@ -405,6 +406,7 @@ export default async function handler(req, res) {
 
   const token = extractToken(req);
   if (!verifyToken(token).valid) {
+    try { await sql.end(); } catch { /* ignore */ }
     return unauthorized(res, 'Session admin invalide ou expirée');
   }
 
@@ -417,5 +419,6 @@ export default async function handler(req, res) {
   } catch (err) {
     log.error('Admin handler exception', undefined, { cause: err });
     return internalError(res, err);
+  } finally {
+    try { await sql.end(); } catch { /* ignore */ }
   }
-}

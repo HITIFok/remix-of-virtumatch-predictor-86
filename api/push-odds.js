@@ -64,23 +64,34 @@ export default async function handler(req, res) {
       return invalidInput(res, 'No data provided');
     }
 
+    // Payload size limit (max 500 KB)
+    const MAX_PAYLOAD_SIZE = 500_000;
+    const payloadStr = JSON.stringify(body);
+    if (payloadStr.length > MAX_PAYLOAD_SIZE) {
+      try { await sql.end(); } catch {}
+      return res.status(400).json({ success: false, error: 'Payload trop volumineux (max 500 KB)' });
+    }
+
     const leagueSlug = league || '';
     const leagueId = body.leagueId || '';
     const now = new Date().toISOString();
     const upsertResults = [];
 
     // Helper: DELETE old data then INSERT fresh (no UNIQUE constraint on scraped_data)
+    // Wrapped in a transaction for atomicity
     async function upsertScrapedData(dataType, payload) {
-      await sql`
-        DELETE FROM scraped_data
-        WHERE data_type = ${dataType} AND league = ${leagueSlug}
-      `;
-      if (payload.length > 0) {
-        await sql`
-          INSERT INTO scraped_data (data_type, league, league_id, payload, scraped_at)
-          VALUES (${dataType}, ${leagueSlug}, ${leagueId}, ${JSON.stringify(payload)}, ${now})
+      await sql.begin(async (tx) => {
+        await tx`
+          DELETE FROM scraped_data
+          WHERE data_type = ${dataType} AND league = ${leagueSlug}
         `;
-      }
+        if (payload.length > 0) {
+          await tx`
+            INSERT INTO scraped_data (data_type, league, league_id, payload, scraped_at)
+            VALUES (${dataType}, ${leagueSlug}, ${leagueId}, ${JSON.stringify(payload)}, ${now})
+          `;
+        }
+      });
     }
 
     // Upsert matches
