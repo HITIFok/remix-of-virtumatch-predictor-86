@@ -1094,3 +1094,30 @@ Stage Summary:
 - OWASP Top 10: 10/10 MITIGATED
 - GAP-01/02: RESOLVED
 - TypeScript: CLEAN
+---
+Task ID: phase-3
+Agent: main
+Task: Phase 3 — Feature Snapshot & Historical Traceability
+
+Work Log:
+- Audited predictions table schema (45 columns, 6 indexes, critical gaps identified)
+- Identified 80 features used by prediction-engine.ts across 8 families
+- Built feature-snapshot.ts module (creation, validation, hashing, provenance, reproducibility)
+- Built historical-reconstruction.ts (getFormAtTimestamp, getH2HAtTimestamp, getStatsAtTimestamp)
+- Created 006_feature_snapshot.sql migration (JSONB, versioning, hashes, 6 indexes - retrocompatible)
+- Updated predictions.js API to accept/store feature_snapshot and versioning fields
+- Created 47 tests covering: creation, validation, timestamps, leakage, reconstruction, reproducibility, no-fake-data, versioning
+- Built backtest-framework-v3.ts with Two Backtests (A: odds-validated, B: full model)
+- Created 7 documentation reports
+- All 986 tests pass (48 unit + 938 API)
+- Build succeeds
+- Backtest v3 runs successfully
+
+Stage Summary:
+- Feature snapshot system enables answering "what data was used at prediction time?"
+- Provenance system: RECORDED/RECONSTRUCTED/UNKNOWN/UNSAFE (never defaults to SAFE)
+- SHA-256 hashing for reproducibility verification
+- Temporal reconstruction with hard cutoff prevents future data leakage
+- Artificial leak tests confirm no leakage in form and H2H
+- Two back% Backtests: A (odds-validated,0% scientifically valid, B (full model, validated only with snapshots)
+- Section 26 success criterion verified: can trace every feature to source with timestamp and provenance
