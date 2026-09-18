@@ -86,6 +86,15 @@ function validatePrediction(body) {
       score_home: typeof body.score_home === 'number' ? Math.min(Math.max(body.score_home, 0), 99) : null,
       score_away: typeof body.score_away === 'number' ? Math.min(Math.max(body.score_away, 0), 99) : null,
       exact_score: body.exact_score ? String(body.exact_score).substring(0, 10) : null,
+      // Phase 3: Feature snapshot & traceability
+      feature_snapshot: body.feature_snapshot || null,
+      model_version: body.model_version ? String(body.model_version).substring(0, 20) : null,
+      feature_version: body.feature_version ? String(body.feature_version).substring(0, 20) : null,
+      config_version: body.config_version ? String(body.config_version).substring(0, 20) : null,
+      calibration_version: body.calibration_version ? String(body.calibration_version).substring(0, 20) : null,
+      dataset_version: body.dataset_version ? String(body.dataset_version).substring(0, 20) : null,
+      feature_snapshot_hash: body.feature_snapshot_hash ? String(body.feature_snapshot_hash).substring(0, 80) : null,
+      prediction_hash: body.prediction_hash ? String(body.prediction_hash).substring(0, 80) : null,
     },
   };
 }
@@ -137,6 +146,17 @@ function mapToCamelCase(row) {
     actualScore: row.actual_score,
     actualHomeScore: row.actual_home_score,
     actualAwayScore: row.actual_away_score,
+    // Phase 3: Feature snapshot fields
+    featureSnapshot: row.feature_snapshot,
+    modelVersion: row.model_version,
+    featureVersion: row.feature_version,
+    configVersion: row.config_version,
+    calibrationVersion: row.calibration_version,
+    datasetVersion: row.dataset_version,
+    featureSnapshotHash: row.feature_snapshot_hash,
+    predictionHash: row.prediction_hash,
+    snapshotTimestamp: row.snapshot_timestamp,
+    provenanceStatus: row.provenance_status,
   };
 }
 
@@ -252,6 +272,9 @@ export default async function handler(req, res) {
 
     try {
       const sql = createSql();
+      // Compute provenance_status from feature_snapshot presence
+      const provenanceStatus = d.feature_snapshot ? 'PARTIALLY_VALID' : 'UNKNOWN';
+
       const result = await sql`
         INSERT INTO predictions (
           match_id, home_team, away_team, league, league_id, round,
@@ -266,7 +289,11 @@ export default async function handler(req, res) {
           winner_1x2,
           device_id, status, home, away,
           score_home, score_away, exact_score,
-          user_id
+          user_id,
+          feature_snapshot, model_version, feature_version, config_version,
+          calibration_version, dataset_version,
+          feature_snapshot_hash, prediction_hash,
+          snapshot_timestamp, provenance_status
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
           ${d.odd_home}, ${d.odd_draw}, ${d.odd_away},
@@ -280,7 +307,12 @@ export default async function handler(req, res) {
           ${d.winner_1x2},
           ${d.device_id}, ${d.status}, ${d.home}, ${d.away},
           ${d.score_home}, ${d.score_away}, ${d.exact_score},
-          ${userId || null}
+          ${userId || null},
+          ${d.feature_snapshot ? sql.json(d.feature_snapshot) : null},
+          ${d.model_version}, ${d.feature_version}, ${d.config_version},
+          ${d.calibration_version}, ${d.dataset_version},
+          ${d.feature_snapshot_hash}, ${d.prediction_hash},
+          NOW(), ${provenanceStatus}
         )
         RETURNING *
       `;
