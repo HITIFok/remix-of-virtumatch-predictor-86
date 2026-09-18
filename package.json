@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "test:api": "vitest run --config vitest.api.config.ts",
     "test:api:watch": "vitest --config vitest.api.config.ts",
-    "test:all": "vitest run && vitest run --config vitest.api.config.ts"
+    "test:all": "vitest run && vitest run --config vitest.api.config.ts",
+    "backtest": "npx tsx scripts/backtest-framework.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
