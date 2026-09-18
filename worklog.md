@@ -1121,3 +1121,48 @@ Stage Summary:
 - Artificial leak tests confirm no leakage in form and H2H
 - Two back% Backtests: A (odds-validated,0% scientifically valid, B (full model, validated only with snapshots)
 - Section 26 success criterion verified: can trace every feature to source with timestamp and provenance
+
+---
+Task ID: phase4
+Agent: main
+Task: Phase 4 — Backtest Réel Neon & Validation Statistique
+
+Work Log:
+- Preflight checks: commit 3c7e747, working tree clean, 48 frontend tests pass, 938 API tests pass, build succeeds
+- Read codebase: prediction-engine.ts (1351 lines, 13-step Poisson pipeline), prediction-config.ts (42 coefficients), feature-snapshot.ts, historical-reconstruction.ts
+- NEON_DATABASE_URL not available locally — cannot connect to Neon PostgreSQL
+- Built comprehensive Phase 4 backtest script (scripts/phase4-real-backtest.ts): 800+ lines
+  - Neon connection attempt with honest fallback
+  - Dataset extraction, deduplication, temporal integrity
+  - Backtest A (odds-validated) with 4 baselines
+  - Backtest B (full model) with provenance filtering
+  - Temporal split (60/20/20 chronological)
+  - Walk-forward validation
+  - Ablation study (FULL, ODDS_ONLY, POISSON_ONLY, WITHOUT_AI)
+  - Double counting audit (6 findings: 2 HIGH, 2 MEDIUM, 2 LOW)
+  - AI_WEIGHT sweep on validation
+  - Calibration analysis (ECE, MCE, reliability diagram)
+  - Bootstrap confidence intervals (2000 resamples)
+  - McNemar significance tests
+  - Segmentation by league, outcome, favorite/underdog
+  - Leakage gate (10 conditions)
+  - 11 report files generated
+- Built Phase 4 code analysis script (scripts/phase4-analysis.ts): 500+ lines
+  - Engine behavior analysis (10 odds combinations)
+  - Key finding: model diverges only 0.03% from normalized odds without form/H2H/AI
+  - 0 prediction reversals vs odds
+  - Coefficient audit: 42 total, 15 arbitrary, 27 heuristic, 0 empirically calibrated
+  - Answered all 18 questions with evidence and confidence levels
+  - 4 additional report files generated
+- Added npm script: backtest:real
+- Scientific Validation Status: NOT VALIDATED (insufficient data, no Neon access)
+- All reports generated and consistent
+
+Stage Summary:
+- Phase 4 complete with honest assessment: NOT VALIDATED
+- FULL MODEL VALIDATION PENDING — INSUFFICIENT HISTORICAL SNAPSHOT COVERAGE
+- 15 report/analysis files produced
+- Key finding: model is essentially a sophisticated odds normalizer (0.03% avg divergence)
+- Double counting confirmed: form→momentum (HIGH), AI→odds (HIGH)
+- 0/42 coefficients empirically calibrated
+- Infrastructure ready for real validation when NEON_DATABASE_URL is provided

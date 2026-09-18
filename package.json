@@ -15,7 +15,8 @@
     "test:api:watch": "vitest --config vitest.api.config.ts",
     "test:all": "vitest run && vitest run --config vitest.api.config.ts",
     "backtest": "npx tsx scripts/backtest-framework.ts",
-    "backtest:v3": "npx tsx scripts/backtest-framework-v3.ts"
+    "backtest:v3": "npx tsx scripts/backtest-framework-v3.ts",
+    "backtest:real": "npx tsx scripts/phase4-real-backtest.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
