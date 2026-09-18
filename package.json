@@ -16,7 +16,11 @@
     "test:all": "vitest run && vitest run --config vitest.api.config.ts",
     "backtest": "npx tsx scripts/backtest-framework.ts",
     "backtest:v3": "npx tsx scripts/backtest-framework-v3.ts",
-    "backtest:real": "npx tsx scripts/phase4-real-backtest.ts"
+    "backtest:real": "npx tsx scripts/phase4-real-backtest.ts",
+    "phase5": "npx tsx scripts/phase5-production-snapshot.ts",
+    "dataset:health": "npx tsx scripts/phase5-production-snapshot.ts --health-only",
+    "dataset:export": "echo 'Use GET /api/dataset-export with auth token'",
+    "dataset:validate": "npx tsx scripts/phase5-production-snapshot.ts --validate-only"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

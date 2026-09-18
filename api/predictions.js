@@ -272,8 +272,26 @@ export default async function handler(req, res) {
 
     try {
       const sql = createSql();
-      // Compute provenance_status from feature_snapshot presence
-      const provenanceStatus = d.feature_snapshot ? 'PARTIALLY_VALID' : 'UNKNOWN';
+      // Compute provenance_status from feature_snapshot presence (Phase 5)
+      // Enhanced: provenance is RECORDED if snapshot has all required fields
+      let provenanceStatus = 'UNKNOWN';
+      if (d.feature_snapshot && typeof d.feature_snapshot === 'object') {
+        const snap = d.feature_snapshot;
+        const hasOdds = snap.odds && snap.odds.source_timestamp;
+        const hasForm = snap.form && snap.form.home && snap.form.away;
+        const hasStats = snap.stats && snap.stats.home && snap.stats.away;
+        if (hasOdds && hasForm && hasStats) {
+          provenanceStatus = 'PARTIALLY_VALID';
+        } else if (hasOdds) {
+          provenanceStatus = 'PARTIALLY_VALID';  // odds-only is still partially valid
+        } else {
+          provenanceStatus = 'UNKNOWN';
+        }
+      }
+
+      // Phase 5: Three temporal timestamps
+      const tPrediction = new Date().toISOString();
+      const tFeature = d.feature_snapshot?.odds?.source_timestamp || null;
 
       const result = await sql`
         INSERT INTO predictions (
@@ -293,7 +311,8 @@ export default async function handler(req, res) {
           feature_snapshot, model_version, feature_version, config_version,
           calibration_version, dataset_version,
           feature_snapshot_hash, prediction_hash,
-          snapshot_timestamp, provenance_status
+          snapshot_timestamp, provenance_status,
+          t_prediction, t_feature
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
           ${d.odd_home}, ${d.odd_draw}, ${d.odd_away},
@@ -312,7 +331,8 @@ export default async function handler(req, res) {
           ${d.model_version}, ${d.feature_version}, ${d.config_version},
           ${d.calibration_version}, ${d.dataset_version},
           ${d.feature_snapshot_hash}, ${d.prediction_hash},
-          NOW(), ${provenanceStatus}
+          NOW(), ${provenanceStatus},
+          ${tPrediction}, ${tFeature}
         )
         RETURNING *
       `;
