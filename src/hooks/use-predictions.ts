@@ -310,7 +310,11 @@ export function usePredictions() {
 
       await loadPredictions() // Skip auto-verify after save (just saved)
 
-      return (savedData?.row || savedData) as Prediction
+      // Phase 5.3.1 FIX: API returns { prediction: ... } not { row: ... }
+      // Support both shapes for backward compatibility
+      const predictionData = savedData?.prediction || savedData?.row || savedData;
+      console.log(`[savePrediction] POST ${res.status}: id=${predictionData?.id}, has_snapshot=${!!predictionData?.featureSnapshot}, has_ctx_hash=${!!predictionData?.aiContextHash}`);
+      return predictionData as Prediction
     } catch (err: any) {
       console.error('Error saving prediction:', err)
       if (err?.code === '23505') {

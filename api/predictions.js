@@ -264,6 +264,15 @@ export default async function handler(req, res) {
       return res.status(400).json({ success: false, error: 'Validation failed', details: validation.errors });
     }
 
+    // Phase 5.3.1 diagnostic: log which scientific fields are present in the POST body
+    const scientificFieldsPresent = [
+      'feature_snapshot', 'ai_context_hash', 'ai_input_hash', 'ai_prompt_hash',
+      'ai_response_hash', 'ai_model', 'ai_prompt_version', 'ai_trace',
+      'completeness_score', 'temporal_safety_score', 'scientific_collection_eligible',
+      'version_freeze', 'model_version', 'feature_version'
+    ].filter(f => body[f] !== undefined && body[f] !== null);
+    console.log(`[predictions POST] Scientific fields in body: ${scientificFieldsPresent.length}/${14} [${scientificFieldsPresent.join(', ')}]`);
+
     // Verify auth — accept either user session or device HMAC
     const userId = await requireUserAuth(req);
     let authedDeviceId = null;

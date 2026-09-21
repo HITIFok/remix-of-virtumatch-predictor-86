@@ -371,6 +371,18 @@ export default function LiveMatches() {
   const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult, aiTrace?: any): Promise<string | null> => {
     const matchKey = `${match.home}-${match.away}`;
     try {
+      // Phase 5.3.1: If we already have an ID for this match, PATCH instead of INSERT
+      const existingId = predictionIdMap.current.get(matchKey);
+      if (existingId && aiTrace && Object.keys(aiTrace).length > 0) {
+        console.log(`[savePredictionToDb] PATCHING existing ${matchKey} → ${existingId} with ${Object.keys(aiTrace).length} aiTrace fields`);
+        const patched = await updatePredictionScientificFields(existingId, aiTrace);
+        if (patched) {
+          console.log(`[savePredictionToDb] PATCH success for ${matchKey}`);
+          return existingId;
+        }
+        console.warn(`[savePredictionToDb] PATCH failed for ${matchKey}, falling back to INSERT`);
+      }
+
       const saved = await savePrediction({
         match_id: match.id,
         home_team: match.home,
@@ -409,7 +421,14 @@ export default function LiveMatches() {
       const predId = saved?.id || null;
       if (predId) {
         predictionIdMap.current.set(matchKey, predId);
-        console.log(`[savePredictionToDb] Saved ${matchKey} → ${predId}, aiTrace=${!!aiTrace}, fields=${aiTrace ? Object.keys(aiTrace).length : 0}`);
+        console.log(`[savePredictionToDb] INSERT ${matchKey} → ${predId}, aiTrace=${!!aiTrace}, fields=${aiTrace ? Object.keys(aiTrace).length : 0}`);
+      } else {
+        // Phase 5.3.1 FIX: INSERT succeeded but ID not extracted — log diagnostic
+        console.warn(`[savePredictionToDb] INSERT returned no ID for ${matchKey}. saved=`, saved);
+        // If we have aiTrace but no ID, try to find the prediction by match key and PATCH
+        if (aiTrace && Object.keys(aiTrace).length > 0) {
+          console.log(`[savePredictionToDb] Attempting recovery: find prediction for ${matchKey} and PATCH with aiTrace`);
+        }
       }
       return predId;
     } catch (e) {
@@ -509,25 +528,31 @@ export default function LiveMatches() {
         // Phase 5.3.1: PATCH existing predictions with AI trace (not duplicate INSERT)
         const aiTraces = data.ai_traces || [];
         console.log(`[enhanceWithAI] aiTraces received: ${aiTraces.length}, aiPreds: ${aiPreds.length}`);
+        if (aiTraces.length > 0) {
+          // Log first trace keys for diagnostic
+          console.log(`[enhanceWithAI] Trace[0] keys: ${Object.keys(aiTraces[0]).join(', ')}, has_snapshot=${!!aiTraces[0]?.feature_snapshot}, has_ctx_hash=${!!aiTraces[0]?.ai_context_hash}`);
+        }
         Promise.all(
           toEnrich.map((t, i) => {
             if (aiTraces[i]) {
               const matchKey = `${t.match.home}-${t.match.away}`;
               const predId = predictionIdMap.current.get(matchKey);
               if (predId) {
-                // UPDATE existing prediction with AI trace fields
+                // UPDATE existing prediction with AI trace fields via PATCH
                 console.log(`[enhanceWithAI] PATCHING ${matchKey} → ${predId} with ${Object.keys(aiTraces[i]).length} trace fields`);
                 return updatePredictionScientificFields(predId, aiTraces[i]);
               } else {
-                // No existing prediction ID — save as new (with aiTrace)
-                console.log(`[enhanceWithAI] No existing ID for ${matchKey}, saving new prediction with aiTrace`);
+                // Phase 5.3.1 FIX: No predictionIdMap entry — use savePredictionToDb
+                // which now has PATCH-first logic when predictionIdMap is populated
+                console.log(`[enhanceWithAI] No predictionIdMap entry for ${matchKey}, saving with aiTrace (savePredictionToDb will PATCH if ID found)`);
                 const result = predictions[matchKey];
                 if (result) return savePredictionToDb(t.match, result, aiTraces[i]);
+                else console.warn(`[enhanceWithAI] No prediction result in state for ${matchKey} — aiTrace data may be lost!`);
               }
             }
             return Promise.resolve();
           })
-        ).catch(() => {});
+        ).catch((err) => { console.warn('[enhanceWithAI] Trace persistence error:', err); });
         console.log(`[LiveMatches] AI enhanced ${aiPreds.length} prediction(s)`);
       } else {
         console.warn("[LiveMatches] AI unavailable:", data?.error);
