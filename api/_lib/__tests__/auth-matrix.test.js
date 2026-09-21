@@ -319,11 +319,26 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(src).toContain("handleHealthCheck");
     });
 
+    it("verify-predictions.js supports snapshot-health action (consolidated)", () => {
+      const src = fs.readFileSync(path.join(apiDir, "verify-predictions.js"), "utf-8");
+      expect(src).toContain("snapshot-health");
+      expect(src).toContain("handleSnapshotHealth");
+    });
+
+    it("verify-predictions.js supports dataset-export action (consolidated)", () => {
+      const src = fs.readFileSync(path.join(apiDir, "verify-predictions.js"), "utf-8");
+      expect(src).toContain("dataset-export");
+      expect(src).toContain("handleDatasetExport");
+    });
+
     it("standalone endpoint files no longer exist", () => {
       expect(fs.existsSync(path.join(apiDir, "refresh-token.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "account-delete.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "data-cleanup.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "health.js"))).toBe(false);
+      // Phase 5: consolidated into verify-predictions.js (Vercel Hobby 12-function limit)
+      expect(fs.existsSync(path.join(apiDir, "snapshot-health.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "dataset-export.js"))).toBe(false);
     });
   });
 });

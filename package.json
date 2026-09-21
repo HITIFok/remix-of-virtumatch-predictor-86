@@ -20,7 +20,7 @@
     "phase5": "npx tsx scripts/phase5-production-snapshot.ts",
     "phase5.2": "npx tsx scripts/phase5.2-scientific-golive.ts",
     "dataset:health": "npx tsx scripts/phase5-production-snapshot.ts --health-only",
-    "dataset:export": "echo 'Use GET /api/dataset-export with auth token'",
+    "dataset:export": "echo 'Use GET /api/verify-predictions?action=dataset-export with auth token'",
     "dataset:validate": "npx tsx scripts/phase5-production-snapshot.ts --validate-only",
     "scientific:golive": "npx tsx scripts/phase5.2-scientific-golive.ts"
   },

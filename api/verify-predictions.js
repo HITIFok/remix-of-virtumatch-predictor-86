@@ -269,6 +269,17 @@ async function verifyPrediction(pred, activeByLeague, apiCache, sql) {
 // Monitoring endpoint for uptime checks and deployment verification
 // ═══════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════
+// SNAPSHOT HEALTH — GET ?action=snapshot-health
+// Phase 5 — Consolidated from standalone snapshot-health.js
+// ═══════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════
+// DATASET EXPORT — GET ?action=dataset-export
+// Phase 5 — Consolidated from standalone dataset-export.js
+// NEVER exports: secrets, tokens, credentials, personal data
+// ═══════════════════════════════════════════════════════════════════
+
 async function handleHealthCheck(req, res) {
   // ── Authenticate cron call ──
   const cronKey = req.headers['x-cron-key'] || '';
@@ -341,6 +352,275 @@ async function handleHealthCheck(req, res) {
   return res.status(statusCode).json(checks);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// SNAPSHOT HEALTH CHECK — GET ?action=snapshot-health
+// Consolidated from standalone snapshot-health.js (Vercel Hobby limit)
+// ═══════════════════════════════════════════════════════════════════
+
+async function handleSnapshotHealth(req, res) {
+  // Require auth (user or device)
+  const userId = await requireUserAuth(req);
+  const deviceId = userId ? null : await requireAuth(req);
+  if (!userId && !deviceId) {
+    return unauthorized(res);
+  }
+
+  if (!NEON_DATABASE_URL) {
+    return internalError(res, null, 'Server not configured');
+  }
+
+  try {
+    const sql = createSql();
+
+    // Predictions last 24h
+    const stats24h = await sql`
+      SELECT
+        COUNT(*) as total,
+        COUNT(feature_snapshot) as with_snapshot,
+        COUNT(*) FILTER (WHERE provenance_status = 'UNKNOWN') as unknown_count,
+        COUNT(*) FILTER (WHERE provenance_status = 'UNSAFE') as unsafe_count,
+        COUNT(*) FILTER (WHERE provenance_status IN ('VALID', 'PARTIALLY_VALID')) as valid_count
+      FROM predictions
+      WHERE created_at > NOW() - INTERVAL '24 hours'
+    `;
+
+    // Overall stats
+    const overallStats = await sql`
+      SELECT
+        COUNT(*) as total,
+        COUNT(feature_snapshot) as with_snapshot,
+        COUNT(verified_at) as verified,
+        COUNT(*) FILTER (WHERE provenance_status = 'UNKNOWN') as unknown_count,
+        COUNT(*) FILTER (WHERE provenance_status = 'UNSAFE') as unsafe_count,
+        COUNT(*) FILTER (WHERE provenance_status IN ('VALID', 'PARTIALLY_VALID', 'RECORDED', 'PARTIALLY_VALID')) as valid_count,
+        COUNT(*) FILTER (WHERE provenance_status = 'RECONSTRUCTED') as reconstructed_count,
+        COUNT(DISTINCT model_version) as model_versions,
+        COUNT(DISTINCT feature_version) as feature_versions,
+        COUNT(DISTINCT config_version) as config_versions
+      FROM predictions
+    `;
+
+    // Immutability violations last 24h
+    const violations = await sql`
+      SELECT COUNT(*) as count
+      FROM snapshot_immutability_violations
+      WHERE detected_at > NOW() - INTERVAL '24 hours'
+    `.catch(() => [{ count: 0 }]);
+
+    // Hash mismatches last 24h
+    const hashMismatches = await sql`
+      SELECT COUNT(*) as count
+      FROM snapshot_audit_log
+      WHERE event_type = 'snapshot_hash_mismatch'
+        AND created_at > NOW() - INTERVAL '24 hours'
+    `.catch(() => [{ count: 0 }]);
+
+    await sql.end();
+
+    const s = stats24h[0];
+    const o = overallStats[0];
+    const total24h = Number(s.total) || 0;
+    const snapshot24h = Number(s.with_snapshot) || 0;
+    const totalAll = Number(o.total) || 0;
+
+    // Compute health status
+    let health = 'HEALTHY';
+    if (Number(violations[0].count) > 0 || Number(hashMismatches[0].count) > 0) {
+      health = 'UNHEALTHY';
+    } else if (Number(s.unsafe_count) > 0 || (total24h > 0 && snapshot24h / total24h < 0.9)) {
+      health = 'DEGRADED';
+    }
+
+    return res.status(200).json({
+      success: true,
+      health: {
+        status: health,
+        timestamp: new Date().toISOString(),
+        last_24h: {
+          predictions: total24h,
+          snapshots: snapshot24h,
+          snapshot_coverage_percent: total24h > 0 ? Math.round(snapshot24h / total24h * 10000) / 100 : 0,
+          valid: Number(s.valid_count),
+          unknown: Number(s.unknown_count),
+          unsafe: Number(s.unsafe_count),
+          immutability_violations: Number(violations[0].count),
+          hash_mismatches: Number(hashMismatches[0].count),
+        },
+        overall: {
+          total_predictions: totalAll,
+          with_snapshot: Number(o.with_snapshot),
+          verified: Number(o.verified),
+          valid: Number(o.valid_count),
+          reconstructed: Number(o.reconstructed_count),
+          unknown: Number(o.unknown_count),
+          unsafe: Number(o.unsafe_count),
+          model_versions: Number(o.model_versions),
+          feature_versions: Number(o.feature_versions),
+          config_versions: Number(o.config_versions),
+        },
+      },
+    });
+  } catch (err) {
+    console.error('[snapshot-health] Error:', err.message);
+    return res.status(500).json({ success: false, error: 'Health check failed' });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// DATASET EXPORT — GET ?action=dataset-export
+// Consolidated from standalone dataset-export.js (Vercel Hobby limit)
+// NEVER exports: secrets, tokens, credentials, personal data
+// ═══════════════════════════════════════════════════════════════════
+
+const MAX_EXPORT = 5000;
+
+function summarizeSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+
+  return {
+    has_odds: !!snapshot.odds,
+    has_form_home: !!(snapshot.form && snapshot.form.home),
+    has_form_away: !!(snapshot.form && snapshot.form.away),
+    has_h2h: !!snapshot.h2h,
+    has_stats_home: !!(snapshot.stats && snapshot.stats.home),
+    has_stats_away: !!(snapshot.stats && snapshot.stats.away),
+    has_ai: !!snapshot.ai,
+    has_anti_trap: !!snapshot.anti_trap,
+    has_derived: !!snapshot.derived,
+    has_coefficients: !!snapshot.coefficients,
+    schema_version: snapshot.schema_version,
+  };
+}
+
+async function handleDatasetExport(req, res) {
+  // Require user auth (admin-level operation)
+  const userId = await requireUserAuth(req);
+  if (!userId) {
+    return unauthorized(res);
+  }
+
+  if (!NEON_DATABASE_URL) {
+    return internalError(res, null, 'Server not configured');
+  }
+
+  try {
+    const sql = createSql();
+
+    // Query parameters
+    const split = req.query.split; // 'TRAIN', 'VALIDATION', 'TEST', or undefined (all)
+    const provenance = req.query.provenance; // filter by provenance
+    const limit = Math.min(parseInt(req.query.limit || '1000', 10), MAX_EXPORT);
+
+    // Build query conditions
+    const conditions = [];
+    if (split && ['TRAIN', 'VALIDATION', 'TEST'].includes(split)) {
+      conditions.push(sql`AND dataset_split = ${split}`);
+    }
+    if (provenance && ['RECORDED', 'RECONSTRUCTED', 'UNKNOWN', 'UNSAFE', 'VALID', 'PARTIALLY_VALID', 'INVALID'].includes(provenance)) {
+      conditions.push(sql`AND provenance_status = ${provenance}`);
+    }
+
+    // Export predictions with snapshots only
+    const rows = await sql`
+      SELECT
+        id,
+        home_team,
+        away_team,
+        league,
+        odd_home,
+        odd_draw,
+        odd_away,
+        prob_home,
+        prob_draw,
+        prob_away,
+        prediction,
+        confidence,
+        actual_outcome,
+        created_at,
+        t_prediction,
+        t_feature,
+        snapshot_timestamp,
+        feature_snapshot,
+        model_version,
+        feature_version,
+        config_version,
+        calibration_version,
+        dataset_version,
+        feature_snapshot_hash,
+        prediction_hash,
+        provenance_status,
+        dataset_split,
+        completeness_score,
+        temporal_safety_score
+      FROM predictions
+      WHERE feature_snapshot IS NOT NULL
+        ${sql.unsafe(conditions.map(c => c.text).join(' '))}
+      ORDER BY created_at ASC
+      LIMIT ${limit}
+    `;
+
+    await sql.end();
+
+    // Transform for export (remove sensitive data)
+    const exported = rows.map(row => ({
+      id: row.id,
+      home_team: row.home_team,
+      away_team: row.away_team,
+      league: row.league,
+      odds: {
+        home: row.odd_home,
+        draw: row.odd_draw,
+        away: row.odd_away,
+      },
+      probabilities: {
+        home: row.prob_home,
+        draw: row.prob_draw,
+        away: row.prob_away,
+      },
+      prediction: row.prediction,
+      confidence: row.confidence,
+      actual_outcome: row.actual_outcome,
+      timestamps: {
+        prediction: row.t_prediction || row.created_at,
+        feature: row.t_feature,
+        snapshot: row.snapshot_timestamp,
+      },
+      versions: {
+        model: row.model_version,
+        feature: row.feature_version,
+        config: row.config_version,
+        calibration: row.calibration_version,
+        dataset: row.dataset_version,
+      },
+      integrity: {
+        snapshot_hash: row.feature_snapshot_hash,
+        prediction_hash: row.prediction_hash,
+      },
+      provenance: row.provenance_status,
+      dataset_split: row.dataset_split,
+      completeness_score: row.completeness_score,
+      temporal_safety_score: row.temporal_safety_score,
+      // Feature snapshot summary (not full dump — too large for export)
+      feature_summary: summarizeSnapshot(row.feature_snapshot),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      dataset: {
+        exported_count: exported.length,
+        split_filter: split || 'ALL',
+        provenance_filter: provenance || 'ALL',
+        limit,
+        purpose: 'AUDIT_AND_ANALYSIS_ONLY',
+      },
+      predictions: exported,
+    });
+  } catch (err) {
+    console.error('[dataset-export] Error:', err.message);
+    return res.status(500).json({ success: false, error: 'Export failed' });
+  }
+}
+
 // ─── Main handler ──────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -350,10 +630,16 @@ export default async function handler(req, res) {
     return res.status(204).end('');
   }
 
-  // ── Health check action ──
+  // ── Action routing (consolidated endpoints) ──
   const action = String(req.query?.action || '').trim();
   if (req.method === 'GET' && action === 'health') {
     return await handleHealthCheck(req, res);
+  }
+  if (req.method === 'GET' && action === 'snapshot-health') {
+    return await handleSnapshotHealth(req, res);
+  }
+  if (req.method === 'GET' && action === 'dataset-export') {
+    return await handleDatasetExport(req, res);
   }
 
   const startTime = Date.now();

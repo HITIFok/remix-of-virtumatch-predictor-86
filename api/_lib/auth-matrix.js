@@ -107,7 +107,7 @@ export const API_AUTH_MATRIX = Object.freeze([
     corsEnabled: true,
     isPublic: false,
     riskLevel: 'MEDIUM',
-    notes: 'No explicit rate limit; cron key timing-safe; cron mode scans ALL predictions; health action provides monitoring/uptime endpoint',
+    notes: 'No explicit rate limit; cron key timing-safe; cron mode scans ALL predictions; health action provides monitoring/uptime endpoint; snapshot-health action (GET ?action=snapshot-health) requires User/Device auth; dataset-export action (GET ?action=dataset-export) requires User auth',
   },
   {
     endpoint: '/api/matches',
