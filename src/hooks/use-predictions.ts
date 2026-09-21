@@ -384,6 +384,28 @@ export function usePredictions() {
     }
   }, [autoVerifyPredictions, loadPredictions])
 
+  // Update scientific collection fields on an existing prediction (PATCH)
+  const updatePredictionScientificFields = useCallback(async (predictionId: string, fields: Record<string, any>) => {
+    try {
+      const authHeaders = await getAuthHeaders();
+      const res = await fetch(config.api.predictions, {
+        method: 'PATCH',
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prediction_id: predictionId, ...fields }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        console.warn('[updatePredictionScientificFields] PATCH failed:', res.status, errBody?.error);
+        return false;
+      }
+      console.log('[updatePredictionScientificFields] PATCH success:', predictionId);
+      return true;
+    } catch (err) {
+      console.warn('[updatePredictionScientificFields] Error:', err);
+      return false;
+    }
+  }, [])
+
   // Charger au montage
   useEffect(() => {
     loadPredictions()
@@ -395,6 +417,7 @@ export function usePredictions() {
     loading,
     error,
     savePrediction,
+    updatePredictionScientificFields,
     deletePrediction,
     deletePendingPredictions,
     verifyPredictions,

@@ -20,7 +20,7 @@ export const AUTH_TYPES = Object.freeze({
 export const API_AUTH_MATRIX = Object.freeze([
   {
     endpoint: '/api/predictions',
-    methods: ['GET', 'POST', 'DELETE'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     authRequired: true,
     authTypes: [AUTH_TYPES.USER_BEARER, AUTH_TYPES.DEVICE_HMAC],
     authFallback: 'Device HMAC accepted when User Bearer not present',

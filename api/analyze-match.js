@@ -742,11 +742,20 @@ export default async function handler(req, res) {
     const elapsed = Date.now() - startTime;
     console.log(`[analyze-match] Done via ${result.provider}: ${result.predictions.length} predictions in ${elapsed}ms`);
 
+    // Phase 5.3.1 diagnostic: verify ai_traces are produced
+    const aiTraces = result.ai_traces || [];
+    if (aiTraces.length > 0) {
+      const t0 = aiTraces[0];
+      console.log(`[analyze-match] DIAGNOSTIC: ai_traces[0] keys=${Object.keys(t0).join(',')}, has_snapshot=${!!t0.feature_snapshot}, has_ctx_hash=${!!t0.ai_context_hash}, has_inp_hash=${!!t0.ai_input_hash}, eligible=${t0.scientific_collection_eligible}`);
+    } else {
+      console.warn(`[analyze-match] DIAGNOSTIC: ai_traces is EMPTY! provider=${result.provider}`);
+    }
+
     return res.status(200).json({
       predictions: result.predictions,
       elapsed,
       provider: result.provider,
-      ai_traces: result.ai_traces || [],
+      ai_traces: aiTraces,
     });
   })();
 };

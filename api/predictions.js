@@ -176,7 +176,7 @@ function mapToCamelCase(row) {
 
 export default async function handler(req, res) {
   // CORS
-  setCorsHeaders(req, res, 'GET, POST, DELETE, OPTIONS', 'Content-Type, Authorization, x-device-id');
+  setCorsHeaders(req, res, 'GET, POST, PATCH, DELETE, OPTIONS', 'Content-Type, Authorization, x-device-id');
 
   if (req.method === 'OPTIONS') {
     return res.status(204).end('');
@@ -359,7 +359,10 @@ export default async function handler(req, res) {
         RETURNING *
       `;
       await sql.end();
-      return res.status(201).json({ success: true, prediction: mapToCamelCase(result[0]) });
+      // Phase 5.3.1 diagnostic: verify scientific fields were inserted
+      const saved = result[0];
+      console.log(`[predictions POST] DIAGNOSTIC: id=${saved.id}, has_snapshot=${!!saved.feature_snapshot}, has_ctx_hash=${!!saved.ai_context_hash}, has_inp_hash=${!!saved.ai_input_hash}, has_ai_trace=${!!saved.ai_trace}, eligible=${saved.scientific_collection_eligible}`);
+      return res.status(201).json({ success: true, prediction: mapToCamelCase(saved) });
     } catch (err) {
       console.error('[predictions POST] Error:', err.message);
       if (err?.code === '23505') {
@@ -456,6 +459,171 @@ export default async function handler(req, res) {
     } catch (err) {
       console.error('[predictions DELETE] Error:', err.message);
       return res.status(500).json({ success: false, error: 'Failed to delete predictions' });
+    }
+  }
+
+  // ─── PATCH: Update scientific collection fields ────────────────────────────
+  // Used by enhanceWithAI to add AI traceability to an existing prediction
+  // Immutability trigger allows NULL → value (only blocks non-NULL → different value)
+  if (req.method === 'PATCH') {
+    let body;
+    try {
+      body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    } catch {
+      return res.status(400).json({ success: false, error: 'Invalid JSON body' });
+    }
+
+    // Require prediction_id (UUID) and at least one scientific field
+    const predictionId = String(body.prediction_id || '').trim();
+    if (!predictionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(predictionId)) {
+      return res.status(400).json({ success: false, error: 'Valid prediction_id (UUID) required' });
+    }
+
+    // Auth: user or device
+    const userId = await requireUserAuth(req);
+    let authedDeviceId = null;
+    if (!userId) {
+      authedDeviceId = await requireAuth(req);
+      if (!authedDeviceId) {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+      }
+    }
+
+    try {
+      const sql = createSql();
+
+      // Build SET clause dynamically — only update provided scientific fields
+      const updates = [];
+      const params = [];
+
+      // Feature snapshot (JSONB)
+      if (body.feature_snapshot && typeof body.feature_snapshot === 'object') {
+        updates.push('feature_snapshot = $' + (params.length + 1));
+        params.push(sql.json(body.feature_snapshot));
+      }
+      if (body.feature_snapshot_hash) {
+        updates.push('feature_snapshot_hash = $' + (params.length + 1));
+        params.push(String(body.feature_snapshot_hash).substring(0, 80));
+      }
+      // Model versions
+      if (body.model_version) {
+        updates.push('model_version = $' + (params.length + 1));
+        params.push(String(body.model_version).substring(0, 20));
+      }
+      if (body.feature_version) {
+        updates.push('feature_version = $' + (params.length + 1));
+        params.push(String(body.feature_version).substring(0, 20));
+      }
+      if (body.config_version) {
+        updates.push('config_version = $' + (params.length + 1));
+        params.push(String(body.config_version).substring(0, 20));
+      }
+      if (body.calibration_version) {
+        updates.push('calibration_version = $' + (params.length + 1));
+        params.push(String(body.calibration_version).substring(0, 20));
+      }
+      if (body.dataset_version) {
+        updates.push('dataset_version = $' + (params.length + 1));
+        params.push(String(body.dataset_version).substring(0, 20));
+      }
+      // AI hashes
+      if (body.ai_context_hash) {
+        updates.push('ai_context_hash = $' + (params.length + 1));
+        params.push(String(body.ai_context_hash).substring(0, 80));
+      }
+      if (body.ai_input_hash) {
+        updates.push('ai_input_hash = $' + (params.length + 1));
+        params.push(String(body.ai_input_hash).substring(0, 80));
+      }
+      if (body.ai_prompt_hash) {
+        updates.push('ai_prompt_hash = $' + (params.length + 1));
+        params.push(String(body.ai_prompt_hash).substring(0, 80));
+      }
+      if (body.ai_response_hash) {
+        updates.push('ai_response_hash = $' + (params.length + 1));
+        params.push(String(body.ai_response_hash).substring(0, 80));
+      }
+      if (body.ai_prompt_version) {
+        updates.push('ai_prompt_version = $' + (params.length + 1));
+        params.push(String(body.ai_prompt_version).substring(0, 20));
+      }
+      if (body.ai_model) {
+        updates.push('ai_model = $' + (params.length + 1));
+        params.push(String(body.ai_model).substring(0, 50));
+      }
+      // AI trace (JSONB)
+      if (body.ai_trace && typeof body.ai_trace === 'object') {
+        updates.push('ai_trace = $' + (params.length + 1));
+        params.push(sql.json(body.ai_trace));
+      }
+      // Scores
+      if (typeof body.completeness_score === 'number') {
+        updates.push('completeness_score = $' + (params.length + 1));
+        params.push(Math.min(Math.max(body.completeness_score, 0), 1));
+      }
+      if (typeof body.temporal_safety_score === 'number') {
+        updates.push('temporal_safety_score = $' + (params.length + 1));
+        params.push(Math.min(Math.max(body.temporal_safety_score, 0), 1));
+      }
+      if (body.ai_provenance_risk) {
+        updates.push('ai_provenance_risk = $' + (params.length + 1));
+        params.push(String(body.ai_provenance_risk).substring(0, 30));
+      }
+      // Scientific eligibility
+      if (typeof body.scientific_collection_eligible === 'boolean') {
+        updates.push('scientific_collection_eligible = $' + (params.length + 1));
+        params.push(body.scientific_collection_eligible);
+      }
+      // Version freeze (JSONB)
+      if (body.version_freeze && typeof body.version_freeze === 'object') {
+        updates.push('version_freeze = $' + (params.length + 1));
+        params.push(sql.json(body.version_freeze));
+      }
+      // Provenance status
+      if (body.provenance_status) {
+        updates.push('provenance_status = $' + (params.length + 1));
+        params.push(String(body.provenance_status).substring(0, 30));
+      }
+      // Temporal timestamps
+      if (body.t_feature) {
+        updates.push('t_feature = $' + (params.length + 1));
+        params.push(body.t_feature);
+      }
+
+      if (updates.length === 0) {
+        await sql.end();
+        return res.status(400).json({ success: false, error: 'No scientific fields provided to update' });
+      }
+
+      // Add prediction_id as last param
+      const idParam = '$' + (params.length + 1);
+      params.push(predictionId);
+
+      // Add ownership filter
+      if (userId) {
+        params.push(userId);
+        const userParam = '$' + params.length;
+        const query = `UPDATE predictions SET ${updates.join(', ')} WHERE id = ${idParam}::uuid AND user_id = ${userParam} RETURNING *`;
+        const result = await sql.unsafe(query, params);
+        await sql.end();
+        if (result.length === 0) {
+          return res.status(404).json({ success: false, error: 'Prediction not found or not owned' });
+        }
+        return res.status(200).json({ success: true, prediction: mapToCamelCase(result[0]) });
+      } else {
+        params.push(authedDeviceId);
+        const deviceParam = '$' + params.length;
+        const query = `UPDATE predictions SET ${updates.join(', ')} WHERE id = ${idParam}::uuid AND device_id = ${deviceParam} RETURNING *`;
+        const result = await sql.unsafe(query, params);
+        await sql.end();
+        if (result.length === 0) {
+          return res.status(404).json({ success: false, error: 'Prediction not found or not owned' });
+        }
+        return res.status(200).json({ success: true, prediction: mapToCamelCase(result[0]) });
+      }
+    } catch (err) {
+      console.error('[predictions PATCH] Error:', err.message);
+      return res.status(500).json({ success: false, error: 'Failed to update prediction' });
     }
   }
 

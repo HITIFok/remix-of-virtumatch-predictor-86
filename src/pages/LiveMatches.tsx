@@ -349,7 +349,7 @@ export default function LiveMatches() {
     preloadedCount,
   } = useLiveMatches();
 
-  const { savePrediction } = usePredictions();
+  const { savePrediction, updatePredictionScientificFields } = usePredictions();
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [batchPredicting, setBatchPredicting] = useState(false);
@@ -361,13 +361,17 @@ export default function LiveMatches() {
   const aiCache = useRef<Map<string, AIPrediction>>(new Map());
   // Debounce : empêcher les clics multiples rapides
   const predictingRef = useRef<string | null>(null);
+  // Map matchKey → prediction UUID (for PATCH updates after AI enhancement)
+  const predictionIdMap = useRef<Map<string, string>>(new Map());
 
   // fetchMatches is already called by the hook's own useEffect on mount — no duplicate needed
 
   // Helper: sauvegarder une prédiction en BDD
-  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult, aiTrace?: any) => {
+  // Returns the prediction UUID if saved, or null
+  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult, aiTrace?: any): Promise<string | null> => {
+    const matchKey = `${match.home}-${match.away}`;
     try {
-      await savePrediction({
+      const saved = await savePrediction({
         match_id: match.id,
         home_team: match.home,
         away_team: match.away,
@@ -401,8 +405,16 @@ export default function LiveMatches() {
         // Phase 5.3: AI traceability — forward from analyze-match response
         ...(aiTrace || {}),
       });
+      // Store prediction UUID for later PATCH update (AI trace)
+      const predId = saved?.id || null;
+      if (predId) {
+        predictionIdMap.current.set(matchKey, predId);
+        console.log(`[savePredictionToDb] Saved ${matchKey} → ${predId}, aiTrace=${!!aiTrace}, fields=${aiTrace ? Object.keys(aiTrace).length : 0}`);
+      }
+      return predId;
     } catch (e) {
       console.log('Prediction already saved or error:', e);
+      return null;
     }
   };
 
@@ -494,15 +506,24 @@ export default function LiveMatches() {
             processMatch(match, aiPreds[i]);
           }
         }
-        // Sauvegarde BDD en arrière-plan (non-bloquant)
-        // Phase 5.3: Pass AI trace data from analyze-match response
+        // Phase 5.3.1: PATCH existing predictions with AI trace (not duplicate INSERT)
         const aiTraces = data.ai_traces || [];
+        console.log(`[enhanceWithAI] aiTraces received: ${aiTraces.length}, aiPreds: ${aiPreds.length}`);
         Promise.all(
           toEnrich.map((t, i) => {
-            if (aiPreds[i]) {
+            if (aiTraces[i]) {
               const matchKey = `${t.match.home}-${t.match.away}`;
-              const result = predictions[matchKey];
-              if (result) return savePredictionToDb(t.match, result, aiTraces[i]);
+              const predId = predictionIdMap.current.get(matchKey);
+              if (predId) {
+                // UPDATE existing prediction with AI trace fields
+                console.log(`[enhanceWithAI] PATCHING ${matchKey} → ${predId} with ${Object.keys(aiTraces[i]).length} trace fields`);
+                return updatePredictionScientificFields(predId, aiTraces[i]);
+              } else {
+                // No existing prediction ID — save as new (with aiTrace)
+                console.log(`[enhanceWithAI] No existing ID for ${matchKey}, saving new prediction with aiTrace`);
+                const result = predictions[matchKey];
+                if (result) return savePredictionToDb(t.match, result, aiTraces[i]);
+              }
             }
             return Promise.resolve();
           })
