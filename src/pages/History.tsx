@@ -18,7 +18,7 @@ import {
   BarChart3, Sparkles, Trash2
 } from "lucide-react";
 
-function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDelete?: (id: number) => void }) {
+function PredictionCard({ prediction, onDelete }: { prediction: Prediction; onDelete?: (id: string) => void }) {
   const statusColor = 
     prediction.status === "correct" ? "card-glow-success border-success/30" :
     prediction.status === "incorrect" ? "card-glow-fire border-destructive/30" :
@@ -276,7 +276,7 @@ export default function History() {
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<string | null>(null);
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     setDeletingId(String(id));
     try {
       await deletePrediction(id);

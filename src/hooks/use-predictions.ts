@@ -6,7 +6,7 @@ export { getDeviceId }
 
 // camelCase — matches api/predictions.js mapToCamelCase() output
 export interface Prediction {
-  id: number
+  id: string  // UUID — predictions.id is UUID NOT NULL in Neon
   matchId: number | null
   homeTeam: string
   awayTeam: string
@@ -321,7 +321,7 @@ export function usePredictions() {
   }, [loadPredictions])
 
   // Supprimer une prédiction par ID
-  const deletePrediction = useCallback(async (id: number) => {
+  const deletePrediction = useCallback(async (id: string) => {
     try {
       const deviceId = getDeviceId();
       const authHeaders = await getAuthHeaders();

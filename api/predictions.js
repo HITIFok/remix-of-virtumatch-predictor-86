@@ -388,14 +388,15 @@ export default async function handler(req, res) {
         const sql = createSql();
 
         if (body.prediction_id) {
-          const predictionId = parseInt(body.prediction_id, 10);
-          if (!predictionId || isNaN(predictionId)) {
+          // predictions.id is UUID — validate as string, not integer
+          const predictionId = String(body.prediction_id).trim();
+          if (!predictionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(predictionId)) {
             await sql.end();
-            return res.status(400).json({ success: false, error: 'Invalid prediction_id' });
+            return res.status(400).json({ success: false, error: 'Invalid prediction_id (must be UUID)' });
           }
           const result = await sql`
             DELETE FROM predictions
-            WHERE id = ${predictionId} AND user_id = ${userId}
+            WHERE id = ${predictionId}::uuid AND user_id = ${userId}
           `;
           await sql.end();
           if (result.count === 0) {
@@ -428,14 +429,15 @@ export default async function handler(req, res) {
 
       // If prediction_id provided, delete only that specific prediction (with ownership check)
       if (body.prediction_id) {
-        const predictionId = parseInt(body.prediction_id, 10);
-        if (!predictionId || isNaN(predictionId)) {
+        // predictions.id is UUID — validate as string, not integer
+        const predictionId = String(body.prediction_id).trim();
+        if (!predictionId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(predictionId)) {
           await sql.end();
-          return res.status(400).json({ success: false, error: 'Invalid prediction_id' });
+          return res.status(400).json({ success: false, error: 'Invalid prediction_id (must be UUID)' });
         }
         const result = await sql`
           DELETE FROM predictions
-          WHERE id = ${predictionId} AND device_id = ANY(${deviceIds})
+          WHERE id = ${predictionId}::uuid AND device_id = ANY(${deviceIds})
         `;
         await sql.end();
         if (result.count === 0) {
