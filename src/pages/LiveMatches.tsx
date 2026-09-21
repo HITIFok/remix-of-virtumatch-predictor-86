@@ -365,7 +365,7 @@ export default function LiveMatches() {
   // fetchMatches is already called by the hook's own useEffect on mount — no duplicate needed
 
   // Helper: sauvegarder une prédiction en BDD
-  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult) => {
+  const savePredictionToDb = async (match: ScrapedMatch, result: MatchResult, aiTrace?: any) => {
     try {
       await savePrediction({
         match_id: match.id,
@@ -398,6 +398,8 @@ export default function LiveMatches() {
         over25_prob: result.over25Prob,
         first_half_goal_prob: result.firstHalfGoalProb,
         expected_goals: result.expectedGoals,
+        // Phase 5.3: AI traceability — forward from analyze-match response
+        ...(aiTrace || {}),
       });
     } catch (e) {
       console.log('Prediction already saved or error:', e);
@@ -493,12 +495,14 @@ export default function LiveMatches() {
           }
         }
         // Sauvegarde BDD en arrière-plan (non-bloquant)
+        // Phase 5.3: Pass AI trace data from analyze-match response
+        const aiTraces = data.ai_traces || [];
         Promise.all(
           toEnrich.map((t, i) => {
             if (aiPreds[i]) {
               const matchKey = `${t.match.home}-${t.match.away}`;
               const result = predictions[matchKey];
-              if (result) return savePredictionToDb(t.match, result);
+              if (result) return savePredictionToDb(t.match, result, aiTraces[i]);
             }
             return Promise.resolve();
           })

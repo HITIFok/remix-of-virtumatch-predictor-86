@@ -6,7 +6,7 @@ import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
-import { buildUserPromptFromMatches, buildAIContext, buildAISnapshotFromContext, computeAIContextHash, computeAIInputHash, computeAIPromptHash } from './_lib/ai-context.js';
+import { buildUserPromptFromMatches, buildAIContext, buildAISnapshotFromContext, computeAIContextHash, computeAIInputHash, computeAIPromptHash, computeAIResponseHash } from './_lib/ai-context.js';
 
 const analyzeLimiter = createRateLimiter('analyze-match', { max: 10, windowMs: 60 * 1000 });
 
@@ -463,12 +463,125 @@ function parsePredictions(rawContent) {
 // → keep Groq budget conservative to avoid Vercel HTML error page
 const DEADLINE_MS = 2500;
 
+// ─── COMPUTE AI TRACE PER MATCH (Phase 5.3) ──────────────────────
+// For each match, compute the canonical AI context, snapshot, and hashes.
+// This data is returned alongside predictions so the frontend can
+// forward it to api/predictions for persistence.
+function computeAITraces(matches, aiResponseText, groqModel) {
+  const traces = [];
+  const AI_PROMPT_VERSION = '7.0';
+
+  for (let i = 0; i < matches.length; i++) {
+    const match = { ...matches[i], matchIndex: i + 1 };
+    const ctx = buildAIContext(match);
+    const snapshot = buildAISnapshotFromContext(ctx);
+    const aiContextHash = computeAIContextHash(ctx);
+    const aiInputHash = computeAIInputHash(snapshot);
+
+    // Prompt hash: system prompt + per-match user prompt
+    const userPrompt = buildUserPromptFromMatches([match]);
+    const aiPromptHash = computeAIPromptHash(SYSTEM_PROMPT, userPrompt);
+
+    // Response hash: full AI response (shared across all matches in batch)
+    const aiResponseHash = aiResponseText ? computeAIResponseHash(aiResponseText) : null;
+
+    // Build feature_snapshot for persistence
+    const featureSnapshot = {
+      odds: ctx.odds,
+      standings: ctx.standings,
+      form: ctx.form,
+      h2h: ctx.h2h,
+      source_timestamps: ctx.source_timestamps,
+      ai_snapshot: snapshot,
+      match_index: i + 1,
+      schema_version: '3.0',
+    };
+
+    // Compute completeness score (0-1)
+    let completenessScore = 0;
+    if (ctx.odds.home && ctx.odds.draw && ctx.odds.away) completenessScore += 0.3;
+    if (ctx.standings.home && ctx.standings.away) completenessScore += 0.2;
+    if (ctx.form.home && ctx.form.home.length > 0) completenessScore += 0.15;
+    if (ctx.form.away && ctx.form.away.length > 0) completenessScore += 0.15;
+    if (ctx.h2h.matches && ctx.h2h.matches.length > 0) completenessScore += 0.2;
+    completenessScore = Math.round(completenessScore * 1000) / 1000;
+
+    // Temporal safety: 1.0 if t_feature <= t_prediction, 0.0 if future data
+    const tFeature = ctx.source_timestamps?.odds || null;
+    const tPrediction = new Date().toISOString();
+    let temporalSafetyScore = 1.0;
+    if (tFeature && new Date(tFeature) > new Date(tPrediction)) {
+      temporalSafetyScore = 0.0;
+    }
+
+    // Provenance risk
+    let aiProvenanceRisk = 'NONE';
+    if (snapshot.odds?.home?.provenance === 'RECONSTRUCTED') {
+      aiProvenanceRisk = 'PROMPT_INTEGRATES_ODDS';
+    }
+
+    // Scientific eligibility
+    const scientificEligible = completenessScore >= 0.5 && temporalSafetyScore >= 1.0;
+
+    // Version freeze
+    const versionFreeze = {
+      model_version: '1.0.0',
+      feature_version: '3.0',
+      config_version: '1.0.0',
+      calibration_version: '1.0.0',
+      ai_prompt_version: AI_PROMPT_VERSION,
+      ai_model: groqModel || 'math-v2',
+      code_commit: null, // populated by CI
+    };
+
+    traces.push({
+      feature_snapshot: featureSnapshot,
+      feature_snapshot_hash: aiContextHash, // SHA-256 of canonical context
+      model_version: '1.0.0',
+      feature_version: '3.0',
+      config_version: '1.0.0',
+      calibration_version: '1.0.0',
+      dataset_version: '1',
+      ai_context_hash: aiContextHash,
+      ai_input_hash: aiInputHash,
+      ai_prompt_hash: aiPromptHash,
+      ai_response_hash: aiResponseHash,
+      ai_prompt_version: AI_PROMPT_VERSION,
+      ai_model: groqModel || 'math-v2',
+      ai_trace: {
+        context: ctx,
+        snapshot,
+        hashes: {
+          ai_context_hash: aiContextHash,
+          ai_input_hash: aiInputHash,
+          ai_prompt_hash: aiPromptHash,
+          ai_response_hash: aiResponseHash,
+        },
+        prompt_version: AI_PROMPT_VERSION,
+        model: groqModel || 'math-v2',
+        timestamp: tPrediction,
+      },
+      completeness_score: completenessScore,
+      temporal_safety_score: temporalSafetyScore,
+      ai_provenance_risk: aiProvenanceRisk,
+      scientific_collection_eligible: scientificEligible,
+      version_freeze: versionFreeze,
+      t_feature: tFeature,
+    });
+  }
+
+  return traces;
+}
+
 async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
   const deadline = Date.now() + deadlineMs;
 
+  // Always compute AI traces (even for math fallback)
+  const aiTraces = computeAITraces(matches, null, groqModel);
+
   if (!groqKey) {
     console.log('[analyze-match] No GROQ_API_KEY -> instant math v2.0');
-    return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
   // For 1 match: try Groq directly
@@ -479,18 +592,19 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
       const preds = parsePredictions(content);
       if (preds.length === 1) {
         console.log('[analyze-match] Single match via Groq');
-        return { predictions: preds, provider: 'groq-v6' };
+        // Recompute traces with AI response hash
+        const tracesWithResponse = computeAITraces(matches, content, groqModel);
+        return { predictions: preds, provider: 'groq-v6', ai_traces: tracesWithResponse };
       }
     }
     console.log('[analyze-match] Groq failed for single -> math v2.0');
-    return { predictions: [mathPredict(matches[0])], provider: 'math-v2' };
+    return { predictions: [mathPredict(matches[0])], provider: 'math-v2', ai_traces: aiTraces };
   }
 
   // For 2+ matches: only try Groq if few matches and small prompt
-  // Vercel Hobby 10s is tight — prefer reliable math fallback for batches
   if (matches.length > 3) {
     console.log(`[analyze-match] ${matches.length} matches -> instant math v2.0 (batch reliability)`);
-    return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
   const allPrompt = buildUserPrompt(matches);
@@ -502,12 +616,12 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
 
   if (totalEstimate > 5000) {
     console.log(`[analyze-match] Token estimate too high -> math v2.0`);
-    return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
   const timeLeft = deadline - Date.now();
   if (timeLeft <= 0) {
-    return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
   const content = await Promise.race([
@@ -524,12 +638,13 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
       }
       const mathCount = matches.length - Math.min(preds.length, matches.length);
       const provider = mathCount === 0 ? 'groq-v6' : mathCount === matches.length ? 'math-v2' : 'groq-v6+math-v2';
-      return { predictions: allPredictions, provider };
+      const tracesWithResponse = computeAITraces(matches, content, groqModel);
+      return { predictions: allPredictions, provider, ai_traces: tracesWithResponse };
     }
   }
 
   console.log('[analyze-match] Groq failed/timeout -> math v2.0');
-  return { predictions: matches.map(mathPredict), provider: 'math-v2' };
+  return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
 }
 
 // ─── AUTH: HMAC device token or legacy fallback ────────────────────────────
@@ -631,6 +746,7 @@ export default async function handler(req, res) {
       predictions: result.predictions,
       elapsed,
       provider: result.provider,
+      ai_traces: result.ai_traces || [],
     });
   })();
 };

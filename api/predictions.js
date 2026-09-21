@@ -95,6 +95,20 @@ function validatePrediction(body) {
       dataset_version: body.dataset_version ? String(body.dataset_version).substring(0, 20) : null,
       feature_snapshot_hash: body.feature_snapshot_hash ? String(body.feature_snapshot_hash).substring(0, 80) : null,
       prediction_hash: body.prediction_hash ? String(body.prediction_hash).substring(0, 80) : null,
+      // Phase 5.3: AI traceability & scientific collection
+      ai_context_hash: body.ai_context_hash ? String(body.ai_context_hash).substring(0, 80) : null,
+      ai_input_hash: body.ai_input_hash ? String(body.ai_input_hash).substring(0, 80) : null,
+      ai_prompt_hash: body.ai_prompt_hash ? String(body.ai_prompt_hash).substring(0, 80) : null,
+      ai_response_hash: body.ai_response_hash ? String(body.ai_response_hash).substring(0, 80) : null,
+      ai_prompt_version: body.ai_prompt_version ? String(body.ai_prompt_version).substring(0, 20) : null,
+      ai_model: body.ai_model ? String(body.ai_model).substring(0, 50) : null,
+      ai_trace: body.ai_trace || null,
+      completeness_score: typeof body.completeness_score === 'number' ? Math.min(Math.max(body.completeness_score, 0), 1) : null,
+      temporal_safety_score: typeof body.temporal_safety_score === 'number' ? Math.min(Math.max(body.temporal_safety_score, 0), 1) : null,
+      ai_provenance_risk: body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : null,
+      scientific_collection_eligible: typeof body.scientific_collection_eligible === 'boolean' ? body.scientific_collection_eligible : false,
+      version_freeze: body.version_freeze || null,
+      t_feature: body.t_feature || null,
     },
   };
 }
@@ -291,7 +305,7 @@ export default async function handler(req, res) {
 
       // Phase 5: Three temporal timestamps
       const tPrediction = new Date().toISOString();
-      const tFeature = d.feature_snapshot?.odds?.source_timestamp || null;
+      const tFeature = d.t_feature || d.feature_snapshot?.odds?.source_timestamp || null;
 
       const result = await sql`
         INSERT INTO predictions (
@@ -312,7 +326,11 @@ export default async function handler(req, res) {
           calibration_version, dataset_version,
           feature_snapshot_hash, prediction_hash,
           snapshot_timestamp, provenance_status,
-          t_prediction, t_feature
+          t_prediction, t_feature,
+          completeness_score, temporal_safety_score, ai_provenance_risk,
+          ai_context_hash, ai_input_hash, ai_prompt_hash, ai_response_hash,
+          ai_prompt_version, ai_model, ai_trace,
+          scientific_collection_eligible, version_freeze
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
           ${d.odd_home}, ${d.odd_draw}, ${d.odd_away},
@@ -332,7 +350,11 @@ export default async function handler(req, res) {
           ${d.calibration_version}, ${d.dataset_version},
           ${d.feature_snapshot_hash}, ${d.prediction_hash},
           NOW(), ${provenanceStatus},
-          ${tPrediction}, ${tFeature}
+          ${tPrediction}, ${tFeature},
+          ${d.completeness_score}, ${d.temporal_safety_score}, ${d.ai_provenance_risk},
+          ${d.ai_context_hash}, ${d.ai_input_hash}, ${d.ai_prompt_hash}, ${d.ai_response_hash},
+          ${d.ai_prompt_version}, ${d.ai_model}, ${d.ai_trace ? sql.json(d.ai_trace) : null},
+          ${d.scientific_collection_eligible}, ${d.version_freeze ? sql.json(d.version_freeze) : null}
         )
         RETURNING *
       `;

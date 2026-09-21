@@ -250,6 +250,27 @@ export function usePredictions() {
     first_half_goal_prob?: number
     expected_goals?: number
     winner_1x2?: string
+    // Phase 5.3: AI traceability & scientific collection
+    feature_snapshot?: any
+    feature_snapshot_hash?: string
+    model_version?: string
+    feature_version?: string
+    config_version?: string
+    calibration_version?: string
+    dataset_version?: string
+    ai_context_hash?: string
+    ai_input_hash?: string
+    ai_prompt_hash?: string
+    ai_response_hash?: string
+    ai_prompt_version?: string
+    ai_model?: string
+    ai_trace?: any
+    completeness_score?: number
+    temporal_safety_score?: number
+    ai_provenance_risk?: string
+    scientific_collection_eligible?: boolean
+    version_freeze?: any
+    t_feature?: string
   }) => {
     try {
       const deviceId = getDeviceId()
