@@ -1,6 +1,6 @@
 // ============================================
-// AI TRACEABILITY SYSTEM v1.0
-// Phase 5.1 — Complete AI Pipeline Traceability
+// AI TRACEABILITY SYSTEM v1.1
+// Phase 5.1 → 5.2 — Complete AI Pipeline Traceability
 // ============================================
 //
 // For each prediction using AI, demonstrates:
@@ -12,11 +12,22 @@
 // 6. Which part of the response was used
 // 7. That no post-T_prediction data was used
 //
+// Phase 5.2: buildAIInputsFromMatch now delegates to
+// buildAIContext() → buildAISnapshotFromContext() from ai-context.ts
+// This ensures the snapshot and prompt share the same source of truth.
+//
 // CRITICAL: This module does NOT modify the model.
 // It only captures and traces AI inputs/outputs.
 
 import * as crypto from 'crypto';
 import type { ProvenanceStatus } from './feature-snapshot';
+import {
+  buildAIContext as buildCanonicalAIContext,
+  buildAISnapshotFromContext,
+  computeAIContextHash as computeCanonicalAIContextHash,
+  computeAIInputHashFromContext,
+  type AIContext,
+} from './ai-context';
 
 // ═══════════════════════════════════════════════════════════════════
 // AI PROVIDER CONFIGURATION (Section 2)
@@ -184,45 +195,12 @@ export function computePromptHash(systemPrompt: string, userPrompt: string): str
  * Compute deterministic hash of AI inputs.
  * Two calls with exactly the same inputs -> same hash.
  * A modification of any input -> different hash.
+ *
+ * Phase 5.2: Delegates to computeAIInputHashFromContext from ai-context.ts
+ * to ensure the hash is computed identically for both prompt and snapshot.
  */
 export function computeAIInputHash(inputs: AIInputs): string {
-  const parts: string[] = [];
-
-  parts.push('odds_home:' + inputs.odds.home.value);
-  parts.push('odds_draw:' + inputs.odds.draw.value);
-  parts.push('odds_away:' + inputs.odds.away.value);
-  parts.push('odds_implicit_h:' + inputs.odds.implied_home.value);
-  parts.push('odds_implicit_d:' + inputs.odds.implied_draw.value);
-  parts.push('odds_implicit_a:' + inputs.odds.implied_away.value);
-  parts.push('odds_ts:' + (inputs.odds.home.source_timestamp || 'null'));
-
-  if (inputs.standings_home) {
-    parts.push('standings_h:' + inputs.standings_home.value);
-    parts.push('standings_h_ts:' + (inputs.standings_home.source_timestamp || 'null'));
-  }
-  if (inputs.standings_away) {
-    parts.push('standings_a:' + inputs.standings_away.value);
-    parts.push('standings_a_ts:' + (inputs.standings_away.source_timestamp || 'null'));
-  }
-  if (inputs.form_home) {
-    parts.push('form_h:' + inputs.form_home.value);
-    parts.push('form_h_ts:' + (inputs.form_home.source_timestamp || 'null'));
-  }
-  if (inputs.form_away) {
-    parts.push('form_a:' + inputs.form_away.value);
-    parts.push('form_a_ts:' + (inputs.form_away.source_timestamp || 'null'));
-  }
-  if (inputs.h2h) {
-    parts.push('h2h:' + inputs.h2h.value);
-    parts.push('h2h_ts:' + (inputs.h2h.source_timestamp || 'null'));
-  }
-  for (const field of inputs.other) {
-    parts.push('other_' + field.name + ':' + field.value);
-    parts.push('other_' + field.name + '_ts:' + (field.source_timestamp || 'null'));
-  }
-
-  parts.sort();
-  return computeHash('ai_inputs:' + parts.join('|'));
+  return computeAIInputHashFromContext(inputs);
 }
 
 export function computeAIResponseHash(response: string): string {
@@ -364,19 +342,20 @@ export function classifyAIProvenance(
 
 // ═══════════════════════════════════════════════════════════════════
 // BUILD AI INPUTS FROM MATCH DATA
+// Phase 5.2: Delegates to canonical ai-context.ts (single source of truth)
 // ═══════════════════════════════════════════════════════════════════
 
-function makeInput(
-  name: string,
-  value: string | number,
-  source: string,
-  sourceTimestamp: string | null,
-  version: string,
-  provenance: ProvenanceStatus,
-): AIInputField {
-  return { name, value, source, source_timestamp: sourceTimestamp, version, provenance };
-}
-
+/**
+ * Build AI inputs from match data.
+ *
+ * Phase 5.2 CHANGE: This function now delegates to the canonical
+ * buildAIContext() → buildAISnapshotFromContext() pipeline.
+ * This ensures the snapshot and prompt share the same source of truth.
+ *
+ * The key behavioral change: implied probabilities are now stored as
+ * percentages (matching the prompt format) rather than raw fractions.
+ * This eliminates the mirror divergence identified in Phase 5.1.
+ */
 export function buildAIInputsFromMatch(match: {
   home: string;
   away: string;
@@ -393,61 +372,26 @@ export function buildAIInputsFromMatch(match: {
   formTimestamp?: string;
   h2hTimestamp?: string;
 }): AIInputs {
-  const invH = 1 / match.oddHome;
-  const invD = 1 / match.oddDraw;
-  const invA = 1 / match.oddAway;
-  const tot = invH + invD + invA;
-  const configVersion = '1.0.0';
-  const oddsTs = match.oddsTimestamp || null;
-
-  const odds = {
-    home: makeInput('odds_home', match.oddHome, 'bookmaker/scraper', oddsTs, configVersion, 'RECORDED'),
-    draw: makeInput('odds_draw', match.oddDraw, 'bookmaker/scraper', oddsTs, configVersion, 'RECORDED'),
-    away: makeInput('odds_away', match.oddAway, 'bookmaker/scraper', oddsTs, configVersion, 'RECORDED'),
-    implied_home: makeInput('odds_implied_home', invH / tot, 'calculated_from_odds', oddsTs, configVersion, 'RECONSTRUCTED'),
-    implied_draw: makeInput('odds_implied_draw', invD / tot, 'calculated_from_odds', oddsTs, configVersion, 'RECONSTRUCTED'),
-    implied_away: makeInput('odds_implied_away', invA / tot, 'calculated_from_odds', oddsTs, configVersion, 'RECONSTRUCTED'),
-  };
-
-  let standingsHome: AIInputField | null = null;
-  if (match.rankingHome) {
-    const r = match.rankingHome;
-    const mj = r.played || 1;
-    const val = '#' + r.position + ' ' + mj + 'j ' + r.won + 'V' + r.drawn + 'N' + r.lost + 'D ' + r.goalsFor + '-' + r.goalsAgainst + ' ' + r.points + 'p att:' + (r.goalsFor / mj).toFixed(1) + ' def:' + (r.goalsAgainst / mj).toFixed(1);
-    standingsHome = makeInput('standings_home', val, 'ranking_table', match.rankingTimestamp || null, configVersion, 'RECORDED');
-  }
-
-  let standingsAway: AIInputField | null = null;
-  if (match.rankingAway) {
-    const r = match.rankingAway;
-    const mj = r.played || 1;
-    const val = '#' + r.position + ' ' + mj + 'j ' + r.won + 'V' + r.drawn + 'N' + r.lost + 'D ' + r.goalsFor + '-' + r.goalsAgainst + ' ' + r.points + 'p att:' + (r.goalsFor / mj).toFixed(1) + ' def:' + (r.goalsAgainst / mj).toFixed(1);
-    standingsAway = makeInput('standings_away', val, 'ranking_table', match.rankingTimestamp || null, configVersion, 'RECORDED');
-  }
-
-  let formHome: AIInputField | null = null;
-  if (match.recentHome && match.recentHome.length > 0) {
-    const val = match.recentHome.map(function (r) { return r.result + r.scoreHome + '-' + r.scoreAway; }).join(' ');
-    formHome = makeInput('form_home', val, 'historical_matches', match.formTimestamp || null, configVersion, 'RECORDED');
-  }
-
-  let formAway: AIInputField | null = null;
-  if (match.recentAway && match.recentAway.length > 0) {
-    const val = match.recentAway.map(function (r) { return r.result + r.scoreHome + '-' + r.scoreAway; }).join(' ');
-    formAway = makeInput('form_away', val, 'historical_matches', match.formTimestamp || null, configVersion, 'RECORDED');
-  }
-
-  let h2h: AIInputField | null = null;
-  if (match.headToHead && match.headToHead.length > 0) {
-    const hw = match.headToHead.filter(function (h) { return h.scoreHome > h.scoreAway; }).length;
-    const hd = match.headToHead.filter(function (h) { return h.scoreHome === h.scoreAway; }).length;
-    const ha = match.headToHead.filter(function (h) { return h.scoreHome < h.scoreAway; }).length;
-    const avg = (match.headToHead.reduce(function (s, h) { return s + h.scoreHome + h.scoreAway; }, 0) / match.headToHead.length).toFixed(1);
-    h2h = makeInput('h2h', hw + 'V' + hd + 'N' + ha + 'D avg:' + avg + 'bm', 'historical_matches', match.h2hTimestamp || null, configVersion, 'RECORDED');
-  }
-
-  return { odds: odds, standings_home: standingsHome, standings_away: standingsAway, form_home: formHome, form_away: formAway, h2h: h2h, other: [] };
+  // Build canonical context from match data
+  const ctx = buildCanonicalAIContext(match);
+  // Derive structured AI inputs from the same canonical source
+  return buildAISnapshotFromContext(ctx);
 }
+
+/**
+ * Compute AI_CONTEXT_HASH for a match.
+ * This is the hash of the canonical AIContext (RAW values before any transformation).
+ * Phase 5.2 addition.
+ */
+export function computeAIContextHashFromMatch(match: Parameters<typeof buildAIInputsFromMatch>[0]): string {
+  const ctx = buildCanonicalAIContext(match);
+  return computeCanonicalAIContextHash(ctx);
+}
+
+/**
+ * Re-export AIContext and related types for convenience.
+ */
+export type { AIContext } from './ai-context';
 
 // ═══════════════════════════════════════════════════════════════════
 // CREATE FULL AI TRACE RECORD

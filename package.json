@@ -18,9 +18,11 @@
     "backtest:v3": "npx tsx scripts/backtest-framework-v3.ts",
     "backtest:real": "npx tsx scripts/phase4-real-backtest.ts",
     "phase5": "npx tsx scripts/phase5-production-snapshot.ts",
+    "phase5.2": "npx tsx scripts/phase5.2-scientific-golive.ts",
     "dataset:health": "npx tsx scripts/phase5-production-snapshot.ts --health-only",
     "dataset:export": "echo 'Use GET /api/dataset-export with auth token'",
-    "dataset:validate": "npx tsx scripts/phase5-production-snapshot.ts --validate-only"
+    "dataset:validate": "npx tsx scripts/phase5-production-snapshot.ts --validate-only",
+    "scientific:golive": "npx tsx scripts/phase5.2-scientific-golive.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

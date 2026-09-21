@@ -1,10 +1,12 @@
-// Vercel Serverless Function — analyze-match v24 (ESM)
+// Vercel Serverless Function — analyze-match v25 (ESM)
 // AI-powered match analysis — Groq (primary) + Mathematical fallback
+// Phase 5.2: buildUserPrompt now uses canonical AIContext (single source of truth)
 
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth, requireUserAuth } from './_lib/auth.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
 import { getClientIp } from './_lib/request.js';
+import { buildUserPromptFromMatches, buildAIContext, buildAISnapshotFromContext, computeAIContextHash, computeAIInputHash, computeAIPromptHash } from './_lib/ai-context.js';
 
 const analyzeLimiter = createRateLimiter('analyze-match', { max: 10, windowMs: 60 * 1000 });
 
@@ -45,41 +47,12 @@ JSON SANS MARKDOWN:
 REGLES: possession=100, topScores somment 0.6-0.85, score prédit=top1, 3-5 scores, system∈offensif|défensif|équilibré.`;
 
 // ─── BUILD USER PROMPT ───────────────────────────────────────────────────
-
+// Phase 5.2: Delegates to canonical ai-context.js (single source of truth)
+// The old inline buildUserPrompt has been replaced by buildUserPromptFromMatches
+// which derives the prompt from buildAIContext() → computeAIDerivedContext() → text.
+// This ensures: DATA SENT TO AI = DATA RECORDED IN SNAPSHOT.
 function buildUserPrompt(matches) {
-  return matches
-    .map((m, i) => {
-      const invH = 1 / m.oddHome, invD = 1 / m.oddDraw, invA = 1 / m.oddAway;
-      const tot = invH + invD + invA;
-      let b = `M${i + 1}: ${m.home} vs ${m.away} | ${m.oddHome}/${m.oddDraw}/${m.oddAway} | P:${(invH/tot*100).toFixed(0)}/${(invD/tot*100).toFixed(0)}/${(invA/tot*100).toFixed(0)}`;
-
-      if (m.rankingHome) {
-        const r = m.rankingHome, mj = r.played || 1;
-        b += `\nH:#${r.position} ${mj}j ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}-${r.goalsAgainst} ${r.points}p att:${(r.goalsFor/mj).toFixed(1)} def:${(r.goalsAgainst/mj).toFixed(1)}`;
-      }
-      if (m.rankingAway) {
-        const r = m.rankingAway, mj = r.played || 1;
-        b += `\nA:#${r.position} ${mj}j ${r.won}V${r.drawn}N${r.lost}D ${r.goalsFor}-${r.goalsAgainst} ${r.points}p att:${(r.goalsFor/mj).toFixed(1)} def:${(r.goalsAgainst/mj).toFixed(1)}`;
-      }
-
-      if (m.recentHome?.length > 0) {
-        b += `\nFH:${m.recentHome.map((r) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(' ')}`;
-      }
-      if (m.recentAway?.length > 0) {
-        b += `\nFA:${m.recentAway.map((r) => `${r.result}${r.scoreHome}-${r.scoreAway}`).join(' ')}`;
-      }
-
-      if (m.headToHead?.length > 0) {
-        const hw = m.headToHead.filter((h) => h.scoreHome > h.scoreAway).length;
-        const hd = m.headToHead.filter((h) => h.scoreHome === h.scoreAway).length;
-        const ha = m.headToHead.filter((h) => h.scoreHome < h.scoreAway).length;
-        const avg = (m.headToHead.reduce((s, h) => s + h.scoreHome + h.scoreAway, 0) / m.headToHead.length).toFixed(1);
-        b += `\nH2H:${hw}V${hd}N${ha}D avg:${avg}bm`;
-      }
-
-      return b;
-    })
-    .join('\n');
+  return buildUserPromptFromMatches(matches);
 }
 
 // ─── MATHEMATICAL PREDICTION v2.0 (instant fallback) ─────────────
