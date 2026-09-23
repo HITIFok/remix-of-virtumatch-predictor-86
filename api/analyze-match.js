@@ -507,23 +507,61 @@ function computeAITraces(matches, aiResponseText, groqModel) {
     if (ctx.h2h.matches && ctx.h2h.matches.length > 0) completenessScore += 0.2;
     completenessScore = Math.round(completenessScore * 1000) / 1000;
 
-    // Temporal safety: 1.0 if t_feature <= t_prediction (with 5min clock-skew tolerance)
-    // FIX 5.3.2: Added 5-minute tolerance window for distributed clock skew
-    // between odds scraper and prediction server
-    const tFeature = ctx.source_timestamps?.odds || null;
+    // Phase 5.3.3: T_feature = MAX(timestamp of features actually used)
+    // T_feature represents the moment when ALL feature data was available.
+    // It must NOT use T_AI_response, T_prediction, or T_snapshot.
+    // If a feature timestamp is unknown, it is excluded from the MAX
+    // but the provenance is flagged as UNKNOWN.
+    const sourceTimestamps = ctx.source_timestamps;
+    const availableFeatureTimestamps = [
+      sourceTimestamps.odds,      // ODDS source
+      sourceTimestamps.ranking,   // STANDINGS source
+      sourceTimestamps.form,      // FORM source
+      sourceTimestamps.h2h,       // H2H source
+    ].filter(ts => ts != null);   // Only real timestamps, never invented
+
+    // t_feature = MAX of available feature timestamps
+    // If NO source timestamps are known, t_feature = null (UNKNOWN provenance)
+    const tFeature = availableFeatureTimestamps.length > 0
+      ? new Date(Math.max(...availableFeatureTimestamps.map(ts => new Date(ts).getTime()))).toISOString()
+      : null;
+
+    // Track which sources have known timestamps (for provenance audit)
+    const timestampProvenance = {
+      odds: sourceTimestamps.odds ? 'KNOWN' : 'UNKNOWN',
+      ranking: sourceTimestamps.ranking ? 'KNOWN' : 'UNKNOWN',
+      form: sourceTimestamps.form ? 'KNOWN' : 'UNKNOWN',
+      h2h: sourceTimestamps.h2h ? 'KNOWN' : 'UNKNOWN',
+    };
+
     const tPrediction = new Date().toISOString();
-    let temporalSafetyScore = 1.0;
-    if (tFeature) {
+
+    // Phase 5.3.3: Temporal safety verification
+    // When t_feature is NULL, temporal safety CANNOT be verified.
+    // The prediction must be marked as NOT temporally safe (not falsely safe).
+    let temporalSafetyScore;
+    let temporalSafetyReason;
+    if (!tFeature) {
+      // No source timestamps available → cannot verify temporal safety
+      temporalSafetyScore = 0.0;
+      temporalSafetyReason = 'T_FEATURE_UNKNOWN';
+    } else {
       const tFeatureMs = new Date(tFeature).getTime();
       const tPredictionMs = new Date(tPrediction).getTime();
       const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
       if (tFeatureMs > tPredictionMs + CLOCK_SKEW_TOLERANCE_MS) {
-        // Feature data is genuinely in the future (beyond tolerance)
+        // Feature data is genuinely in the future (beyond tolerance) → LEAK DETECTED
         temporalSafetyScore = 0.0;
+        temporalSafetyReason = 'FUTURE_FEATURE_LEAK';
       } else if (tFeatureMs > tPredictionMs) {
         // Feature data slightly in the future but within clock skew tolerance
-        // Log diagnostic but don't penalize
+        temporalSafetyScore = 1.0;
+        temporalSafetyReason = 'WITHIN_CLOCK_SKEW';
         console.log(`[analyze-match] Temporal: t_feature ${Math.round((tFeatureMs - tPredictionMs) / 1000)}s ahead of t_prediction (within 5min tolerance)`);
+      } else {
+        // Normal: t_feature <= t_prediction → temporally safe
+        temporalSafetyScore = 1.0;
+        temporalSafetyReason = 'VERIFIED';
       }
     }
 
@@ -533,7 +571,7 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       aiProvenanceRisk = 'PROMPT_INTEGRATES_ODDS';
     }
 
-    // Scientific eligibility
+    // Scientific eligibility: requires both completeness AND verified temporal safety
     const scientificEligible = completenessScore >= 0.5 && temporalSafetyScore >= 1.0;
 
     // Version freeze
@@ -576,6 +614,8 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       },
       completeness_score: completenessScore,
       temporal_safety_score: temporalSafetyScore,
+      temporal_safety_reason: temporalSafetyReason, // Phase 5.3.3: WHY the score is what it is
+      timestamp_provenance: timestampProvenance,     // Phase 5.3.3: per-source provenance audit
       ai_provenance_risk: aiProvenanceRisk,
       scientific_collection_eligible: scientificEligible,
       version_freeze: versionFreeze,

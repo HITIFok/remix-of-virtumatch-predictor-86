@@ -45,6 +45,11 @@ interface EnrichedMatchInput {
   recentHome: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
   recentAway: { opponent: string; scoreHome: number; scoreAway: number; result: string }[];
   headToHead: { home: string; away: string; scoreHome: number; scoreAway: number }[];
+  // Phase 5.3.3: Source timestamps — propagated from scraper data
+  oddsTimestamp?: string;
+  rankingTimestamp?: string;
+  formTimestamp?: string;
+  h2hTimestamp?: string;
 }
 
 function enrichMatchesForAI(
@@ -122,6 +127,15 @@ function enrichMatchesForAI(
       }
     }
 
+    // Phase 5.3.3: Propagate source timestamps from scraper data
+    // These represent when the external data was actually available.
+    //#region
+    const oddsTimestamp = m.oddsTimestamp || undefined;
+    const rankingTimestamp = m.rankingTimestamp || undefined;
+    const formTimestamp = m.formTimestamp || undefined;
+    const h2hTimestamp = m.h2hTimestamp || undefined;
+    //#endregion
+
     return {
       home: m.home,
       away: m.away,
@@ -142,6 +156,10 @@ function enrichMatchesForAI(
       recentHome,
       recentAway,
       headToHead: h2h,
+      oddsTimestamp,
+      rankingTimestamp,
+      formTimestamp,
+      h2hTimestamp,
     };
   });
 }

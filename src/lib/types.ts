@@ -30,6 +30,13 @@ export interface ScrapedMatch {
   stats?: Record<string, any>;
   predeterminedScore?: PredeterminedScore | null;
   prediction?: ScoreExactOdds | null; // v14: Score exact odds from Sporty API (Tier 1)
+  // Phase 5.3.3: Source timestamps for scientific timeline
+  // These represent when the external data was actually available.
+  // Never substitute with Date.now() or t_prediction.
+  oddsTimestamp?: string;    // When odds were scraped from bookmaker
+  rankingTimestamp?: string; // When ranking/standings were fetched
+  formTimestamp?: string;    // When recent form data was retrieved
+  h2hTimestamp?: string;     // When head-to-head data was retrieved
 }
 
 export interface MatchResult {

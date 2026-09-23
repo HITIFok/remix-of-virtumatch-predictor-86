@@ -107,6 +107,12 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         stats: m.goals ? { goals: m.goals } : null,
         predeterminedScore: m.predeterminedScore || null,
         prediction: m.prediction || null,
+        // Phase 5.3.3: Source timestamps from API response
+        // Use scrapedAt from the API if available, otherwise mark as unknown
+        oddsTimestamp: m.oddsTimestamp || data.scrapedAt || undefined,
+        rankingTimestamp: m.rankingTimestamp || undefined,
+        formTimestamp: m.formTimestamp || undefined,
+        h2hTimestamp: m.h2hTimestamp || undefined,
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
@@ -194,6 +200,11 @@ export function useLiveMatches() {
             stats: m.stats || null,
             id: m.id,
             round: m.round,
+            // Phase 5.3.3: Propagate source timestamps from scraper cache
+            oddsTimestamp: m.oddsTimestamp || matchesEntry.scraped_at || undefined,
+            rankingTimestamp: m.rankingTimestamp || undefined,
+            formTimestamp: m.formTimestamp || undefined,
+            h2hTimestamp: m.h2hTimestamp || undefined,
           }))
         : [];
 

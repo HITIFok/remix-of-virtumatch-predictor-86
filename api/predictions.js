@@ -105,6 +105,8 @@ function validatePrediction(body) {
       ai_trace: body.ai_trace || null,
       completeness_score: typeof body.completeness_score === 'number' ? Math.min(Math.max(body.completeness_score, 0), 1) : null,
       temporal_safety_score: typeof body.temporal_safety_score === 'number' ? Math.min(Math.max(body.temporal_safety_score, 0), 1) : null,
+      temporal_safety_reason: body.temporal_safety_reason ? String(body.temporal_safety_reason).substring(0, 30) : null,
+      timestamp_provenance: body.timestamp_provenance || null,
       ai_provenance_risk: body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : null,
       scientific_collection_eligible: typeof body.scientific_collection_eligible === 'boolean' ? body.scientific_collection_eligible : false,
       version_freeze: body.version_freeze || null,
@@ -182,6 +184,8 @@ function mapToCamelCase(row) {
     // Phase 5.3: Scientific Collection fields
     completenessScore: row.completeness_score,
     temporalSafetyScore: row.temporal_safety_score,
+    temporalSafetyReason: row.temporal_safety_reason,
+    timestampProvenance: row.timestamp_provenance,
     aiProvenanceRisk: row.ai_provenance_risk,
     scientificCollectionEligible: row.scientific_collection_eligible,
     versionFreeze: row.version_freeze,
@@ -331,7 +335,20 @@ export default async function handler(req, res) {
 
       // Phase 5: Three temporal timestamps
       const tPrediction = new Date().toISOString();
-      const tFeature = d.t_feature || d.feature_snapshot?.odds?.source_timestamp || null;
+      // Phase 5.3.3: t_feature = MAX of all available source timestamps
+      // Not just odds.source_timestamp — check all features.
+      const dSourceTimestamps = d.feature_snapshot?.source_timestamps || {};
+      const dAvailableTimestamps = [
+        d.t_feature,
+        dSourceTimestamps.odds,
+        dSourceTimestamps.ranking,
+        dSourceTimestamps.form,
+        dSourceTimestamps.h2h,
+        d.feature_snapshot?.odds?.source_timestamp,
+      ].filter(ts => ts != null);
+      const tFeature = dAvailableTimestamps.length > 0
+        ? new Date(Math.max(...dAvailableTimestamps.map(ts => new Date(ts).getTime()))).toISOString()
+        : null;
 
       const result = await sql`
         INSERT INTO predictions (
@@ -353,7 +370,8 @@ export default async function handler(req, res) {
           feature_snapshot_hash, prediction_hash,
           snapshot_timestamp, provenance_status,
           t_prediction, t_feature,
-          completeness_score, temporal_safety_score, ai_provenance_risk,
+          completeness_score, temporal_safety_score, temporal_safety_reason,
+          timestamp_provenance, ai_provenance_risk,
           ai_context_hash, ai_input_hash, ai_prompt_hash, ai_response_hash,
           ai_prompt_version, ai_model, ai_trace,
           scientific_collection_eligible, version_freeze
@@ -377,7 +395,7 @@ export default async function handler(req, res) {
           ${d.feature_snapshot_hash}, ${d.prediction_hash},
           NOW(), ${provenanceStatus},
           ${tPrediction}, ${tFeature},
-          ${d.completeness_score}, ${d.temporal_safety_score}, ${d.ai_provenance_risk},
+          ${d.completeness_score}, ${d.temporal_safety_score}, ${d.temporal_safety_reason}, ${d.timestamp_provenance ? sql.json(d.timestamp_provenance) : null}, ${d.ai_provenance_risk},
           ${d.ai_context_hash}, ${d.ai_input_hash}, ${d.ai_prompt_hash}, ${d.ai_response_hash},
           ${d.ai_prompt_version}, ${d.ai_model}, ${d.ai_trace ? sql.json(d.ai_trace) : null},
           ${d.scientific_collection_eligible}, ${d.version_freeze ? sql.json(d.version_freeze) : null}
@@ -594,6 +612,15 @@ export default async function handler(req, res) {
         updates.push('temporal_safety_score = $' + (params.length + 1));
         params.push(Math.min(Math.max(body.temporal_safety_score, 0), 1));
       }
+      // Phase 5.3.3: temporal_safety_reason and timestamp_provenance
+      if (body.temporal_safety_reason) {
+        updates.push('temporal_safety_reason = $' + (params.length + 1));
+        params.push(String(body.temporal_safety_reason).substring(0, 30));
+      }
+      if (body.timestamp_provenance && typeof body.timestamp_provenance === 'object') {
+        updates.push('timestamp_provenance = $' + (params.length + 1));
+        params.push(sql.json(body.timestamp_provenance));
+      }
       if (body.ai_provenance_risk) {
         updates.push('ai_provenance_risk = $' + (params.length + 1));
         params.push(String(body.ai_provenance_risk).substring(0, 30));
@@ -614,7 +641,9 @@ export default async function handler(req, res) {
         params.push(String(body.provenance_status).substring(0, 30));
       }
       // Temporal timestamps
-      if (body.t_feature) {
+      // Phase 5.3.3: Use != null instead of truthy check, so t_feature can be patched
+      // even with ISO string values. Also support temporal_safety_reason and timestamp_provenance.
+      if (body.t_feature != null) {
         updates.push('t_feature = $' + (params.length + 1));
         params.push(body.t_feature);
       }
