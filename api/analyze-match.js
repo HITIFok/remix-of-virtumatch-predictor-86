@@ -733,6 +733,7 @@ export default async function handler(req, res) {
 
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    console.log(`[analyze-match] GROQ_API_KEY ${GROQ_API_KEY ? 'SET (' + maskKey(GROQ_API_KEY) + ')' : 'NOT SET'}, model=${GROQ_MODEL}`);
 
     // Adjust deadline based on remaining time
     const remainingMs = globalDeadline - Date.now() - 1000; // 1s buffer for response

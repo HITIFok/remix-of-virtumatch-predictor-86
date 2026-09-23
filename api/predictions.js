@@ -491,6 +491,9 @@ export default async function handler(req, res) {
     // Auth: user or device
     const userId = await requireUserAuth(req);
     let authedDeviceId = null;
+
+    // DIAGNOSTIC: Log ai_response_hash value from PATCH body
+    console.log(`[predictions PATCH] prediction_id=${predictionId}, ai_response_hash=${body.ai_response_hash || 'NULL'}, has_snapshot=${!!body.feature_snapshot}, field_count=${Object.keys(body).filter(k => k !== 'prediction_id').length}`);
     if (!userId) {
       authedDeviceId = await requireAuth(req);
       if (!authedDeviceId) {
