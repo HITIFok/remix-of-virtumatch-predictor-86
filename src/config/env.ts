@@ -44,8 +44,8 @@ export const config = {
     scrapedData: `${API_BASE}/api/matches?mode=cache`,
     // Early alerts (results detected before match start)
     earlyAlertsUrl: `${API_BASE}/api/early-alerts`,
-    // HMAC device auth registration
-    deviceRegister: `${API_BASE}/api/device-register`,
+    // HMAC device auth registration (merged into auth.js)
+    deviceRegister: `${API_BASE}/api/auth?action=register`,
     // Magic link auth (email-based premium)
     authRequest: `${API_BASE}/api/auth?action=request`,
     authVerify: `${API_BASE}/api/auth?action=verify`,

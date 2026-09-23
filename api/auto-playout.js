@@ -1,6 +1,6 @@
 // Vercel Serverless Function — auto-playout v5 (ESM)
 // Cron job: fetches playout results at multiple intervals around expectedStart
-// Also handles data-cleanup via x-cron-action: data-cleanup header
+// Also handles data-cleanup via x-cron-action: data-cleanup header or ?action=data-cleanup query param
 //
 // Strategy (v5 — 5s post-start playout exploit):
 //   Responds 202 Accepted immediately, then runs all work in background
@@ -704,8 +704,10 @@ export default async function handler(req, res) {
       return unauthorized(res);
     }
 
-    // ── Check for data-cleanup action via header ──
-    if (req.headers['x-cron-action'] === 'data-cleanup') {
+    // ── Check for data-cleanup action via header OR query param ──
+    // Vercel Cron can't send custom headers, so also support ?action=data-cleanup
+    const cronAction = req.headers['x-cron-action'] || req.query?.action || '';
+    if (cronAction === 'data-cleanup') {
       return await handleDataCleanup(req, res);
     }
 

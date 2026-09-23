@@ -339,6 +339,16 @@ describe("Phase AE: API Authorization Matrix", () => {
       // Phase 5: consolidated into verify-predictions.js (Vercel Hobby 12-function limit)
       expect(fs.existsSync(path.join(apiDir, "snapshot-health.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "dataset-export.js"))).toBe(false);
+      // Phase 5.3.2: further consolidation for Vercel Hobby 12-function limit
+      expect(fs.existsSync(path.join(apiDir, "admin-login.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "admin-verify.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "admin-delete-code.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "admin-migrate.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "latest-apk.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "check-premium.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "device-register.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "scrape.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "scraped-data.js"))).toBe(false);
     });
   });
 });

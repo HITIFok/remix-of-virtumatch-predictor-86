@@ -6,11 +6,12 @@
 //   GET  ?action=latest-apk     → Fetch latest GitHub Actions APK artifact URL
 //   POST ?action=refresh-token → Refresh session token (token rotation)
 //   POST ?action=delete-account → GDPR Article 17 account deletion
+//   POST ?action=register      → Device HMAC registration (was /api/device-register)
 
 import crypto from 'crypto';
 import { setCorsHeaders } from './_lib/cors.js';
 import { createSql } from './_lib/db.js';
-import { signUserToken, requireUserAuth } from './_lib/auth.js';
+import { signUserToken, requireUserAuth, registerDevice, DEVICE_ID_RE } from './_lib/auth.js';
 import { revokeToken, revokeDeviceTokens, revokeUserSessions } from './_lib/token-revocation.js';
 import { getResend, RESEND_FROM, APP_URL } from './_lib/resend.js';
 import { createRateLimiter } from './_lib/ratelimit.js';
@@ -31,6 +32,9 @@ const refreshLimiter = createRateLimiter('refresh-token', { max: 10, windowMs: 6
 
 // ── Rate limiting: account-delete (3/hour per IP) ──
 const deleteLimiter = createRateLimiter('account-delete', { max: 3, windowMs: 60 * 60 * 1000 });
+
+// ── Rate limiting: device-register (5/min per IP) ──
+const registerLimiter = createRateLimiter('device-register', { max: 5, windowMs: 60 * 1000 });
 
 // ═══════════════════════════════════════════════════════════════════
 // REQUEST — POST ?action=request
@@ -549,6 +553,46 @@ async function handleDeleteAccount(req, res) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// DEVICE REGISTER — POST ?action=register
+// Was /api/device-register — merged to stay under 12-function limit.
+// ═══════════════════════════════════════════════════════════════════
+async function handleDeviceRegister(req, res) {
+  // Rate limit
+  const ip = getClientIp(req);
+  const rl = registerLimiter.check(ip);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return rateLimited(res, rl.retryAfter);
+  }
+
+  // Extract device_id from header (primary) or body (fallback)
+  let deviceId = req.headers['x-device-id'] || '';
+  if (!deviceId || !DEVICE_ID_RE.test(deviceId)) {
+    try {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+      deviceId = String(body.device_id || '').trim();
+    } catch { /* ignore */ }
+  }
+
+  const validatedId = validateDeviceId(deviceId);
+  if (!validatedId) {
+    return invalidInput(res, 'Valid device_id required (x-device-id header or body.device_id)', 'device_id');
+  }
+  deviceId = validatedId;
+
+  const result = await registerDevice(deviceId);
+  if (!result.success) {
+    return internalError(res, new Error('registerDevice failed'));
+  }
+
+  if (result.alreadyRegistered) {
+    return successResponse(res, { device_secret: result.device_secret, alreadyRegistered: true });
+  }
+
+  return successResponse(res, { device_secret: result.device_secret });
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Main handler — dispatch by action query param
 // ═══════════════════════════════════════════════════════════════════
 
@@ -583,6 +627,11 @@ export default async function handler(req, res) {
     // POST ?action=delete-account
     if (req.method === 'POST' && action === 'delete-account') {
       return await handleDeleteAccount(req, res);
+    }
+
+    // POST ?action=register — Device HMAC registration (was /api/device-register)
+    if (req.method === 'POST' && action === 'register') {
+      return await handleDeviceRegister(req, res);
     }
 
     return methodNotAllowed(res, ['GET', 'POST']);
