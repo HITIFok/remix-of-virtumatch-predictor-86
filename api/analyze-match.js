@@ -413,10 +413,11 @@ async function callGroqSingle(apiKey, model, userPrompt) {
     const errorBody = await response.text();
     const status = response.status;
     console.log(`[analyze-match] Groq ${status}: ${errorBody.substring(0, 150)}`);
-    return null;
+    // FIX 5.3.2: Return structured error so caller can try fallback model
+    return { __error: true, status, message: errorBody.substring(0, 200) };
   } catch (err) {
     console.log(`[analyze-match] Groq error: ${err.message}`);
-    return null;
+    return { __error: true, status: 0, message: err.message };
   }
 }
 
@@ -587,13 +588,31 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
   // For 1 match: try Groq directly
   if (matches.length === 1) {
     const prompt = buildUserPrompt(matches);
-    const content = await callGroqSingle(groqKey, groqModel, prompt);
+    // FIX 5.3.2: Model fallback chain — try primary, then fallback on 404
+    const FALLBACK_MODELS = ['qwen/qwen3.8-27b', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+    const modelsToTry = [groqModel, ...FALLBACK_MODELS.filter(m => m !== groqModel)];
+    let content = null;
+    let usedModel = groqModel;
+    for (const model of modelsToTry) {
+      const result = await callGroqSingle(groqKey, model, prompt);
+      if (result && !result.__error) {
+        content = result;
+        usedModel = model;
+        break;
+      }
+      if (result?.__error && result.status === 404) {
+        console.log(`[analyze-match] Model ${model} not found (404), trying next...`);
+        continue;
+      }
+      // Non-404 error (rate limit, timeout, etc.) — stop trying
+      break;
+    }
     if (content) {
       const preds = parsePredictions(content);
       if (preds.length === 1) {
-        console.log('[analyze-match] Single match via Groq');
+        console.log(`[analyze-match] Single match via Groq (model: ${usedModel})`);
         // Recompute traces with AI response hash
-        const tracesWithResponse = computeAITraces(matches, content, groqModel);
+        const tracesWithResponse = computeAITraces(matches, content, usedModel);
         return { predictions: preds, provider: 'groq-v6', ai_traces: tracesWithResponse };
       }
     }
@@ -624,10 +643,27 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
     return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
-  const content = await Promise.race([
-    callGroqSingle(groqKey, groqModel, allPrompt),
-    new Promise((resolve) => setTimeout(() => resolve(null), timeLeft)),
-  ]);
+  // FIX 5.3.2: Model fallback chain for batch too
+  const FALLBACK_MODELS_BATCH = ['qwen/qwen3.8-27b', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
+  const modelsToTryBatch = [groqModel, ...FALLBACK_MODELS_BATCH.filter(m => m !== groqModel)];
+  let content = null;
+  let usedModelBatch = groqModel;
+  for (const model of modelsToTryBatch) {
+    const result = await Promise.race([
+      callGroqSingle(groqKey, model, allPrompt),
+      new Promise((resolve) => setTimeout(() => resolve(null), timeLeft)),
+    ]);
+    if (result && !result?.__error) {
+      content = result;
+      usedModelBatch = model;
+      break;
+    }
+    if (result?.__error && result.status === 404) {
+      console.log(`[analyze-match] Batch: Model ${model} not found (404), trying next...`);
+      continue;
+    }
+    break;
+  }
 
   if (content) {
     const preds = parsePredictions(content);
@@ -638,7 +674,7 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
       }
       const mathCount = matches.length - Math.min(preds.length, matches.length);
       const provider = mathCount === 0 ? 'groq-v6' : mathCount === matches.length ? 'math-v2' : 'groq-v6+math-v2';
-      const tracesWithResponse = computeAITraces(matches, content, groqModel);
+      const tracesWithResponse = computeAITraces(matches, content, usedModelBatch);
       return { predictions: allPredictions, provider, ai_traces: tracesWithResponse };
     }
   }
@@ -732,7 +768,9 @@ export default async function handler(req, res) {
     console.log(`[analyze-match] v24 Processing ${matches.length} match(es) for device ${deviceId}...`);
 
     const GROQ_API_KEY = process.env.GROQ_API_KEY;
-    const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+    // FIX 5.3.2: llama-3.3-70b-versatile deprecated on Free tier Aug 16, 2026
+    // Default to qwen/qwen3.8-27b (available on Free/Developer tier)
+    const GROQ_MODEL = process.env.GROQ_MODEL || 'qwen/qwen3.8-27b';
     console.log(`[analyze-match] GROQ_API_KEY ${GROQ_API_KEY ? 'SET (' + maskKey(GROQ_API_KEY) + ')' : 'NOT SET'}, model=${GROQ_MODEL}`);
 
     // Adjust deadline based on remaining time
