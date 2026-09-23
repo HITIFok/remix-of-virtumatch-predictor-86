@@ -746,7 +746,7 @@ export default async function handler(req, res) {
     const aiTraces = result.ai_traces || [];
     if (aiTraces.length > 0) {
       const t0 = aiTraces[0];
-      console.log(`[analyze-match] DIAGNOSTIC: ai_traces[0] keys=${Object.keys(t0).join(',')}, has_snapshot=${!!t0.feature_snapshot}, has_ctx_hash=${!!t0.ai_context_hash}, has_inp_hash=${!!t0.ai_input_hash}, eligible=${t0.scientific_collection_eligible}`);
+      console.log(`[analyze-match] DIAGNOSTIC: ai_traces[0] keys=${Object.keys(t0).join(',')}, has_snapshot=${!!t0.feature_snapshot}, has_ctx_hash=${!!t0.ai_context_hash}, has_inp_hash=${!!t0.ai_input_hash}, has_res_hash=${!!t0.ai_response_hash}, eligible=${t0.scientific_collection_eligible}`);
     } else {
       console.warn(`[analyze-match] DIAGNOSTIC: ai_traces is EMPTY! provider=${result.provider}`);
     }

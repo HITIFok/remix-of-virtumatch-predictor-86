@@ -532,10 +532,12 @@ export default function LiveMatches() {
         }
         // Phase 5.3.1: PATCH existing predictions with AI trace (not duplicate INSERT)
         const aiTraces = data.ai_traces || [];
-        console.log(`[enhanceWithAI] aiTraces received: ${aiTraces.length}, aiPreds: ${aiPreds.length}`);
+        const provider = (data as any).provider || 'unknown';
+        console.log(`[enhanceWithAI] aiTraces received: ${aiTraces.length}, aiPreds: ${aiPreds.length}, provider: ${provider}`);
         if (aiTraces.length > 0) {
-          // Log first trace keys for diagnostic
-          console.log(`[enhanceWithAI] Trace[0] keys: ${Object.keys(aiTraces[0]).join(', ')}, has_snapshot=${!!aiTraces[0]?.feature_snapshot}, has_ctx_hash=${!!aiTraces[0]?.ai_context_hash}`);
+          // Log first trace keys + response hash for diagnostic
+          const t0 = aiTraces[0];
+          console.log(`[enhanceWithAI] Trace[0] keys: ${Object.keys(t0).join(', ')}, has_snapshot=${!!t0?.feature_snapshot}, has_ctx_hash=${!!t0?.ai_context_hash}, has_res_hash=${!!t0?.ai_response_hash}`);
         }
         Promise.all(
           toEnrich.map(async (t, i) => {
