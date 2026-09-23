@@ -108,11 +108,14 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         predeterminedScore: m.predeterminedScore || null,
         prediction: m.prediction || null,
         // Phase 5.3.3: Source timestamps from API response
-        // Use scrapedAt from the API if available, otherwise mark as unknown
+        // The fetch-live scraper fetches matches + ranking + results in a SINGLE call.
+        // scrapedAt = Date.now() at scrape completion = best proxy for ALL sources.
+        // If the external API ever adds per-source timestamps, m.oddsTimestamp etc. will take precedence.
+        // IMPORTANT: Never substitute with Date.now() or t_prediction here.
         oddsTimestamp: m.oddsTimestamp || data.scrapedAt || undefined,
-        rankingTimestamp: m.rankingTimestamp || undefined,
-        formTimestamp: m.formTimestamp || undefined,
-        h2hTimestamp: m.h2hTimestamp || undefined,
+        rankingTimestamp: m.rankingTimestamp || data.scrapedAt || undefined,
+        formTimestamp: m.formTimestamp || data.scrapedAt || undefined,
+        h2hTimestamp: m.h2hTimestamp || data.scrapedAt || undefined,
       })),
       results: (data.results || []).map((r: any) => ({
         home: r.home || "",
@@ -201,10 +204,11 @@ export function useLiveMatches() {
             id: m.id,
             round: m.round,
             // Phase 5.3.3: Propagate source timestamps from scraper cache
+            // scraped_at from Neon = same as scrapedAt — best proxy for all sources.
             oddsTimestamp: m.oddsTimestamp || matchesEntry.scraped_at || undefined,
-            rankingTimestamp: m.rankingTimestamp || undefined,
-            formTimestamp: m.formTimestamp || undefined,
-            h2hTimestamp: m.h2hTimestamp || undefined,
+            rankingTimestamp: m.rankingTimestamp || matchesEntry.scraped_at || undefined,
+            formTimestamp: m.formTimestamp || matchesEntry.scraped_at || undefined,
+            h2hTimestamp: m.h2hTimestamp || matchesEntry.scraped_at || undefined,
           }))
         : [];
 

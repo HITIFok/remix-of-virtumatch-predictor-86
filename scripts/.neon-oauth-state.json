@@ -1,0 +1,14 @@
+{
+  "client_info": {
+    "client_id": "BJOA4KaA",
+    "client_secret": "mlrwFFJtgSMvq4b5XzTptDDsyoHvnQfA",
+    "client_name": "virtumatch-scientific-audit-read",
+    "redirect_uris": [
+      "http://localhost:19999/callback"
+    ],
+    "token_endpoint_auth_method": "none"
+  },
+  "state": "Y595V8022SMASYKHI1bPig",
+  "code_verifier": "Yk8XZ2OE8MOie-wIGwLk8w8NyP72MQMIQSNRmPYc2aE",
+  "auth_url": "https://mcp.neon.tech/api/authorize?client_id=BJOA4KaA&redirect_uri=http%3A%2F%2Flocalhost%3A19999%2Fcallback&response_type=code&scope=read&state=Y595V8022SMASYKHI1bPig&code_challenge=KMNHWVT5cCfqwqE8DnDeeUAXK-xGPblo97Yr7wSTWNg&code_challenge_method=S256"
+}
