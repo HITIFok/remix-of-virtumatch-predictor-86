@@ -171,6 +171,23 @@ function mapToCamelCase(row) {
     predictionHash: row.prediction_hash,
     snapshotTimestamp: row.snapshot_timestamp,
     provenanceStatus: row.provenance_status,
+    // Phase 5.2: AI Context Integrity fields
+    aiContextHash: row.ai_context_hash,
+    aiInputHash: row.ai_input_hash,
+    aiPromptHash: row.ai_prompt_hash,
+    aiResponseHash: row.ai_response_hash,
+    aiPromptVersion: row.ai_prompt_version,
+    aiModel: row.ai_model,
+    aiTrace: row.ai_trace,
+    // Phase 5.3: Scientific Collection fields
+    completenessScore: row.completeness_score,
+    temporalSafetyScore: row.temporal_safety_score,
+    aiProvenanceRisk: row.ai_provenance_risk,
+    scientificCollectionEligible: row.scientific_collection_eligible,
+    versionFreeze: row.version_freeze,
+    tFeature: row.t_feature,
+    tPrediction: row.t_prediction,
+    datasetSplit: row.dataset_split,
   };
 }
 

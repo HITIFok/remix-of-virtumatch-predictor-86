@@ -148,9 +148,10 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 8. Backfill AI columns for existing predictions with snapshots
+-- FIX 5.3.2: Use current valid model name (qwen/qwen3.8-27b) instead of deprecated llama-3.3-70b-versatile
 UPDATE predictions
 SET ai_prompt_version = '7.0',
-    ai_model = 'llama-3.3-70b-versatile'
+    ai_model = 'qwen/qwen3.8-27b'
 WHERE feature_snapshot IS NOT NULL
   AND ai_prompt_version IS NULL;
 

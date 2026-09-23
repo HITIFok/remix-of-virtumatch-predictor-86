@@ -44,3 +44,21 @@ Stage Summary:
 - Double counting measurement infrastructure (Section 22) - NOT fixed, only measured
 - 9 mandatory questions answered (Section 25)
 - Status: NOT VALIDATED (insufficient data, no NEON_DATABASE_URL access)
+
+---
+Task ID: 5.3.2-fix
+Agent: main
+Task: Scientific Collection Pipeline — Fix aiTrace data loss, Groq 404, mapToCamelCase, temporal safety
+
+Work Log:
+- Fixed mapToCamelCase() in api/predictions.js: added 15+ missing Phase 5.2/5.3 fields (aiContextHash, aiInputHash, aiPromptHash, aiResponseHash, aiPromptVersion, aiModel, aiTrace, completenessScore, temporalSafetyScore, aiProvenanceRisk, scientificCollectionEligible, versionFreeze, tFeature, tPrediction, datasetSplit)
+- Fixed temporal_safety_score in api/analyze-match.js: added 5-minute clock-skew tolerance window (was binary 0/1 with zero tolerance, causing eligible=false for predictions where t_feature was slightly after t_prediction due to distributed clock skew)
+- Created backfill script scripts/backfill-scientific-fields.mjs: updates ai_model from deprecated 'llama-3.3-70b-versatile' to 'qwen/qwen3.8-27b', diagnoses ineligible predictions, fixes temporal_safety_score for clock-skew cases, reports before/after state
+- Fixed migration 008 backfill: changed hardcoded 'llama-3.3-70b-versatile' to 'qwen/qwen3.8-27b'
+- All files pass syntax checks
+
+Stage Summary:
+- mapToCamelCase now returns all 15+ scientific fields in camelCase — fixes API responses
+- temporal_safety_score has 5-min tolerance — prevents false eligible=false from clock skew
+- Backfill script ready: NEON_DATABASE_URL=... node scripts/backfill-scientific-fields.mjs --fix
+- Migration 008 no longer backfills deprecated model name

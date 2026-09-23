@@ -507,12 +507,24 @@ function computeAITraces(matches, aiResponseText, groqModel) {
     if (ctx.h2h.matches && ctx.h2h.matches.length > 0) completenessScore += 0.2;
     completenessScore = Math.round(completenessScore * 1000) / 1000;
 
-    // Temporal safety: 1.0 if t_feature <= t_prediction, 0.0 if future data
+    // Temporal safety: 1.0 if t_feature <= t_prediction (with 5min clock-skew tolerance)
+    // FIX 5.3.2: Added 5-minute tolerance window for distributed clock skew
+    // between odds scraper and prediction server
     const tFeature = ctx.source_timestamps?.odds || null;
     const tPrediction = new Date().toISOString();
     let temporalSafetyScore = 1.0;
-    if (tFeature && new Date(tFeature) > new Date(tPrediction)) {
-      temporalSafetyScore = 0.0;
+    if (tFeature) {
+      const tFeatureMs = new Date(tFeature).getTime();
+      const tPredictionMs = new Date(tPrediction).getTime();
+      const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+      if (tFeatureMs > tPredictionMs + CLOCK_SKEW_TOLERANCE_MS) {
+        // Feature data is genuinely in the future (beyond tolerance)
+        temporalSafetyScore = 0.0;
+      } else if (tFeatureMs > tPredictionMs) {
+        // Feature data slightly in the future but within clock skew tolerance
+        // Log diagnostic but don't penalize
+        console.log(`[analyze-match] Temporal: t_feature ${Math.round((tFeatureMs - tPredictionMs) / 1000)}s ahead of t_prediction (within 5min tolerance)`);
+      }
     }
 
     // Provenance risk
