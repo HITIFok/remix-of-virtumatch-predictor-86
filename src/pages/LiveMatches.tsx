@@ -363,6 +363,8 @@ export default function LiveMatches() {
   const predictingRef = useRef<string | null>(null);
   // Map matchKey → prediction UUID (for PATCH updates after AI enhancement)
   const predictionIdMap = useRef<Map<string, string>>(new Map());
+  // Track in-flight save promises so enhanceWithAI can await them before PATCHing
+  const pendingSaveRef = useRef<Map<string, Promise<string | null>>>(new Map());
 
   // fetchMatches is already called by the hook's own useEffect on mount — no duplicate needed
 
@@ -517,12 +519,15 @@ export default function LiveMatches() {
       const data = await res.json();
       if (res.ok && data?.predictions?.length > 0) {
         const aiPreds = data.predictions as AIPrediction[];
+        // FIX 5.3.2: Capture processMatch results in a local map (not stale React state)
+        const enrichedResults = new Map<string, MatchResult>();
         // Mise à jour instantanée de l'affichage
         for (let i = 0; i < toEnrich.length; i++) {
           if (aiPreds[i]) {
             const { cacheKey, matchKey, match } = toEnrich[i];
             aiCache.current.set(cacheKey, aiPreds[i]);
-            processMatch(match, aiPreds[i]);
+            const result = processMatch(match, aiPreds[i]);
+            enrichedResults.set(matchKey, result);
           }
         }
         // Phase 5.3.1: PATCH existing predictions with AI trace (not duplicate INSERT)
@@ -533,21 +538,29 @@ export default function LiveMatches() {
           console.log(`[enhanceWithAI] Trace[0] keys: ${Object.keys(aiTraces[0]).join(', ')}, has_snapshot=${!!aiTraces[0]?.feature_snapshot}, has_ctx_hash=${!!aiTraces[0]?.ai_context_hash}`);
         }
         Promise.all(
-          toEnrich.map((t, i) => {
+          toEnrich.map(async (t, i) => {
             if (aiTraces[i]) {
               const matchKey = `${t.match.home}-${t.match.away}`;
+              // FIX 5.3.2: Await any in-flight save so predictionIdMap is populated
+              const pendingSave = pendingSaveRef.current.get(matchKey);
+              if (pendingSave) {
+                console.log(`[enhanceWithAI] Awaiting pending save for ${matchKey} before PATCH...`);
+                await pendingSave.catch(() => {}); // Don't fail if INSERT errored
+              }
               const predId = predictionIdMap.current.get(matchKey);
               if (predId) {
                 // UPDATE existing prediction with AI trace fields via PATCH
                 console.log(`[enhanceWithAI] PATCHING ${matchKey} → ${predId} with ${Object.keys(aiTraces[i]).length} trace fields`);
                 return updatePredictionScientificFields(predId, aiTraces[i]);
               } else {
-                // Phase 5.3.1 FIX: No predictionIdMap entry — use savePredictionToDb
-                // which now has PATCH-first logic when predictionIdMap is populated
-                console.log(`[enhanceWithAI] No predictionIdMap entry for ${matchKey}, saving with aiTrace (savePredictionToDb will PATCH if ID found)`);
-                const result = predictions[matchKey];
-                if (result) return savePredictionToDb(t.match, result, aiTraces[i]);
-                else console.warn(`[enhanceWithAI] No prediction result in state for ${matchKey} — aiTrace data may be lost!`);
+                // FIX 5.3.2: Use captured processMatch result (not stale predictions state)
+                const result = enrichedResults.get(matchKey);
+                if (result) {
+                  console.log(`[enhanceWithAI] No predictionIdMap entry for ${matchKey}, saving with aiTrace (${Object.keys(aiTraces[i]).length} fields)`);
+                  return savePredictionToDb(t.match, result, aiTraces[i]);
+                } else {
+                  console.error(`[enhanceWithAI] No enriched result for ${matchKey} — this should never happen!`);
+                }
               }
             }
             return Promise.resolve();
@@ -579,7 +592,9 @@ export default function LiveMatches() {
       // Libérer le bouton IMMÉDIATEMENT — sauvegarde BDD en arrière-plan
       setPredictingId(null);
       toast.success(isPreloaded ? "Résultat prédéterminé 🎯" : "Prédiction générée 🔥");
-      savePredictionToDb(match, result).catch(() => {});
+      const savePromise = savePredictionToDb(match, result);
+      pendingSaveRef.current.set(matchKey, savePromise);
+      savePromise.catch(() => {}).finally(() => pendingSaveRef.current.delete(matchKey));
 
       // STEP 2: IA en arrière-plan (non-blocking)
       const cacheKey = `${match.home}-${match.away}-${match.oddHome}-${match.oddDraw}-${match.oddAway}`;
@@ -618,7 +633,14 @@ export default function LiveMatches() {
         batchResults.push({ match, result });
       }
       // Sauvegarder en BDD (non-blocking, ne bloque pas l'affichage)
-      Promise.all(batchResults.map(({ match, result }) => savePredictionToDb(match, result)));
+      // Track pending saves so enhanceWithAI can await them before PATCHing
+      Promise.all(batchResults.map(({ match, result }) => {
+        const mk = `${match.home}-${match.away}`;
+        const p = savePredictionToDb(match, result);
+        pendingSaveRef.current.set(mk, p);
+        p.catch(() => {}).finally(() => pendingSaveRef.current.delete(mk));
+        return p;
+      }));
 
       setBatchPredicting(false);
       toast.success(`${allMatches.length} match(s) analysé(s) 🔥`);
