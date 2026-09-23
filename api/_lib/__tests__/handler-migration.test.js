@@ -12,7 +12,6 @@ const HANDLERS = [
   'auth.js',
   'admin-codes.js',
   'premium-activate.js',
-  'device-register.js',
   'predictions.js',
   'verify-predictions.js',
   'push-odds.js',
@@ -67,7 +66,6 @@ describe('Phase U: Handler Migration', () => {
       'auth.js',
       'admin-codes.js',
       'premium-activate.js',
-      'device-register.js',
       'predictions.js',
     ];
 

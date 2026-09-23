@@ -40,11 +40,11 @@ export const API_ENDPOINTS = {
   AUTH_REQUEST: '/auth?action=request',
   AUTH_VERIFY: '/auth?action=verify',
   AUTH_LATEST_APK: '/auth?action=latest-apk',
-  DEVICE_REGISTER: '/device-register',
+  DEVICE_REGISTER: '/auth?action=register',
   PREDICTIONS: '/predictions',
   PREMIUM_ACTIVATE: '/premium-activate',
   VERIFY_PREDICTIONS: '/verify-predictions',
-  HEALTH: '/health',
+  HEALTH: '/verify-predictions?action=health',
   PUSH_ODDS: '/push-odds',
 };
 

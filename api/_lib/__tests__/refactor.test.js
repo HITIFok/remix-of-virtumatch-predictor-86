@@ -82,7 +82,6 @@ describe('Phase I: API handlers use shared modules (no inline patterns)', () => 
 
   const REFACTORED_HANDLERS = [
     'predictions.js',
-    'device-register.js',
     'auth.js',
     'admin-codes.js',
     'premium-activate.js',
@@ -97,7 +96,7 @@ describe('Phase I: API handlers use shared modules (no inline patterns)', () => 
 
   it('handlers that extract IP import from _lib/request.js', () => {
     // premium-activate.js rate-limits by identifier (not IP), so doesn't need request.js
-    const ipHandlers = ['predictions.js', 'device-register.js', 'auth.js', 'admin-codes.js'];
+    const ipHandlers = ['predictions.js', 'auth.js', 'admin-codes.js'];
     for (const file of ipHandlers) {
       const src = readFileSync(resolve(process.cwd(), `api/${file}`), 'utf8');
       expect(src).toContain("from './_lib/request.js'");

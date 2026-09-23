@@ -41,10 +41,11 @@ describe('Phase AA: E2E Test Framework', () => {
   describe('API endpoints', () => {
     it('defines all required endpoints', () => {
       expect(API_ENDPOINTS.AUTH_REQUEST).toContain('/auth');
-      expect(API_ENDPOINTS.DEVICE_REGISTER).toContain('/device-register');
+      expect(API_ENDPOINTS.DEVICE_REGISTER).toContain('/auth');
+      expect(API_ENDPOINTS.DEVICE_REGISTER).toContain('register');
       expect(API_ENDPOINTS.PREDICTIONS).toContain('/predictions');
       expect(API_ENDPOINTS.PREMIUM_ACTIVATE).toContain('/premium-activate');
-      expect(API_ENDPOINTS.HEALTH).toContain('/health');
+      expect(API_ENDPOINTS.HEALTH).toContain('/verify-predictions');
     });
 
     it('auth endpoint includes action query params', () => {

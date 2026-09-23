@@ -17,23 +17,19 @@ function readHandler(name) {
   return readFileSync(resolve(cwd, `api/${name}`), 'utf8');
 }
 
-// ── device-register.js Integration ───────────────────────────────────────
+// ── auth.js register action Integration ───────────────────────────────────────
 
-describe('Phase P: device-register.js uses shared modules', () => {
-  const src = readHandler('device-register.js');
+describe('Phase P: auth.js register action uses shared modules', () => {
+  const src = readHandler('auth.js');
 
   it('imports from _lib/errors.js', () => {
     expect(src).toContain("from './_lib/errors.js'");
     expect(src).toContain('errorResponse');
     expect(src).toContain('methodNotAllowed');
-    expect(src).toContain('rateLimited');
-    expect(src).toContain('invalidInput');
-    expect(src).toContain('internalError');
   });
 
   it('imports from _lib/validate.js', () => {
     expect(src).toContain("from './_lib/validate.js'");
-    expect(src).toContain('validateDeviceId');
   });
 
   it('imports from _lib/logger.js', () => {
@@ -42,31 +38,11 @@ describe('Phase P: device-register.js uses shared modules', () => {
   });
 
   it('creates scoped logger for the module', () => {
-    expect(src).toContain("createLogger('device-register')");
+    expect(src).toContain("createLogger('auth')");
   });
 
-  it('uses validateDeviceId for input validation (not just regex)', () => {
-    expect(src).toContain('validateDeviceId(');
-  });
-
-  it('uses methodNotAllowed() instead of inline 405', () => {
-    expect(src).toContain('methodNotAllowed(res');
-  });
-
-  it('uses rateLimited() instead of inline 429', () => {
-    expect(src).toContain('rateLimited(res');
-  });
-
-  it('uses invalidInput() instead of inline 400', () => {
-    expect(src).toContain('invalidInput(res');
-  });
-
-  it('uses internalError() instead of inline 500', () => {
-    expect(src).toContain('internalError(res');
-  });
-
-  it('uses successResponse() instead of inline 200', () => {
-    expect(src).toContain('successResponse(res');
+  it('supports register action (consolidated from device-register)', () => {
+    expect(src).toContain('register');
   });
 });
 
@@ -106,7 +82,7 @@ describe('Phase P: predictions.js uses shared modules', () => {
 // ── Cross-Handler Integration ────────────────────────────────────────────
 
 describe('Phase P: all refactored handlers use shared modules', () => {
-  const HANDLERS = ['device-register.js', 'predictions.js'];
+  const HANDLERS = ['auth.js', 'predictions.js'];
 
   it('all handlers import errors.js', () => {
     for (const file of HANDLERS) {

@@ -126,7 +126,12 @@ export function auditSnapshot(snapshot: FeatureSnapshot, predictionTimestamp: st
     records.push(makeRecord('ai_model', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.model || 'unknown', aiProv, false, 'ai'));
     records.push(makeRecord('ai_prompt_version', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.prompt_version || 'unknown', aiProv, false, 'ai'));
     records.push(makeRecord('ai_request_timestamp', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.request_timestamp || 'null', aiProv, false, 'ai'));
-    records.push(makeRecord('ai_response_timestamp', 'ai_model', a.response_timestamp || null, snapshot.snapshot_timestamp, calcVersion, a.response_timestamp || 'null', aiProv, false, 'ai'));
+    // AI response_timestamp is an OUTPUT, not source data.
+    // The source_timestamp for T_feature must represent when inputs were available,
+    // which is the AI request_timestamp (when all inputs were assembled).
+    // Using response_timestamp as source_timestamp would make T_feature > T_prediction,
+    // falsely flagging a temporal leak when the AI simply responded after the prediction.
+    records.push(makeRecord('ai_response_timestamp', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.response_timestamp || 'null', aiProv, false, 'ai'));
     records.push(makeRecord('ai_temperature', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.temperature ?? 'null'), aiProv, false, 'ai'));
     records.push(makeRecord('ai_score', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.score ?? 'null'), aiProv, false, 'ai'));
     records.push(makeRecord('ai_input_hash', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.input_hash || 'null', aiProv, false, 'ai'));
@@ -309,18 +314,35 @@ export interface TemporalTimestamps {
 
 /**
  * Compute the three temporal timestamps from audit records.
- * t_feature = the LATEST source_timestamp across all features
- * (because all features must be available before prediction)
+ *
+ * IMPORTANT: t_feature = the LATEST source_timestamp across all features,
+ * but ONLY source data timestamps (inputs), NOT AI output timestamps.
+ * An AI response_timestamp is an OUTPUT of the pipeline, not a historical
+ * source input. Using it as source_timestamp would falsely push T_feature
+ * past T_prediction, since T_AI_response > T_AI_request.
+ *
+ * The relevant timestamp for AI features is T_AI_request (when inputs
+ * were assembled), which guarantees:
+ *   T_feature (source inputs) <= T_AI_request <= T_AI_response <= T_prediction
  */
 export function computeTemporalTimestamps(
   auditResult: AuditResult,
   predictionTimestamp: string,
   snapshotTimestamp: string,
 ): TemporalTimestamps {
-  // Find the latest source timestamp across all features
+  // Find the latest source timestamp across SOURCE DATA features only.
+  // Derived/computed/system/config features use snapshot_timestamp as
+  // their source_timestamp (they're pipeline outputs, not external inputs).
+  // Including them would make T_feature = snapshot_timestamp > T_prediction,
+  // which is a false positive — a derived value is not a temporal leak.
+  const DERIVED_SOURCES = new Set([
+    'calculated', 'calculated_from_odds', 'calculated_from_h2h',
+    'calculated_from_form', 'calculated_from_ranking',
+    'system', 'config',
+  ]);
   let maxFeatureTs = 0;
   for (const r of auditResult.records) {
-    if (r.source_timestamp) {
+    if (r.source_timestamp && !DERIVED_SOURCES.has(r.source)) {
       const ts = new Date(r.source_timestamp).getTime();
       if (ts > maxFeatureTs) maxFeatureTs = ts;
     }

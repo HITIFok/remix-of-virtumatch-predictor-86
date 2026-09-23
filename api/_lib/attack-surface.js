@@ -55,7 +55,7 @@ export const ATTACK_SURFACE = Object.freeze([
     severity: SEVERITY.CRITICAL,
     title: 'Device secret re-exposure on re-registration',
     description: 'If registerDevice() returned the secret for already-registered devices, attackers who know a device_id could obtain the HMAC secret.',
-    endpoint: 'POST /api/device-register',
+    endpoint: 'POST /api/auth?action=register',
     payload: '{ device_id: "dev-victimid" }',
     mitigated: true,
     mitigation: 'registerDevice() returns 409 for existing devices — never re-exposes secret',

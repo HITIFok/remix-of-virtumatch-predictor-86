@@ -76,11 +76,21 @@ import {
 // ═══════════════════════════════════════════════════════════════════
 
 function makeSampleSnapshot(): FeatureSnapshot {
-  const now = new Date().toISOString();
+  // Deterministic timestamps with explicit temporal ordering:
+  //   featureTime <= aiRequestTime <= aiResponseTime <= predictionTime <= snapshotTime
+  // This guarantees T_feature <= T_prediction and T_snapshot >= T_prediction
+  // without any non-deterministic Date.now() drift.
+  const base = Date.now();
+  const featureTime = new Date(base - 86400000).toISOString();     // 1 day ago (source data)
+  const aiRequestTime = new Date(base - 3000).toISOString();       // 3s before prediction
+  const aiResponseTime = new Date(base - 1000).toISOString();      // 1s before prediction
+  const predictionTime = new Date(base - 500).toISOString();       // 0.5s before snapshot
+  const snapshotTime = new Date(base).toISOString();               // now
+
   return {
     schema_version: 1,
-    snapshot_timestamp: now,
-    prediction_timestamp: now,
+    snapshot_timestamp: snapshotTime,
+    prediction_timestamp: predictionTime,
     model_version: MODEL_VERSION,
     feature_version: FEATURE_VERSION,
     config_version: CONFIG_VERSION,
@@ -91,7 +101,7 @@ function makeSampleSnapshot(): FeatureSnapshot {
       draw: 3.40,
       away: 4.20,
       source: 'betapi',
-      source_timestamp: now,
+      source_timestamp: featureTime,
       market: '1X2',
       implied_home: 0.54,
       implied_draw: 0.29,
@@ -109,13 +119,13 @@ function makeSampleSnapshot(): FeatureSnapshot {
         match_count: 5,
         provenance: 'RECORDED',
         match_timestamps: [
-          Date.now() - 86400000 * 1,
-          Date.now() - 86400000 * 2,
-          Date.now() - 86400000 * 3,
-          Date.now() - 86400000 * 4,
-          Date.now() - 86400000 * 5,
+          base - 86400000 * 2,
+          base - 86400000 * 3,
+          base - 86400000 * 4,
+          base - 86400000 * 5,
+          base - 86400000 * 6,
         ],
-        source_timestamp: new Date(Date.now() - 86400000).toISOString(),
+        source_timestamp: featureTime,
       },
       away: {
         form_scores: ['D', 'D', 'N', 'V', 'D'],
@@ -126,13 +136,13 @@ function makeSampleSnapshot(): FeatureSnapshot {
         match_count: 5,
         provenance: 'RECORDED',
         match_timestamps: [
-          Date.now() - 86400000 * 1,
-          Date.now() - 86400000 * 2,
-          Date.now() - 86400000 * 3,
-          Date.now() - 86400000 * 4,
-          Date.now() - 86400000 * 5,
+          base - 86400000 * 2,
+          base - 86400000 * 3,
+          base - 86400000 * 4,
+          base - 86400000 * 5,
+          base - 86400000 * 6,
         ],
-        source_timestamp: new Date(Date.now() - 86400000).toISOString(),
+        source_timestamp: featureTime,
       },
     },
     h2h: {
@@ -142,8 +152,8 @@ function makeSampleSnapshot(): FeatureSnapshot {
       away_wins: 1,
       home_team_bias: 50,
       provenance: 'RECORDED',
-      match_timestamps: [Date.now() - 86400000 * 30],
-      source_timestamp: new Date(Date.now() - 86400000 * 30).toISOString(),
+      match_timestamps: [base - 86400000 * 30],
+      source_timestamp: new Date(base - 86400000 * 30).toISOString(),
     },
     stats: {
       home: {
@@ -158,7 +168,7 @@ function makeSampleSnapshot(): FeatureSnapshot {
         avg_goals_scored: 1.6,
         avg_goals_conceded: 0.8,
         provenance: 'RECORDED',
-        source_timestamp: new Date(Date.now() - 86400000).toISOString(),
+        source_timestamp: featureTime,
       },
       away: {
         position: 12,
@@ -172,7 +182,7 @@ function makeSampleSnapshot(): FeatureSnapshot {
         avg_goals_scored: 0.8,
         avg_goals_conceded: 1.6,
         provenance: 'RECORDED',
-        source_timestamp: new Date(Date.now() - 86400000).toISOString(),
+        source_timestamp: featureTime,
       },
     },
     ai: {
@@ -181,8 +191,8 @@ function makeSampleSnapshot(): FeatureSnapshot {
       prediction_away: 0.22,
       model: 'gpt-4o',
       prompt_version: 'v2.1',
-      request_timestamp: new Date(Date.now() - 1000).toISOString(),
-      response_timestamp: new Date().toISOString(),
+      request_timestamp: aiRequestTime,
+      response_timestamp: aiResponseTime,
       temperature: 0.3,
       score: 0.85,
       input_hash: 'abc123',
@@ -287,6 +297,39 @@ describe('Phase 5: Three Temporal Timestamps (Section 2)', () => {
     const temporal = computeTemporalTimestamps(audit, snapshot.prediction_timestamp, snapshot.snapshot_timestamp);
 
     expect(temporal.snapshot_after_prediction).toBe(true);
+  });
+
+  // ── REGRESSION: A feature with source_timestamp > prediction_timestamp
+  //    MUST be detected as a temporal leak (feature_before_prediction = false).
+  //    This ensures the fix for AI response_timestamp doesn't mask real leaks.
+  it('should detect temporal leak when a source feature is posterior to prediction', () => {
+    const snapshot = makeSampleSnapshot();
+    // Simulate a real temporal leak: odds data from the FUTURE
+    snapshot.odds!.source_timestamp = new Date(
+      new Date(snapshot.prediction_timestamp).getTime() + 60000
+    ).toISOString();
+
+    const audit = auditSnapshot(snapshot, snapshot.prediction_timestamp);
+    const temporal = computeTemporalTimestamps(audit, snapshot.prediction_timestamp, snapshot.snapshot_timestamp);
+
+    // The future odds push T_feature past T_prediction → leak detected
+    expect(temporal.feature_before_prediction).toBe(false);
+    expect(new Date(temporal.t_feature).getTime()).toBeGreaterThan(
+      new Date(temporal.t_prediction).getTime()
+    );
+  });
+
+  // ── Verify the deterministic ordering of the fixture timestamps
+  it('should have T_feature < T_prediction with deterministic fixture', () => {
+    const snapshot = makeSampleSnapshot();
+    const audit = auditSnapshot(snapshot, snapshot.prediction_timestamp);
+    const temporal = computeTemporalTimestamps(audit, snapshot.prediction_timestamp, snapshot.snapshot_timestamp);
+
+    // With deterministic timestamps: all source_timestamps < prediction_timestamp
+    expect(new Date(temporal.t_feature).getTime()).toBeLessThan(
+      new Date(temporal.t_prediction).getTime()
+    );
+    expect(temporal.feature_before_prediction).toBe(true);
   });
 });
 

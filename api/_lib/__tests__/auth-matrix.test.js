@@ -33,8 +33,8 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 1. Matrix completeness ────────────────────────────
 
   describe("matrix completeness", () => {
-    it("documents all 12 API endpoints", () => {
-      expect(API_AUTH_MATRIX.length).toBe(12);
+    it("documents all 11 API endpoints", () => {
+      expect(API_AUTH_MATRIX.length).toBe(11);
     });
 
     it("every entry has required fields", () => {
@@ -71,12 +71,11 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(authed.length).toBeGreaterThanOrEqual(5);
     });
 
-    it("4 endpoints are fully public", () => {
+    it("3 endpoints are fully public", () => {
       const public_ = getPublicEndpoints();
-      expect(public_.length).toBeGreaterThanOrEqual(4);
+      expect(public_.length).toBeGreaterThanOrEqual(3);
       const paths = public_.map((e) => e.endpoint);
       expect(paths).toContain("/api/auth");
-      expect(paths).toContain("/api/device-register");
       expect(paths).toContain("/api/matches");
       expect(paths).toContain("/api/fetch-live");
     });
@@ -118,9 +117,9 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 3. Rate limiting coverage ─────────────────────────
 
   describe("rate limiting coverage", () => {
-    it("at least 5 endpoints have explicit rate limiting", () => {
+    it("at least 4 endpoints have explicit rate limiting", () => {
       const rated = API_AUTH_MATRIX.filter((e) => e.rateLimited);
-      expect(rated.length).toBeGreaterThanOrEqual(5);
+      expect(rated.length).toBeGreaterThanOrEqual(4);
     });
 
     it("endpoints without explicit rate limiting rely on middleware", () => {
@@ -130,7 +129,7 @@ describe("Phase AE: API Authorization Matrix", () => {
 
     it("public endpoints with sensitive actions have rate limiting", () => {
       // auth (request), device-register, admin-codes (login), premium-activate
-      const publicWithSensitiveActions = ["/api/auth", "/api/device-register", "/api/admin-codes", "/api/premium-activate"];
+      const publicWithSensitiveActions = ["/api/auth", "/api/admin-codes", "/api/premium-activate"];
       publicWithSensitiveActions.forEach((endpoint) => {
         const info = getEndpointInfo(endpoint);
         expect(info.rateLimited).toBe(true);
@@ -265,7 +264,7 @@ describe("Phase AE: API Authorization Matrix", () => {
     it("no public endpoint exposes write operations (except auth/register)", () => {
       const publicEndpoints = getPublicEndpoints();
       const safePublicEndpoints = publicEndpoints.filter(
-        (e) => e.endpoint !== "/api/auth" && e.endpoint !== "/api/device-register"
+        (e) => e.endpoint !== "/api/auth"
       );
       // matches, fetch-live should only have GET (fetch-live has POST for mode changes)
       safePublicEndpoints.forEach((e) => {
@@ -347,6 +346,9 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(fs.existsSync(path.join(apiDir, "latest-apk.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "check-premium.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "device-register.js"))).toBe(false);
+      // Legacy auth subdirectory files (consolidated into auth.js)
+      expect(fs.existsSync(path.join(apiDir, "auth", "request-magic-link.js"))).toBe(false);
+      expect(fs.existsSync(path.join(apiDir, "auth", "verify-magic-link.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "scrape.js"))).toBe(false);
       expect(fs.existsSync(path.join(apiDir, "scraped-data.js"))).toBe(false);
     });
