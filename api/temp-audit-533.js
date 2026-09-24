@@ -214,7 +214,7 @@ export default async function handler(req, res) {
         if (!idsParam) {
           return res.status(400).json({ success: false, error: 'ids parameter required (comma-separated)' });
         }
-        const ids = idsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+        const ids = idsParam.split(',').filter(id => id.trim().length > 0);
 
         if (ids.length === 0) {
           return res.status(400).json({ success: false, error: 'No valid IDs provided' });
@@ -291,7 +291,7 @@ export default async function handler(req, res) {
         if (!idsParam) {
           return res.status(400).json({ success: false, error: 'ids parameter required (comma-separated)' });
         }
-        const ids = idsParam.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+        const ids = idsParam.split(',').filter(id => id.trim().length > 0);
 
         const rows = await sql`
           SELECT
