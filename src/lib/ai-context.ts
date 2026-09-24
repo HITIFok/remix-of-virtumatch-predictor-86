@@ -528,9 +528,15 @@ export function computeAIPromptHashFromContext(systemPrompt: string, userPrompt:
 }
 
 /**
- * AI_RESPONSE_HASH — hash of the AI response
+ * AI_RESPONSE_HASH — hash of the AI response.
+ *
+ * Phase 8 fix (forensic audit): null/undefined/empty input returns null.
+ * A null hash must never be fabricated from placeholder text.
  */
-export function computeAIResponseHashFromContext(response: string): string {
+export function computeAIResponseHashFromContext(response: string | null | undefined): string | null {
+  if (response === null || response === undefined || response === '') {
+    return null;
+  }
   return sha256('response:' + response);
 }
 

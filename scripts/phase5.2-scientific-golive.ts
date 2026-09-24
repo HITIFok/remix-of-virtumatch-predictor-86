@@ -88,10 +88,19 @@ function main() {
   const contextHash = computeAIContextHash(ctx);
   const inputHash = computeAIInputHashFromContext(snapshot);
   const promptHash = computeAIPromptHashFromContext(SYSTEM_PROMPT_V7, prompt);
-  const responseHash = computeAIInputHashFromContext(snapshot); // Placeholder
+  // Phase 7 fix (forensic audit BUG-7):
+  // The previous version used `computeAIInputHashFromContext(snapshot)` as a
+  // PLACEHOLDER for ai_response_hash. This is scientifically invalid — the
+  // AI response hash must come from the actual LLM response text, or be null
+  // when no LLM was called. Using the input hash as the response hash would
+  // fabricate a false "AI responded" audit trail.
+  // Per audit mandate §7: "Si aucune réponse LLM réelle n'existe:
+  //   ai_response_hash = NULL"
+  const responseHash = null;
   console.log('   AI_CONTEXT_HASH: ' + contextHash.substring(0, 32) + '...');
   console.log('   AI_INPUT_HASH:   ' + inputHash.substring(0, 32) + '...');
   console.log('   AI_PROMPT_HASH:  ' + promptHash.substring(0, 32) + '...');
+  console.log('   AI_RESPONSE_HASH: null (no real LLM response in this script)');
 
   // 4. Equivalence check
   console.log('\n4. Verifying prompt/snapshot equivalence...');
@@ -168,24 +177,65 @@ function main() {
 
   // 11. Go-Live Gate evaluation
   console.log('\n10. Evaluating Go-Live Gate...');
+  // Phase 10 fix (forensic audit BUG-8):
+  // The previous version hardcoded:
+  //   timestampsConsistent: true
+  //   snapshotImmutable: true
+  //   testsPass: true
+  // These were NEVER actually verified, which would let the script declare
+  // SCIENTIFIC_DATA_COLLECTION = READY without proof. Per audit mandate §10
+  // and §22: "UNKNOWN ≠ PASS".
+  //
+  // We now compute each value from the actual data this script has access to.
+  // For values that require production data we cannot reach from here
+  // (Neon DB counts, real trigger tests), we set them to false so the
+  // gate stays BLOCKED until the user runs the additional verification scripts.
+
+  // timestampsConsistent: verify the timeline of the SAMPLE match
+  // (t_start <= t_features <= t_prediction_final <= t_snapshot).
+  const sampleTStart = PAST_TS;
+  const sampleTFeatures = PAST_TS;
+  const sampleTPrediction = new Date().toISOString();
+  const sampleTSnapshot = sampleTPrediction;
+  const tStartMs = new Date(sampleTStart).getTime();
+  const tFeaturesMs = new Date(sampleTFeatures).getTime();
+  const tPredMs = new Date(sampleTPrediction).getTime();
+  const tSnapMs = new Date(sampleTSnapshot).getTime();
+  const timestampsConsistent =
+    tStartMs <= tFeaturesMs &&  // t_start <= t_features
+    tFeaturesMs <= tPredMs &&    // t_features <= t_prediction
+    tPredMs <= tSnapMs;          // t_prediction <= t_snapshot
+
+  // snapshotImmutable: we CANNOT verify the DB trigger from this script.
+  // To verify, the user must run a real PATCH attempt against a prediction
+  // that already has a value, and confirm the trigger blocks it.
+  // Until that verification is performed, snapshotImmutable = false.
+  const snapshotImmutable = false; // requires Neon DB verification (Phase 17)
+
+  // testsPass: this script CANNOT run vitest itself. The user must run
+  // `npm run test:all` separately and inspect the result.
+  // Until that verification is performed, testsPass = false.
+  const testsPass = false; // requires `npm run test:all` to pass (Phase 16)
+
   const goLive = evaluateGoLiveGate({
     equivalenceResults: eqResults,
     inputHashReproducible,
     promptHashReproducible,
-    timestampsConsistent: true,
+    timestampsConsistent,
     leakageTestPassed: leakResult.passed,
-    snapshotImmutable: true,
-    testsPass: true, // Will be verified by vitest
+    snapshotImmutable,
+    testsPass,
   });
 
   console.log(`    Prompt & snapshot same source:     ${goLive.prompt_snapshot_same_source ? '✓' : '✗'}`);
   console.log(`    No prompt data missing from snap:  ${goLive.no_prompt_data_missing_from_snapshot ? '✓' : '✗'}`);
   console.log(`    AI_INPUT_HASH reproducible:        ${goLive.ai_input_hash_reproducible ? '✓' : '✗'}`);
   console.log(`    AI_PROMPT_HASH reproducible:       ${goLive.ai_prompt_hash_reproducible ? '✓' : '✗'}`);
-  console.log(`    Timestamps consistent:             ${goLive.timestamps_consistent ? '✓' : '✗'}`);
+  console.log(`    Timestamps consistent (sample):    ${goLive.timestamps_consistent ? '✓' : '✗'}`);
   console.log(`    Leakage test OK:                   ${goLive.leakage_test_ok ? '✓' : '✗'}`);
-  console.log(`    Snapshot immutable:                ${goLive.snapshot_immutable ? '✓' : '✗'}`);
-  console.log(`    Tests pass:                        ${goLive.tests_pass ? '✓' : '✗ (verify with vitest)'}`);
+  console.log(`    Snapshot immutable (DB verified):   ${goLive.snapshot_immutable ? '✓' : '✗ — requires Neon trigger verification'}`);
+  console.log(`    Tests pass (vitest run):           ${goLive.tests_pass ? '✓' : '✗ — requires \`npm run test:all\` verification'}`);
+  console.log(`    AI_RESPONSE_HASH = null (no LLM):  ${responseHash === null ? '✓' : '✗ — PLACEHOLDER LEAK'}`);
 
   console.log('\n══════════════════════════════════════════════════════════════');
   console.log(`SCIENTIFIC_DATA_COLLECTION = ${goLive.overall}`);

@@ -102,18 +102,18 @@ export interface AITraceRecord {
 
 export interface PredictionTimeline {
   t_start: string;
-  t_features: string;
+  t_features: string | null;
   t_ai_request: string | null;
   t_ai_response: string | null;
-  t_prediction_final: string;
-  t_snapshot: string;
+  t_prediction_final: string | null;
+  t_snapshot: string | null;
   invariants: {
-    t_start_leq_t_features: boolean;
+    t_start_leq_t_features: boolean | null;
     t_features_leq_t_ai_request: boolean | null;
     t_ai_request_leq_t_ai_response: boolean | null;
     t_ai_response_leq_t_prediction_final: boolean | null;
-    t_prediction_final_leq_t_snapshot: boolean;
-    all_inputs_before_t_prediction: boolean;
+    t_prediction_final_leq_t_snapshot: boolean | null;
+    all_inputs_before_t_prediction: boolean | null;
   };
 }
 
@@ -133,26 +133,33 @@ export interface PredictionTimeline {
  */
 export function computePredictionTimeline(events: {
   t_start: string;
-  t_features?: string;
+  t_features?: string | null;
   t_ai_request?: string | null;
   t_ai_response?: string | null;
-  t_prediction_final?: string;
-  t_snapshot?: string;
+  t_prediction_final?: string | null;
+  t_snapshot?: string | null;
 }): PredictionTimeline {
+  // Phase 2 fix (forensic audit BUG-3):
+  // Forbidden: silently substituting missing timestamps with other
+  // timestamps (e.g. t_features = events.t_features || t_start).
+  // Missing timestamps MUST remain null so the caller can distinguish
+  // UNKNOWN (no data) from VIOLATION (real temporal leak).
   const tStart = events.t_start;
-  const tFeatures = events.t_features || tStart;
-  const tAiRequest = events.t_ai_request || null;
-  const tAiResponse = events.t_ai_response || null;
-  const tPredictionFinal = events.t_prediction_final || tAiResponse || tFeatures;
-  const tSnapshot = events.t_snapshot || tPredictionFinal;
+  const tFeatures = events.t_features ?? null;
+  const tAiRequest = events.t_ai_request ?? null;
+  const tAiResponse = events.t_ai_response ?? null;
+  const tPredictionFinal = events.t_prediction_final ?? null;
+  const tSnapshot = events.t_snapshot ?? null;
 
   const startMs = new Date(tStart).getTime();
-  const featuresMs = new Date(tFeatures).getTime();
-  const aiReqMs = tAiRequest ? new Date(tAiRequest).getTime() : null;
-  const aiResMs = tAiResponse ? new Date(tAiResponse).getTime() : null;
-  const predMs = new Date(tPredictionFinal).getTime();
-  const snapMs = new Date(tSnapshot).getTime();
+  const featuresMs = tFeatures !== null ? new Date(tFeatures).getTime() : null;
+  const aiReqMs = tAiRequest !== null ? new Date(tAiRequest).getTime() : null;
+  const aiResMs = tAiResponse !== null ? new Date(tAiResponse).getTime() : null;
+  const predMs = tPredictionFinal !== null ? new Date(tPredictionFinal).getTime() : null;
+  const snapMs = tSnapshot !== null ? new Date(tSnapshot).getTime() : null;
 
+  // Phase 2 fix: every invariant returns null when either side is null,
+  // so UNKNOWN is preserved (never silently converted to true).
   return {
     t_start: tStart,
     t_features: tFeatures,
@@ -161,12 +168,17 @@ export function computePredictionTimeline(events: {
     t_prediction_final: tPredictionFinal,
     t_snapshot: tSnapshot,
     invariants: {
-      t_start_leq_t_features: startMs <= featuresMs,
-      t_features_leq_t_ai_request: aiReqMs !== null ? featuresMs <= aiReqMs : null,
-      t_ai_request_leq_t_ai_response: aiReqMs !== null && aiResMs !== null ? aiReqMs <= aiResMs : null,
-      t_ai_response_leq_t_prediction_final: aiResMs !== null ? aiResMs <= predMs : null,
-      t_prediction_final_leq_t_snapshot: predMs <= snapMs,
-      all_inputs_before_t_prediction: featuresMs <= predMs,
+      t_start_leq_t_features: featuresMs !== null ? startMs <= featuresMs : null,
+      t_features_leq_t_ai_request:
+        featuresMs !== null && aiReqMs !== null ? featuresMs <= aiReqMs : null,
+      t_ai_request_leq_t_ai_response:
+        aiReqMs !== null && aiResMs !== null ? aiReqMs <= aiResMs : null,
+      t_ai_response_leq_t_prediction_final:
+        aiResMs !== null && predMs !== null ? aiResMs <= predMs : null,
+      t_prediction_final_leq_t_snapshot:
+        predMs !== null && snapMs !== null ? predMs <= snapMs : null,
+      all_inputs_before_t_prediction:
+        featuresMs !== null && predMs !== null ? featuresMs <= predMs : null,
     },
   };
 }
@@ -203,7 +215,23 @@ export function computeAIInputHash(inputs: AIInputs): string {
   return computeAIInputHashFromContext(inputs);
 }
 
-export function computeAIResponseHash(response: string): string {
+/**
+ * Compute the SHA-256 hash of an AI response.
+ *
+ * Phase 8 fix (forensic audit): null/undefined/empty input MUST return null.
+ * Previously, calling this function with `''` would produce a hash of
+ * `sha256('response:')`, which is a non-null fabricated hash — violating
+ * the audit mandate: "Si aucun LLM réel n'a répondu: ai_response_hash = NULL".
+ *
+ * Rules:
+ *   null / undefined / ''  → null
+ *   any non-empty string   → real SHA-256 hash
+ *   'hello' and 'hello!'   → different hashes (sensitivity preserved)
+ */
+export function computeAIResponseHash(response: string | null | undefined): string | null {
+  if (response === null || response === undefined || response === '') {
+    return null;
+  }
   return computeHash('response:' + response);
 }
 

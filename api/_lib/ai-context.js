@@ -317,7 +317,13 @@ export function computeAIPromptHash(systemPrompt, userPrompt) {
 
 /**
  * AI_RESPONSE_HASH
+ *
+ * Phase 8 fix (forensic audit): null/undefined/empty input returns null.
+ * Per audit mandate: "Si aucun LLM réel n'a répondu: ai_response_hash = NULL"
  */
 export function computeAIResponseHash(response) {
+  if (response === null || response === undefined || response === '') {
+    return null;
+  }
   return sha256('response:' + response);
 }

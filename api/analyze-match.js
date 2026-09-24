@@ -593,15 +593,52 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       aiProvenanceRisk = 'PROMPT_INTEGRATES_ODDS';
     }
 
-    // Scientific eligibility: requires both completeness AND verified temporal safety
-    const scientificEligible = completenessScore >= 0.5 && temporalSafetyScore >= 1.0;
+    // Phase 9 fix (forensic audit BUG-11):
+    // A prediction can only be scientific_collection_eligible = true if ALL
+    // of the following hold:
+    //   1. feature_snapshot is present
+    //   2. completeness_score >= 0.5 (sufficient data)
+    //   3. temporal_safety_score >= 1.0 (T_feature verified)
+    //   4. t_feature is non-null (real source timestamps exist)
+    //   5. AI was actually used (provider != 'math-v2') — a math fallback is
+    //      NOT a complete observation of the LLM pipeline
+    //   6. ai_response_hash is non-null (real LLM response was received)
+    //
+    // A math-v2 fallback prediction CANNOT be eligible because it has no
+    // real AI response to audit. The audit mandate §9: "Une prédiction
+    // math-v2 ne doit jamais être considérée comme une observation complète
+    // du pipeline LLM."
+    const aiActuallyUsed = aiResponseHash !== null && aiResponseText !== null;
+    const scientificEligible =
+      !!featureSnapshot &&
+      completenessScore >= 0.5 &&
+      temporalSafetyScore >= 1.0 &&
+      tFeature !== null &&
+      aiActuallyUsed;
 
-    // Version freeze
+    // Phase 11 fix (forensic audit BUG-9):
+    // Version constants MUST match src/lib/feature-snapshot.ts exactly:
+    //   MODEL_VERSION = '2.0.0'
+    //   FEATURE_VERSION = '1.0.0'
+    //   CONFIG_VERSION = '1.0.0'
+    //   CALIBRATION_VERSION = '0.0.0'
+    //   DATASET_VERSION = 'unversioned'
+    // Previous code used '1.0.0', '3.0', '1.0.0', '1.0.0', '1' which
+    // diverged from the canonical source. New predictions will now write
+    // consistent version_freeze values. Existing predictions keep their
+    // historical values (no backfill — see audit mandate §14).
+    const VERSIONS = {
+      MODEL_VERSION: '2.0.0',
+      FEATURE_VERSION: '1.0.0',
+      CONFIG_VERSION: '1.0.0',
+      CALIBRATION_VERSION: '0.0.0',
+      DATASET_VERSION: 'unversioned',
+    };
     const versionFreeze = {
-      model_version: '1.0.0',
-      feature_version: '3.0',
-      config_version: '1.0.0',
-      calibration_version: '1.0.0',
+      model_version: VERSIONS.MODEL_VERSION,
+      feature_version: VERSIONS.FEATURE_VERSION,
+      config_version: VERSIONS.CONFIG_VERSION,
+      calibration_version: VERSIONS.CALIBRATION_VERSION,
       ai_prompt_version: AI_PROMPT_VERSION,
       ai_model: groqModel || 'math-v2',
       code_commit: null, // populated by CI
@@ -610,11 +647,11 @@ function computeAITraces(matches, aiResponseText, groqModel) {
     traces.push({
       feature_snapshot: featureSnapshot,
       feature_snapshot_hash: aiContextHash, // SHA-256 of canonical context
-      model_version: '1.0.0',
-      feature_version: '3.0',
-      config_version: '1.0.0',
-      calibration_version: '1.0.0',
-      dataset_version: '1',
+      model_version: VERSIONS.MODEL_VERSION,
+      feature_version: VERSIONS.FEATURE_VERSION,
+      config_version: VERSIONS.CONFIG_VERSION,
+      calibration_version: VERSIONS.CALIBRATION_VERSION,
+      dataset_version: VERSIONS.DATASET_VERSION,
       ai_context_hash: aiContextHash,
       ai_input_hash: aiInputHash,
       ai_prompt_hash: aiPromptHash,

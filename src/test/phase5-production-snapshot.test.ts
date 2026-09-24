@@ -467,7 +467,10 @@ describe('Phase 5: AI Provenance (Section 8)', () => {
 
     expect(audit.has_ai_data).toBe(true);
     expect(audit.model).toBe('gpt-4o');
-    expect(audit.prompt_version).toBe('v2.1');
+    // Phase 13 fix: prompt_version is NOT on AISnapshot (it lives on
+    // AITraceRecord). The audit can no longer return this field.
+    // Instead, it adds a risk flag noting the limitation.
+    expect(audit.risk_flags.some(f => f.includes('CANNOT_VERIFY_PROMPT_VERSION'))).toBe(true);
     expect(audit.risk_flags.length).toBeGreaterThan(0);
   });
 

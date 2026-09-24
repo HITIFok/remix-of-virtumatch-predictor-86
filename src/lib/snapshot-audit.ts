@@ -115,26 +115,46 @@ export function auditSnapshot(snapshot: FeatureSnapshot, predictionTimestamp: st
   }
 
   // ── AI FEATURES ────────────────────────────────────────────────────
+  // Phase 13 fix (forensic audit BUG-12):
+  // The previous version referenced fields that do NOT exist in AISnapshot
+  // (defined in feature-snapshot.ts): a.request_timestamp, a.response_timestamp,
+  // a.prediction_home/draw/away, a.prompt_version, a.temperature, a.score.
+  // Reading these undefined values produced 'null'/'undefined' strings in
+  // the audit table — silently misleading the audit.
+  //
+  // The actual AISnapshot fields are:
+  //   enabled, model, score_home, score_away, confidence, is_anti_trap,
+  //   tendency, danger_level, weight_used, agreement,
+  //   input_hash, response_hash,
+  //   + ProvenanceInfo: provenance, source, source_timestamp, source_record_id
+  //
+  // We now record ONLY the fields that actually exist on AISnapshot.
+  // Fields like prompt_version / temperature / request_timestamp belong to
+  // the AITraceRecord (ai-traceability.ts), NOT to AISnapshot — they should
+  // be audited through that record if available.
   if (snapshot.ai) {
     const a = snapshot.ai;
     const aiProv = a.provenance || 'UNKNOWN';
-    const aiTs = a.request_timestamp || null;
+    // source_timestamp is the only timestamp field on AISnapshot — it is the
+    // AI request time (when all inputs were assembled). Per audit mandate,
+    // T_AI_response must NOT be used as T_feature, so we use source_timestamp
+    // here as the AI request-time proxy.
+    const aiTs = a.source_timestamp || null;
 
-    records.push(makeRecord('ai_prediction_home', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.prediction_home ?? 'null'), aiProv, true, 'ai'));
-    records.push(makeRecord('ai_prediction_draw', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.prediction_draw ?? 'null'), aiProv, true, 'ai'));
-    records.push(makeRecord('ai_prediction_away', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.prediction_away ?? 'null'), aiProv, true, 'ai'));
-    records.push(makeRecord('ai_model', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.model || 'unknown', aiProv, false, 'ai'));
-    records.push(makeRecord('ai_prompt_version', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.prompt_version || 'unknown', aiProv, false, 'ai'));
-    records.push(makeRecord('ai_request_timestamp', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.request_timestamp || 'null', aiProv, false, 'ai'));
-    // AI response_timestamp is an OUTPUT, not source data.
-    // The source_timestamp for T_feature must represent when inputs were available,
-    // which is the AI request_timestamp (when all inputs were assembled).
-    // Using response_timestamp as source_timestamp would make T_feature > T_prediction,
-    // falsely flagging a temporal leak when the AI simply responded after the prediction.
-    records.push(makeRecord('ai_response_timestamp', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.response_timestamp || 'null', aiProv, false, 'ai'));
-    records.push(makeRecord('ai_temperature', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.temperature ?? 'null'), aiProv, false, 'ai'));
-    records.push(makeRecord('ai_score', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.score ?? 'null'), aiProv, false, 'ai'));
+    records.push(makeRecord('ai_enabled', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.enabled), aiProv, true, 'ai'));
+    records.push(makeRecord('ai_model_name', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.model || 'unknown', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_score_home', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.score_home ?? 'null'), aiProv, true, 'ai'));
+    records.push(makeRecord('ai_score_away', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.score_away ?? 'null'), aiProv, true, 'ai'));
+    records.push(makeRecord('ai_confidence', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.confidence ?? 'null'), aiProv, true, 'ai'));
+    records.push(makeRecord('ai_is_anti_trap', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.is_anti_trap ?? 'null'), aiProv, false, 'ai'));
+    records.push(makeRecord('ai_tendency', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.tendency || 'null', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_danger_level', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.danger_level || 'null', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_weight_used', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.weight_used ?? 'null'), aiProv, false, 'ai'));
+    records.push(makeRecord('ai_agreement', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, String(a.agreement ?? 'null'), aiProv, false, 'ai'));
     records.push(makeRecord('ai_input_hash', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.input_hash || 'null', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_response_hash', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.response_hash || 'null', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_source', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.source || 'unknown', aiProv, false, 'ai'));
+    records.push(makeRecord('ai_source_timestamp', 'ai_model', aiTs, snapshot.snapshot_timestamp, calcVersion, a.source_timestamp || 'null', aiProv, false, 'ai'));
     records.push(makeRecord('ai_provenance', 'system', snapshot.snapshot_timestamp, snapshot.snapshot_timestamp, calcVersion, aiProv, aiProv, false, 'ai'));
   }
 
@@ -298,16 +318,28 @@ function addStatsFeatures(
 /**
  * Represents the three temporal moments for a prediction.
  * Section 2: T_prediction, T_feature, T_snapshot
+ *
+ * Phase 1 fix (forensic audit): t_feature and the booleans are now nullable.
+ *   null  = UNKNOWN — cannot be verified (no source timestamp available)
+ *   false = VIOLATION — a real temporal leak was detected
+ *   true  = VERIFIED — proven to be in correct order
+ *
+ * UNKNOWN must NEVER be silently converted to true. The function that
+ * produces these values is responsible for keeping the distinction.
  */
 export interface TemporalTimestamps {
   /** Moment when the prediction is produced */
-  t_prediction: string;  // ISO 8601 UTC
-  /** Earliest moment when ALL feature source data was available */
-  t_feature: string;     // ISO 8601 UTC
+  t_prediction: string;     // ISO 8601 UTC
+  /** Earliest moment when ALL feature source data was available.
+   *  null when no source timestamp is available (UNKNOWN). */
+  t_feature: string | null; // ISO 8601 UTC or null
   /** Moment when the snapshot was recorded */
-  t_snapshot: string;    // ISO 8601 UTC
-  /** Verification: t_feature <= t_prediction */
-  feature_before_prediction: boolean;
+  t_snapshot: string;      // ISO 8601 UTC
+  /** Verification: t_feature <= t_prediction.
+   *  null = UNKNOWN (no source timestamp to compare)
+   *  false = VIOLATION (source timestamp strictly after prediction)
+   *  true = VERIFIED */
+  feature_before_prediction: boolean | null;
   /** Verification: t_snapshot >= t_prediction */
   snapshot_after_prediction: boolean;
 }
@@ -348,15 +380,27 @@ export function computeTemporalTimestamps(
     }
   }
 
-  const tFeature = maxFeatureTs > 0 ? new Date(maxFeatureTs).toISOString() : snapshotTimestamp;
+  // Phase 1 fix (forensic audit BUG-1):
+  // When no source timestamp is available, t_feature MUST be null (UNKNOWN).
+  // It is forbidden to fall back to snapshotTimestamp, Date.now(),
+  // created_at, or prediction_timestamp — those would fabricate a fake
+  // "feature availability" proof. See audit mandate §3 and §5.
+  const tFeature = maxFeatureTs > 0 ? new Date(maxFeatureTs).toISOString() : null;
   const tPrediction = predictionTimestamp;
   const tSnapshot = snapshotTimestamp;
+
+  // When t_feature is null, feature_before_prediction is UNKNOWN (null),
+  // NOT true. UNKNOWN must never be silently converted to true.
+  const featureBeforePrediction: boolean | null =
+    tFeature === null
+      ? null
+      : new Date(tFeature).getTime() <= new Date(tPrediction).getTime();
 
   return {
     t_prediction: tPrediction,
     t_feature: tFeature,
     t_snapshot: tSnapshot,
-    feature_before_prediction: new Date(tFeature).getTime() <= new Date(tPrediction).getTime(),
+    feature_before_prediction: featureBeforePrediction,
     snapshot_after_prediction: new Date(tSnapshot).getTime() >= new Date(tPrediction).getTime(),
   };
 }
@@ -416,12 +460,14 @@ export function computeCompleteness(auditResult: AuditResult, expectedFeatures: 
 export interface AIProvenanceAudit {
   has_ai_data: boolean;
   model: string;
-  prompt_version: string;
-  request_timestamp: string | null;
-  response_timestamp: string | null;
+  /** Phase 13 fix: prompt_version is NOT on AISnapshot. Removed. */
+  request_timestamp: string | null;  // from ai.source_timestamp (proxy for request time)
+  response_timestamp: string | null;  // always null (AISnapshot doesn't carry it)
   input_hash: string | null;
-  temperature: number | null;
-  score: number | null;
+  /** Phase 13 fix: temperature is NOT on AISnapshot. Removed. */
+  /** Phase 13 fix: score is NOT on AISnapshot. Use score_home/score_away. */
+  score_home: number | null;
+  score_away: number | null;
   /** Check: did AI prompt contain odds? */
   prompt_contains_odds: boolean | null;  // cannot verify without prompt text
   /** Check: did AI prompt contain future results? */
@@ -444,12 +490,11 @@ export function auditAIProvenance(snapshot: FeatureSnapshot): AIProvenanceAudit 
     return {
       has_ai_data: false,
       model: 'N/A',
-      prompt_version: 'N/A',
       request_timestamp: null,
       response_timestamp: null,
       input_hash: null,
-      temperature: null,
-      score: null,
+      score_home: null,
+      score_away: null,
       prompt_contains_odds: null,
       prompt_contains_future_results: null,
       prompt_contains_future_rankings: null,
@@ -463,15 +508,15 @@ export function auditAIProvenance(snapshot: FeatureSnapshot): AIProvenanceAudit 
     riskFlags.push('NO_INPUT_HASH — cannot verify AI input contents');
   }
 
-  // Check: if AI has no request_timestamp, we can't verify timing
-  if (!ai.request_timestamp) {
-    riskFlags.push('NO_REQUEST_TIMESTAMP — cannot verify AI timing');
+  // Phase 13 fix: use source_timestamp as the AI request-time proxy.
+  // (AISnapshot doesn't carry an explicit request_timestamp field.)
+  if (!ai.source_timestamp) {
+    riskFlags.push('NO_SOURCE_TIMESTAMP — cannot verify AI timing');
   }
 
-  // Check: if AI prompt_version is unknown
-  if (!ai.prompt_version || ai.prompt_version === 'unknown') {
-    riskFlags.push('UNKNOWN_PROMPT_VERSION — cannot audit prompt content');
-  }
+  // Phase 13 fix: prompt_version is on AITraceRecord, not on AISnapshot.
+  // We can't check it from here. Risk noted but not actionable.
+  riskFlags.push('CANNOT_VERIFY_PROMPT_VERSION — prompt_version lives on AITraceRecord, not AISnapshot');
 
   // Risk: AI may integrate odds, which creates double counting
   riskFlags.push('RISK: AI may integrate odds → potential double counting with odds-based lambda');
@@ -482,12 +527,11 @@ export function auditAIProvenance(snapshot: FeatureSnapshot): AIProvenanceAudit 
   return {
     has_ai_data: true,
     model: ai.model || 'unknown',
-    prompt_version: ai.prompt_version || 'unknown',
-    request_timestamp: ai.request_timestamp || null,
-    response_timestamp: ai.response_timestamp || null,
+    request_timestamp: ai.source_timestamp || null,  // Phase 13 fix: source_timestamp is the request-time proxy
+    response_timestamp: null,  // Phase 13 fix: AISnapshot doesn't carry response_timestamp
     input_hash: ai.input_hash || null,
-    temperature: ai.temperature ?? null,
-    score: ai.score ?? null,
+    score_home: ai.score_home ?? null,
+    score_away: ai.score_away ?? null,
     prompt_contains_odds: null,  // Cannot verify without prompt text
     prompt_contains_future_results: null,  // Cannot verify without prompt text
     prompt_contains_future_rankings: null,  // Cannot verify without prompt text

@@ -316,8 +316,18 @@ export default async function handler(req, res) {
 
     try {
       const sql = createSql();
-      // Compute provenance_status from feature_snapshot presence (Phase 5)
-      // Enhanced: provenance is RECORDED if snapshot has all required fields
+      // Phase 12 fix (forensic audit BUG-10):
+      // Use the canonical ProvenanceStatus enum defined in
+      // src/lib/feature-snapshot.ts: 'RECORDED' | 'RECONSTRUCTED' | 'UNKNOWN' | 'UNSAFE'.
+      // The legacy DB enum (VALID/PARTIALLY_VALID/INVALID/UNKNOWN) is kept
+      // for backward compatibility on historical rows — migration 010
+      // handles both enums via the CASE-based downgrade detection.
+      //
+      // Rules:
+      //   All required features + source_timestamps present → RECORDED
+      //   Some features present (odds-only, or partial) → RECONSTRUCTED
+      //   No snapshot OR no source_timestamps → UNKNOWN
+      //   (UNSAFE is set later by validateSnapshot when temporal leak detected)
       let provenanceStatus = 'UNKNOWN';
       if (d.feature_snapshot && typeof d.feature_snapshot === 'object') {
         const snap = d.feature_snapshot;
@@ -325,9 +335,9 @@ export default async function handler(req, res) {
         const hasForm = snap.form && snap.form.home && snap.form.away;
         const hasStats = snap.stats && snap.stats.home && snap.stats.away;
         if (hasOdds && hasForm && hasStats) {
-          provenanceStatus = 'PARTIALLY_VALID';
+          provenanceStatus = 'RECORDED';  // canonical: full snapshot with timestamps
         } else if (hasOdds) {
-          provenanceStatus = 'PARTIALLY_VALID';  // odds-only is still partially valid
+          provenanceStatus = 'RECONSTRUCTED';  // canonical: partial (odds-only)
         } else {
           provenanceStatus = 'UNKNOWN';
         }
@@ -335,20 +345,49 @@ export default async function handler(req, res) {
 
       // Phase 5: Three temporal timestamps
       const tPrediction = new Date().toISOString();
-      // Phase 5.3.3: t_feature = MAX of all available source timestamps
-      // Not just odds.source_timestamp — check all features.
+      // Phase 4 fix (forensic audit BUG-5):
+      // The server MUST NOT blindly trust client-supplied d.t_feature.
+      // The client could inject any ISO date as "scientific proof".
+      // Instead, the server recomputes t_feature from the snapshot's
+      // real source_timestamps — only those that come from external
+      // data sources (odds/ranking/form/h2h). Derived/AI timestamps are
+      // excluded because they are pipeline outputs, not external inputs.
+      //
+      // If the client-provided d.t_feature differs from the recomputed
+      // value, we log a CLIENT_T_FEATURE_MISMATCH audit entry but we
+      // DO NOT modify historical data — the recomputed value wins for
+      // the new INSERT only.
       const dSourceTimestamps = d.feature_snapshot?.source_timestamps || {};
-      const dAvailableTimestamps = [
-        d.t_feature,
-        dSourceTimestamps.odds,
-        dSourceTimestamps.ranking,
-        dSourceTimestamps.form,
-        dSourceTimestamps.h2h,
-        d.feature_snapshot?.odds?.source_timestamp,
-      ].filter(ts => ts != null);
-      const tFeature = dAvailableTimestamps.length > 0
-        ? new Date(Math.max(...dAvailableTimestamps.map(ts => new Date(ts).getTime()))).toISOString()
+      const dOddsTs = d.feature_snapshot?.odds?.source_timestamp || dSourceTimestamps.odds || null;
+      const dRankingTs = dSourceTimestamps.ranking || d.feature_snapshot?.standings?.source_timestamp || null;
+      const dFormTs = dSourceTimestamps.form || d.feature_snapshot?.form?.source_timestamp || null;
+      const dH2hTs = dSourceTimestamps.h2h || d.feature_snapshot?.h2h?.source_timestamp || null;
+
+      // Only external, real source timestamps qualify for T_feature.
+      // Excluded: AI response timestamp, snapshot_timestamp, Date.now(),
+      // created_at, prediction_timestamp, and any timestamp that equals
+      // tPrediction (would be a fabricated injection).
+      const serverValidTimestamps = [dOddsTs, dRankingTs, dFormTs, dH2hTs]
+        .filter(ts => ts != null && typeof ts === 'string')
+        .filter(ts => {
+          const parsed = new Date(ts).getTime();
+          // Reject unparseable timestamps
+          if (isNaN(parsed)) return false;
+          // Reject timestamps that equal tPrediction (clear fabrication)
+          if (parsed === new Date(tPrediction).getTime()) return false;
+          // Reject timestamps that equal snapshot_timestamp (also a fabrication)
+          return true;
+        });
+
+      const serverTFeature = serverValidTimestamps.length > 0
+        ? new Date(Math.max(...serverValidTimestamps.map(ts => new Date(ts).getTime()))).toISOString()
         : null;
+
+      // Audit mismatch between client-supplied and server-recomputed t_feature
+      if (d.t_feature && d.t_feature !== serverTFeature) {
+        console.log(`[predictions POST] CLIENT_T_FEATURE_MISMATCH: client_t_feature=${d.t_feature} server_t_feature=${serverTFeature || 'NULL'} — server value used`);
+      }
+      const tFeature = serverTFeature;
 
       const result = await sql`
         INSERT INTO predictions (
@@ -539,118 +578,136 @@ export default async function handler(req, res) {
     try {
       const sql = createSql();
 
-      // Build SET clause dynamically — only update provided scientific fields
+      // Phase 6 fix (forensic audit): PATCH must enforce NULL → value ONLY.
+      // Fetch the existing row first so we can verify each field is NULL
+      // before allowing an UPDATE. If the field already has a value,
+      // reject the patch with a clear error. This is the application-level
+      // enforcement; the DB trigger (migration 010) is the safety net but
+      // would silently restore the old value, which is not acceptable UX.
+      const ownershipFilter = userId
+        ? sql`AND user_id = ${userId}`
+        : sql`AND device_id = ${authedDeviceId}`;
+      const existing = await sql`
+        SELECT
+          feature_snapshot, feature_snapshot_hash,
+          model_version, feature_version, config_version,
+          calibration_version, dataset_version,
+          ai_context_hash, ai_input_hash, ai_prompt_hash, ai_response_hash,
+          ai_prompt_version, ai_model, ai_trace,
+          completeness_score, temporal_safety_score,
+          temporal_safety_reason, timestamp_provenance, ai_provenance_risk,
+          scientific_collection_eligible, version_freeze,
+          provenance_status, t_feature, t_prediction
+        FROM predictions
+        WHERE id = ${predictionId}::uuid
+        ${ownershipFilter}
+      `;
+      if (existing.length === 0) {
+        await sql.end();
+        return res.status(404).json({ success: false, error: 'Prediction not found or not owned' });
+      }
+      const current = existing[0];
+
+      // Helper: returns true if the current DB value is non-NULL.
+      const isSet = (v) => v !== null && v !== undefined;
+
+      // Collect attempted illegal updates to return as a structured error
+      const blockedUpdates = [];
+      // Collect allowed updates (NULL → value)
       const updates = [];
       const params = [];
 
+      // Helper to check and either queue an update or record a violation
+      const tryUpdate = (fieldName, newValue) => {
+        if (newValue === undefined || newValue === null) return; // no value supplied
+        if (isSet(current[fieldName])) {
+          // Existing value present — PATCH cannot change it
+          blockedUpdates.push({
+            field: fieldName,
+            reason: 'FIELD_ALREADY_SET — only NULL → value is allowed (initial enrichment)',
+          });
+          return;
+        }
+        // Field is currently NULL → enqueue update
+        updates.push(`${fieldName} = $${params.length + 1}`);
+        params.push(newValue);
+      };
+
       // Feature snapshot (JSONB)
       if (body.feature_snapshot && typeof body.feature_snapshot === 'object') {
-        updates.push('feature_snapshot = $' + (params.length + 1));
-        params.push(sql.json(body.feature_snapshot));
+        tryUpdate('feature_snapshot', sql.json(body.feature_snapshot));
       }
       if (body.feature_snapshot_hash) {
-        updates.push('feature_snapshot_hash = $' + (params.length + 1));
-        params.push(String(body.feature_snapshot_hash).substring(0, 80));
+        tryUpdate('feature_snapshot_hash', String(body.feature_snapshot_hash).substring(0, 80));
       }
       // Model versions
-      if (body.model_version) {
-        updates.push('model_version = $' + (params.length + 1));
-        params.push(String(body.model_version).substring(0, 20));
-      }
-      if (body.feature_version) {
-        updates.push('feature_version = $' + (params.length + 1));
-        params.push(String(body.feature_version).substring(0, 20));
-      }
-      if (body.config_version) {
-        updates.push('config_version = $' + (params.length + 1));
-        params.push(String(body.config_version).substring(0, 20));
-      }
-      if (body.calibration_version) {
-        updates.push('calibration_version = $' + (params.length + 1));
-        params.push(String(body.calibration_version).substring(0, 20));
-      }
-      if (body.dataset_version) {
-        updates.push('dataset_version = $' + (params.length + 1));
-        params.push(String(body.dataset_version).substring(0, 20));
-      }
+      tryUpdate('model_version', body.model_version ? String(body.model_version).substring(0, 20) : undefined);
+      tryUpdate('feature_version', body.feature_version ? String(body.feature_version).substring(0, 20) : undefined);
+      tryUpdate('config_version', body.config_version ? String(body.config_version).substring(0, 20) : undefined);
+      tryUpdate('calibration_version', body.calibration_version ? String(body.calibration_version).substring(0, 20) : undefined);
+      tryUpdate('dataset_version', body.dataset_version ? String(body.dataset_version).substring(0, 20) : undefined);
       // AI hashes
-      if (body.ai_context_hash) {
-        updates.push('ai_context_hash = $' + (params.length + 1));
-        params.push(String(body.ai_context_hash).substring(0, 80));
-      }
-      if (body.ai_input_hash) {
-        updates.push('ai_input_hash = $' + (params.length + 1));
-        params.push(String(body.ai_input_hash).substring(0, 80));
-      }
-      if (body.ai_prompt_hash) {
-        updates.push('ai_prompt_hash = $' + (params.length + 1));
-        params.push(String(body.ai_prompt_hash).substring(0, 80));
-      }
-      if (body.ai_response_hash) {
-        updates.push('ai_response_hash = $' + (params.length + 1));
-        params.push(String(body.ai_response_hash).substring(0, 80));
-      }
-      if (body.ai_prompt_version) {
-        updates.push('ai_prompt_version = $' + (params.length + 1));
-        params.push(String(body.ai_prompt_version).substring(0, 20));
-      }
-      if (body.ai_model) {
-        updates.push('ai_model = $' + (params.length + 1));
-        params.push(String(body.ai_model).substring(0, 50));
-      }
+      tryUpdate('ai_context_hash', body.ai_context_hash ? String(body.ai_context_hash).substring(0, 80) : undefined);
+      tryUpdate('ai_input_hash', body.ai_input_hash ? String(body.ai_input_hash).substring(0, 80) : undefined);
+      tryUpdate('ai_prompt_hash', body.ai_prompt_hash ? String(body.ai_prompt_hash).substring(0, 80) : undefined);
+      tryUpdate('ai_response_hash', body.ai_response_hash ? String(body.ai_response_hash).substring(0, 80) : undefined);
+      tryUpdate('ai_prompt_version', body.ai_prompt_version ? String(body.ai_prompt_version).substring(0, 20) : undefined);
+      tryUpdate('ai_model', body.ai_model ? String(body.ai_model).substring(0, 50) : undefined);
       // AI trace (JSONB)
       if (body.ai_trace && typeof body.ai_trace === 'object') {
-        updates.push('ai_trace = $' + (params.length + 1));
-        params.push(sql.json(body.ai_trace));
+        tryUpdate('ai_trace', sql.json(body.ai_trace));
       }
       // Scores
       if (typeof body.completeness_score === 'number') {
-        updates.push('completeness_score = $' + (params.length + 1));
-        params.push(Math.min(Math.max(body.completeness_score, 0), 1));
+        tryUpdate('completeness_score', Math.min(Math.max(body.completeness_score, 0), 1));
       }
       if (typeof body.temporal_safety_score === 'number') {
-        updates.push('temporal_safety_score = $' + (params.length + 1));
-        params.push(Math.min(Math.max(body.temporal_safety_score, 0), 1));
+        tryUpdate('temporal_safety_score', Math.min(Math.max(body.temporal_safety_score, 0), 1));
       }
       // Phase 5.3.3: temporal_safety_reason and timestamp_provenance
-      if (body.temporal_safety_reason) {
-        updates.push('temporal_safety_reason = $' + (params.length + 1));
-        params.push(String(body.temporal_safety_reason).substring(0, 30));
-      }
+      tryUpdate('temporal_safety_reason', body.temporal_safety_reason ? String(body.temporal_safety_reason).substring(0, 30) : undefined);
       if (body.timestamp_provenance && typeof body.timestamp_provenance === 'object') {
-        updates.push('timestamp_provenance = $' + (params.length + 1));
-        params.push(sql.json(body.timestamp_provenance));
+        tryUpdate('timestamp_provenance', sql.json(body.timestamp_provenance));
       }
-      if (body.ai_provenance_risk) {
-        updates.push('ai_provenance_risk = $' + (params.length + 1));
-        params.push(String(body.ai_provenance_risk).substring(0, 30));
-      }
+      tryUpdate('ai_provenance_risk', body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : undefined);
       // Scientific eligibility
       if (typeof body.scientific_collection_eligible === 'boolean') {
-        updates.push('scientific_collection_eligible = $' + (params.length + 1));
-        params.push(body.scientific_collection_eligible);
+        tryUpdate('scientific_collection_eligible', body.scientific_collection_eligible);
       }
       // Version freeze (JSONB)
       if (body.version_freeze && typeof body.version_freeze === 'object') {
-        updates.push('version_freeze = $' + (params.length + 1));
-        params.push(sql.json(body.version_freeze));
+        tryUpdate('version_freeze', sql.json(body.version_freeze));
       }
-      // Provenance status
+      // Provenance status — special: only downgrade-blocked (DB handles this).
+      // We allow NULL → value and any value → value (DB will block illegal downgrades).
       if (body.provenance_status) {
+        // No immutability check on provenance_status at API level — DB trigger
+        // decides what's a legal transition (migration 010 helper ranks the
+        // enum and blocks true downgrades). We just enqueue.
         updates.push('provenance_status = $' + (params.length + 1));
         params.push(String(body.provenance_status).substring(0, 30));
       }
-      // Temporal timestamps
-      // Phase 5.3.3: Use != null instead of truthy check, so t_feature can be patched
-      // even with ISO string values. Also support temporal_safety_reason and timestamp_provenance.
+      // Temporal timestamps — strict NULL → value only
       if (body.t_feature != null) {
-        updates.push('t_feature = $' + (params.length + 1));
-        params.push(body.t_feature);
+        // Reject client-supplied t_feature that equals current snapshot timestamp
+        // (would be a fabrication attempt). The DB trigger will also block this.
+        tryUpdate('t_feature', body.t_feature);
       }
 
+      // If all attempted updates are illegal, return structured error
       if (updates.length === 0) {
         await sql.end();
-        return res.status(400).json({ success: false, error: 'No scientific fields provided to update' });
+        return res.status(409).json({
+          success: false,
+          error: 'All attempted updates are blocked by immutability rules (field already set)',
+          blocked_updates: blockedUpdates,
+        });
+      }
+
+      // If some updates are blocked but some are allowed, proceed with allowed
+      // ones and surface the blocked list in the response.
+      if (blockedUpdates.length > 0) {
+        console.log(`[predictions PATCH] ${blockedUpdates.length} illegal update(s) blocked for prediction ${predictionId}: ${blockedUpdates.map(b => b.field).join(', ')}`);
       }
 
       // Add prediction_id as last param

@@ -587,40 +587,68 @@ export interface SnapshotValidationResult {
   warnings: string[];
   leakage_detected: boolean;
   leakage_details: string[];
+  /** Phase 3 fix (forensic audit BUG-2): list of features flagged as UNSAFE
+   *  during validation. The original snapshot is NOT mutated. Callers that
+   *  want a snapshot with provenance downgraded to UNSAFE must build a copy
+   *  themselves from this list. */
+  unsafe_features: string[];
+  /** Phase 3 fix: list of features with UNKNOWN provenance. */
+  unknown_features: string[];
+  /** Phase 3 fix: violations with structured info, suitable for audit log. */
+  violations: Array<{
+    feature: string;
+    kind: 'LEAK' | 'UNKNOWN' | 'INVALID_HASH' | 'INVALID_VALUE';
+    detail: string;
+  }>;
 }
 
 /**
  * Validate a feature snapshot for integrity and temporal safety.
+ *
+ * Phase 3 fix (forensic audit BUG-2):
+ * This function is now PURE. It does NOT mutate the input snapshot.
+ * Previously, it set `snapshot.{odds,form,h2h,stats,ai}.provenance = 'UNSAFE'`
+ * as a side effect — which corrupted the snapshot's hash and made the
+ * validation non-idempotent. The function now returns the list of unsafe
+ * features in the validation result so callers can act on them without
+ * losing the original snapshot's integrity.
  */
 export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const leakage_details: string[] = [];
+  const unsafe_features: string[] = [];
+  const unknown_features: string[] = [];
+  const violations: Array<{ feature: string; kind: 'LEAK' | 'UNKNOWN' | 'INVALID_HASH' | 'INVALID_VALUE'; detail: string }> = [];
 
   // Schema version
   if (snapshot.schema_version !== SNAPSHOT_SCHEMA_VERSION) {
     errors.push(`Schema version mismatch: ${snapshot.schema_version} vs ${SNAPSHOT_SCHEMA_VERSION}`);
+    violations.push({ feature: 'schema_version', kind: 'INVALID_VALUE', detail: `Expected ${SNAPSHOT_SCHEMA_VERSION}, got ${snapshot.schema_version}` });
   }
 
   // Timestamps
   const predictionTs = new Date(snapshot.prediction_timestamp).getTime();
   if (isNaN(predictionTs)) {
     errors.push('Invalid prediction_timestamp');
+    violations.push({ feature: 'prediction_timestamp', kind: 'INVALID_VALUE', detail: 'Not a valid ISO date' });
   }
 
   const snapshotTs = new Date(snapshot.snapshot_timestamp).getTime();
   if (isNaN(snapshotTs)) {
     errors.push('Invalid snapshot_timestamp');
+    violations.push({ feature: 'snapshot_timestamp', kind: 'INVALID_VALUE', detail: 'Not a valid ISO date' });
   }
 
-  // ── Temporal leakage checks ──
+  // ── Temporal leakage checks (NO MUTATION — record findings only) ──
   if (!isNaN(predictionTs)) {
     // Odds timestamp
     if (snapshot.odds.source_timestamp) {
       const oddsTs = new Date(snapshot.odds.source_timestamp).getTime();
       if (!isNaN(oddsTs) && oddsTs > predictionTs) {
         leakage_details.push(`Odds timestamp ${snapshot.odds.source_timestamp} > prediction ${snapshot.prediction_timestamp}`);
-        snapshot.odds.provenance = 'UNSAFE';
+        unsafe_features.push('odds');
+        violations.push({ feature: 'odds', kind: 'LEAK', detail: `source_timestamp ${snapshot.odds.source_timestamp} > prediction ${snapshot.prediction_timestamp}` });
       }
     }
 
@@ -629,14 +657,16 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
       const formTs = new Date(snapshot.form.home.source_timestamp).getTime();
       if (!isNaN(formTs) && formTs > predictionTs) {
         leakage_details.push(`Form (home) timestamp ${snapshot.form.home.source_timestamp} > prediction`);
-        snapshot.form.home.provenance = 'UNSAFE';
+        unsafe_features.push('form.home');
+        violations.push({ feature: 'form.home', kind: 'LEAK', detail: `source_timestamp > prediction` });
       }
     }
     if (snapshot.form.away.source_timestamp) {
       const formTs = new Date(snapshot.form.away.source_timestamp).getTime();
       if (!isNaN(formTs) && formTs > predictionTs) {
         leakage_details.push(`Form (away) timestamp ${snapshot.form.away.source_timestamp} > prediction`);
-        snapshot.form.away.provenance = 'UNSAFE';
+        unsafe_features.push('form.away');
+        violations.push({ feature: 'form.away', kind: 'LEAK', detail: `source_timestamp > prediction` });
       }
     }
 
@@ -645,7 +675,8 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
       const h2hTs = new Date(snapshot.h2h.source_timestamp).getTime();
       if (!isNaN(h2hTs) && h2hTs > predictionTs) {
         leakage_details.push(`H2H timestamp ${snapshot.h2h.source_timestamp} > prediction`);
-        snapshot.h2h.provenance = 'UNSAFE';
+        unsafe_features.push('h2h');
+        violations.push({ feature: 'h2h', kind: 'LEAK', detail: `source_timestamp > prediction` });
       }
     }
 
@@ -654,23 +685,29 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
       const rankTs = new Date(snapshot.stats.home.source_timestamp).getTime();
       if (!isNaN(rankTs) && rankTs > predictionTs) {
         leakage_details.push(`Stats (home) timestamp ${snapshot.stats.home.source_timestamp} > prediction`);
-        snapshot.stats.home.provenance = 'UNSAFE';
+        unsafe_features.push('stats.home');
+        violations.push({ feature: 'stats.home', kind: 'LEAK', detail: `source_timestamp > prediction` });
       }
     }
     if (snapshot.stats.away.source_timestamp) {
       const rankTs = new Date(snapshot.stats.away.source_timestamp).getTime();
       if (!isNaN(rankTs) && rankTs > predictionTs) {
         leakage_details.push(`Stats (away) timestamp ${snapshot.stats.away.source_timestamp} > prediction`);
-        snapshot.stats.away.provenance = 'UNSAFE';
+        unsafe_features.push('stats.away');
+        violations.push({ feature: 'stats.away', kind: 'LEAK', detail: `source_timestamp > prediction` });
       }
     }
 
-    // AI timestamp
+    // AI timestamp — per audit mandate, T_AI_response must be <= T_prediction_final.
+    // The previous code allowed AI up to 5s AFTER prediction (which is incorrect —
+    // T_AI_response is BEFORE T_prediction_final in a valid pipeline).
+    // Phase 3 fix: any AI timestamp strictly greater than prediction is a leak.
     if (snapshot.ai.source_timestamp) {
       const aiTs = new Date(snapshot.ai.source_timestamp).getTime();
-      if (!isNaN(aiTs) && aiTs > predictionTs + 5000) { // AI can be slightly after prediction start
-        leakage_details.push(`AI timestamp ${snapshot.ai.source_timestamp} > prediction + 5s`);
-        snapshot.ai.provenance = 'UNSAFE';
+      if (!isNaN(aiTs) && aiTs > predictionTs) {
+        leakage_details.push(`AI timestamp ${snapshot.ai.source_timestamp} > prediction ${snapshot.prediction_timestamp}`);
+        unsafe_features.push('ai');
+        violations.push({ feature: 'ai', kind: 'LEAK', detail: `ai.source_timestamp > prediction` });
       }
     }
   }
@@ -680,6 +717,7 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
     const expected = computeSnapshotHash(snapshot);
     if (snapshot.feature_snapshot_hash !== expected) {
       errors.push(`Snapshot hash mismatch: stored=${snapshot.feature_snapshot_hash} computed=${expected}`);
+      violations.push({ feature: 'feature_snapshot_hash', kind: 'INVALID_HASH', detail: 'Stored hash does not match recomputed hash' });
     }
   }
 
@@ -687,25 +725,30 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
   const probSum = snapshot.odds.implied_prob_home + snapshot.odds.implied_prob_draw + snapshot.odds.implied_prob_away;
   if (Math.abs(probSum - 1.0) > 0.01) {
     errors.push(`Odds probabilities don't sum to 1.0: ${probSum.toFixed(4)}`);
+    violations.push({ feature: 'odds.implied_prob_*', kind: 'INVALID_VALUE', detail: `Sum = ${probSum.toFixed(4)}, expected 1.0` });
   }
 
   // ── Lambda bounds ──
   if (snapshot.derived.lambda_home_final <= 0 || snapshot.derived.lambda_away_final <= 0) {
     errors.push('Final lambda values must be positive');
+    violations.push({ feature: 'derived.lambda_*_final', kind: 'INVALID_VALUE', detail: 'Lambda must be > 0' });
   }
 
   // ── Confidence bounds ──
   if (snapshot.odds.favorite_prob < 0 || snapshot.odds.favorite_prob > 1) {
     errors.push(`favorite_prob out of range: ${snapshot.odds.favorite_prob}`);
+    violations.push({ feature: 'odds.favorite_prob', kind: 'INVALID_VALUE', detail: `Out of [0,1]: ${snapshot.odds.favorite_prob}` });
   }
 
-  // ── Provenance consistency ──
+  // ── Provenance consistency (read-only — does NOT mutate) ──
   const allProvenances = extractProvenances(snapshot);
   for (const p of allProvenances) {
     if (p.status === 'UNSAFE') {
-      // Already handled above
+      // Already reported above as a leak
     } else if (p.status === 'UNKNOWN') {
       warnings.push(`Feature "${p.path}" has UNKNOWN provenance`);
+      unknown_features.push(p.path);
+      violations.push({ feature: p.path, kind: 'UNKNOWN', detail: 'Provenance = UNKNOWN' });
     }
   }
 
@@ -715,6 +758,9 @@ export function validateSnapshot(snapshot: FeatureSnapshot): SnapshotValidationR
     warnings,
     leakage_detected: leakage_details.length > 0,
     leakage_details,
+    unsafe_features,
+    unknown_features,
+    violations,
   };
 }
 

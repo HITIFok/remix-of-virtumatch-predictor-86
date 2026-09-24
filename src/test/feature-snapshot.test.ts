@@ -149,7 +149,11 @@ function makeSampleContext(): SnapshotContext {
     oddsTimestamp: '2026-09-18T14:00:00.000Z',
     rankingTimestamp: '2026-09-18T12:00:00.000Z',
     formSourceTimestamp: '2026-09-17T00:00:00.000Z',
-    aiTimestamp: '2026-09-18T14:30:01.000Z',
+    // Phase 3 fix: aiTimestamp MUST be before prediction_timestamp.
+    // In a valid pipeline: T_AI_response <= T_prediction_final.
+    // The previous default (14:30:01 — 1s AFTER prediction) was triggering
+    // false leak detections under the corrected (strict) validator.
+    aiTimestamp: '2026-09-18T14:29:59.000Z',
   };
 }
 
@@ -311,7 +315,11 @@ describe('Timestamp Validation', () => {
     const result = validateSnapshot(snapshot);
     expect(result.leakage_detected).toBe(true);
     expect(result.leakage_details.some(d => d.includes('Odds'))).toBe(true);
-    expect(snapshot.odds.provenance).toBe('UNSAFE');
+    // Phase 3 fix: validateSnapshot no longer mutates snapshot.provenance.
+    // Instead, the leak is reported in result.unsafe_features.
+    expect(result.unsafe_features).toContain('odds');
+    // The snapshot's odds.provenance is UNCHANGED (pure function):
+    expect(snapshot.odds.provenance).toBe('RECORDED');
   });
 
   it('detects ranking timestamp after prediction (leakage)', () => {
@@ -334,13 +342,18 @@ describe('Timestamp Validation', () => {
     expect(result.leakage_details.some(d => d.includes('Form'))).toBe(true);
   });
 
-  it('allows AI timestamp within 5s tolerance', () => {
+  it('rejects AI timestamp strictly after prediction (Phase 3 fix)', () => {
+    // Phase 3 fix: ANY AI timestamp strictly greater than prediction is a leak.
+    // The previous code allowed up to 5s tolerance, which violated the
+    // audit mandate: "T_AI_response ≤ T_prediction_final".
     const ctx = makeSampleContext();
     ctx.predictionTimestamp = '2026-09-18T14:30:00.000Z';
-    ctx.aiTimestamp = '2026-09-18T14:30:03.000Z'; // 3s after prediction start
+    ctx.aiTimestamp = '2026-09-18T14:30:03.000Z'; // 3s after prediction → LEAK
     const snapshot = createFeatureSnapshot(ctx);
     const result = validateSnapshot(snapshot);
-    expect(result.leakage_detected).toBe(false);
+    expect(result.leakage_detected).toBe(true);
+    expect(result.leakage_details.some(d => d.includes('AI'))).toBe(true);
+    expect(result.unsafe_features).toContain('ai');
   });
 
   it('rejects AI timestamp more than 5s after prediction', () => {
@@ -549,8 +562,33 @@ describe('Provenance Analysis', () => {
     ctx.predictionTimestamp = '2026-09-18T14:00:00.000Z';
     ctx.oddsTimestamp = '2026-09-18T15:00:00.000Z'; // After prediction → UNSAFE
     const snapshot = createFeatureSnapshot(ctx);
-    validateSnapshot(snapshot); // This sets provenance to UNSAFE
-    const analysis = analyzeProvenance(snapshot);
+    // Phase 3 fix: validateSnapshot is now PURE — it does NOT mutate the
+    // snapshot's provenance. Instead, it returns the list of UNSAFE
+    // features in `result.unsafe_features`. The previous test relied on
+    // the BUG-2 mutation behavior (snapshot.odds.provenance = 'UNSAFE').
+    // Per audit mandate §16, this old assertion was scientifically
+    // incorrect because it depended on a non-pure validator. The fix:
+    // explicitly downgrade provenance on a copy, then analyze it.
+    const result = validateSnapshot(snapshot);
+    expect(result.unsafe_features).toContain('odds');
+    // Build a copy with provenance downgraded to UNSAFE so analyzeProvenance
+    // can see the unsafe state.
+    const snapshotCopy = JSON.parse(JSON.stringify(snapshot));
+    for (const field of result.unsafe_features) {
+      // field is a dotted path like 'odds', 'form.home', etc.
+      const parts = field.split('.');
+      let obj: any = snapshotCopy;
+      for (let i = 0; i < parts.length - 1; i++) obj = obj[parts[i]];
+      // The last part is the family (e.g., 'odds', 'home', 'away') — provenance is on the family object
+      if (parts.length === 1) {
+        // Top-level family like 'odds', 'h2h', 'ai'
+        obj[parts[0]].provenance = 'UNSAFE';
+      } else {
+        // Nested like 'form.home' — obj is the parent (form), parts[1] is 'home'
+        obj[parts[1]].provenance = 'UNSAFE';
+      }
+    }
+    const analysis = analyzeProvenance(snapshotCopy);
     expect(analysis.unsafe_pct).toBeGreaterThan(0);
     expect(analysis.backtest_validity).toBe('INVALID');
   });
