@@ -66,7 +66,6 @@ export default async function handler(req, res) {
             END as leak_status
           FROM predictions
           WHERE temporal_safety_score = 0.0
-            AND temporal_safety_reason IS NULL
           ORDER BY id
         `;
 
