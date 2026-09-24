@@ -460,9 +460,10 @@ function parsePredictions(rawContent) {
 }
 
 // ─── FAST ANALYSIS: tight deadline to stay within Vercel 10s limit ─────────
-// Vercel Hobby = 10s max. Cold start (1-3s) + auth (0-2s) + processing overhead
-// → keep Groq budget conservative to avoid Vercel HTML error page
-const DEADLINE_MS = 2500;
+// Vercel Hobby = 10s max. Budget breakdown:
+//   Cold start (1-2s) + auth (0-1s) + processing (0.5s) + response buffer (1.5s)
+//   → Groq gets ~5s which is enough for qwen/qwen3.8-27b (typical 2-4s response)
+const DEADLINE_MS = 5000;
 
 // ─── COMPUTE AI TRACE PER MATCH (Phase 5.3) ──────────────────────
 // For each match, compute the canonical AI context, snapshot, and hashes.
