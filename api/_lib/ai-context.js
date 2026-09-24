@@ -19,6 +19,12 @@ import * as crypto from 'crypto';
 // ═══════════════════════════════════════════════════════════════════
 
 export function buildAIContext(match) {
+  // NOTE: The `source_timestamp` fields below are currently OBSERVATION_TIME
+  // (when our scraper observed the data), NOT SOURCE_PROVIDED (when the external
+  // provider produced the data). Sporty provides no native timestamps.
+  // The timestamp_provenance audit trail distinguishes the two.
+  // When Sporty adds native timestamps, update the scraper to set per-source
+  // timestamps from the provider response, and provenance will auto-upgrade.
   return {
     home: match.home,
     away: match.away,
@@ -26,21 +32,21 @@ export function buildAIContext(match) {
       home: match.oddHome,
       draw: match.oddDraw,
       away: match.oddAway,
-      source_timestamp: match.oddsTimestamp || null,
+      source_timestamp: match.oddsTimestamp || null, // Currently = observation time
     },
     standings: {
       home: match.rankingHome || null,
       away: match.rankingAway || null,
-      source_timestamp: match.rankingTimestamp || null,
+      source_timestamp: match.rankingTimestamp || null, // Currently = observation time
     },
     form: {
       home: match.recentHome || null,
       away: match.recentAway || null,
-      source_timestamp: match.formTimestamp || null,
+      source_timestamp: match.formTimestamp || null, // Currently = observation time
     },
     h2h: {
       matches: match.headToHead || null,
-      source_timestamp: match.h2hTimestamp || null,
+      source_timestamp: match.h2hTimestamp || null, // Currently = observation time
     },
     match_index: match.matchIndex || 1,
     source_timestamps: {

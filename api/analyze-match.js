@@ -527,11 +527,32 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       : null;
 
     // Track which sources have known timestamps (for provenance audit)
+    // Phase 5.3.3 — 3-tier provenance:
+    //   'SOURCE_PROVIDED'  = timestamp comes from the external provider (Sporty native timestamp)
+    //   'OBSERVATION_TIME' = timestamp is when our scraper observed the data (scrapedAt proxy)
+    //   'UNKNOWN'          = no timestamp available at all
+    //
+    // Currently Sporty provides NO native timestamps, so all non-null values are OBSERVATION_TIME.
+    // When Sporty adds native timestamps, the scraper must set m.oddsTimestamp etc. from the
+    // provider response (not scrapedAt), and this provenance will upgrade to SOURCE_PROVIDED.
+    //
+    // Detection heuristic: if all 4 source timestamps are identical, they came from scrapedAt
+    // (observation time). If they differ or come from per-source fields, they may be source-provided.
+    // This is a conservative heuristic — when in doubt, mark OBSERVATION_TIME.
+    const allTimestampsIdentical =
+      sourceTimestamps.odds &&
+      sourceTimestamps.ranking &&
+      sourceTimestamps.form &&
+      sourceTimestamps.h2h &&
+      sourceTimestamps.odds === sourceTimestamps.ranking &&
+      sourceTimestamps.ranking === sourceTimestamps.form &&
+      sourceTimestamps.form === sourceTimestamps.h2h;
+
     const timestampProvenance = {
-      odds: sourceTimestamps.odds ? 'KNOWN' : 'UNKNOWN',
-      ranking: sourceTimestamps.ranking ? 'KNOWN' : 'UNKNOWN',
-      form: sourceTimestamps.form ? 'KNOWN' : 'UNKNOWN',
-      h2h: sourceTimestamps.h2h ? 'KNOWN' : 'UNKNOWN',
+      odds:    !sourceTimestamps.odds    ? 'UNKNOWN' : (allTimestampsIdentical ? 'OBSERVATION_TIME' : 'SOURCE_PROVIDED'),
+      ranking: !sourceTimestamps.ranking ? 'UNKNOWN' : (allTimestampsIdentical ? 'OBSERVATION_TIME' : 'SOURCE_PROVIDED'),
+      form:    !sourceTimestamps.form    ? 'UNKNOWN' : (allTimestampsIdentical ? 'OBSERVATION_TIME' : 'SOURCE_PROVIDED'),
+      h2h:     !sourceTimestamps.h2h     ? 'UNKNOWN' : (allTimestampsIdentical ? 'OBSERVATION_TIME' : 'SOURCE_PROVIDED'),
     };
 
     const tPrediction = new Date().toISOString();

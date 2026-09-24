@@ -30,13 +30,20 @@ export interface ScrapedMatch {
   stats?: Record<string, any>;
   predeterminedScore?: PredeterminedScore | null;
   prediction?: ScoreExactOdds | null; // v14: Score exact odds from Sporty API (Tier 1)
-  // Phase 5.3.3: Source timestamps for scientific timeline
-  // These represent when the external data was actually available.
+  // Phase 5.3.3: Timestamps for scientific timeline
+  //
+  // CRITICAL SEMANTIC DISTINCTION:
+  //   - If the external provider (Sporty) supplies a native timestamp → SOURCE_PROVIDED
+  //   - If only our scraper observation time (scrapedAt) is available → OBSERVATION_TIME
+  //   - If no timestamp at all → UNKNOWN
+  //
+  // Currently Sporty provides NO native timestamps, so all values are OBSERVATION_TIME.
+  // The priority chain is: native source timestamp > scrapedAt > undefined
   // Never substitute with Date.now() or t_prediction.
-  oddsTimestamp?: string;    // When odds were scraped from bookmaker
-  rankingTimestamp?: string; // When ranking/standings were fetched
-  formTimestamp?: string;    // When recent form data was retrieved
-  h2hTimestamp?: string;     // When head-to-head data was retrieved
+  oddsTimestamp?: string;    // Observation time of odds (or source timestamp if Sporty provides one)
+  rankingTimestamp?: string; // Observation time of ranking (or source timestamp if Sporty provides one)
+  formTimestamp?: string;    // Observation time of form (or source timestamp if Sporty provides one)
+  h2hTimestamp?: string;     // Observation time of h2h (or source timestamp if Sporty provides one)
 }
 
 export interface MatchResult {

@@ -107,10 +107,12 @@ async function fetchFromAPI(leagueId: string, leagueName: string): Promise<{
         stats: m.goals ? { goals: m.goals } : null,
         predeterminedScore: m.predeterminedScore || null,
         prediction: m.prediction || null,
-        // Phase 5.3.3: Source timestamps from API response
-        // The fetch-live scraper fetches matches + ranking + results in a SINGLE call.
-        // scrapedAt = Date.now() at scrape completion = best proxy for ALL sources.
-        // If the external API ever adds per-source timestamps, m.oddsTimestamp etc. will take precedence.
+        // Phase 5.3.3: Timestamps for scientific timeline
+        // SEMANTIC: scrapedAt is an OBSERVATION timestamp (when our scraper observed the data),
+        // NOT a SOURCE timestamp (when the external provider produced the data).
+        // Sporty currently provides NO native timestamps in its API responses.
+        // Priority chain: m.oddsTimestamp (native from Sporty, if ever provided) > data.scrapedAt > undefined
+        // Provenance will be recorded as OBSERVATION_TIME until Sporty provides source timestamps.
         // IMPORTANT: Never substitute with Date.now() or t_prediction here.
         oddsTimestamp: m.oddsTimestamp || data.scrapedAt || undefined,
         rankingTimestamp: m.rankingTimestamp || data.scrapedAt || undefined,
@@ -203,8 +205,9 @@ export function useLiveMatches() {
             stats: m.stats || null,
             id: m.id,
             round: m.round,
-            // Phase 5.3.3: Propagate source timestamps from scraper cache
-            // scraped_at from Neon = same as scrapedAt — best proxy for all sources.
+            // Phase 5.3.3: Propagate timestamps from scraper cache
+            // SEMANTIC: scraped_at is an OBSERVATION timestamp, NOT a SOURCE timestamp.
+            // Provenance = OBSERVATION_TIME until Sporty provides native timestamps.
             oddsTimestamp: m.oddsTimestamp || matchesEntry.scraped_at || undefined,
             rankingTimestamp: m.rankingTimestamp || matchesEntry.scraped_at || undefined,
             formTimestamp: m.formTimestamp || matchesEntry.scraped_at || undefined,

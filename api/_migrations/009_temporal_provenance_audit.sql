@@ -6,8 +6,17 @@
 -- Adds:
 --   - temporal_safety_reason: WHY temporal_safety_score is what it is
 --     ('VERIFIED', 'WITHIN_CLOCK_SKEW', 'FUTURE_FEATURE_LEAK', 'T_FEATURE_UNKNOWN')
---   - timestamp_provenance: JSONB per-source provenance audit
---     ({ odds: 'KNOWN'|'UNKNOWN', ranking: 'KNOWN'|'UNKNOWN', form: 'KNOWN'|'UNKNOWN', h2h: 'KNOWN'|'UNKNOWN' })
+--   - timestamp_provenance: JSONB per-source provenance audit (3-tier)
+--     ({ odds: 'SOURCE_PROVIDED'|'OBSERVATION_TIME'|'UNKNOWN', ... })
+--
+-- TIMESTAMP PROVENANCE TIERS:
+--   SOURCE_PROVIDED  = timestamp comes from the external provider (Sporty native)
+--   OBSERVATION_TIME = timestamp is when our scraper observed the data (scrapedAt)
+--   UNKNOWN          = no timestamp available
+--
+-- Currently all non-null timestamps are OBSERVATION_TIME because Sporty provides
+-- no native timestamps. When Sporty adds them, the scraper must extract per-source
+-- timestamps from provider responses, and provenance will auto-upgrade.
 --
 -- IMPORTANT: Does NOT modify any existing data.
 -- Existing rows get NULL for new columns (correct: provenance unknown).
