@@ -196,7 +196,6 @@ export default async function handler(req, res) {
           FROM predictions
           WHERE created_at < ${deployTimestamp}
           ORDER BY created_at DESC
-          LIMIT 15
         `;
 
         return res.status(200).json({
