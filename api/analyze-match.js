@@ -693,12 +693,8 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
     return { predictions: [mathPredict(matches[0])], provider: 'math-v2', ai_traces: aiTraces };
   }
 
-  // For 2+ matches: only try Groq if few matches and small prompt
-  if (matches.length > 3) {
-    console.log(`[analyze-match] ${matches.length} matches -> instant math v2.0 (batch reliability)`);
-    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
-  }
-
+  // For 2+ matches: try Groq if the prompt fits within token budget
+  // (removed old hard limit of >3 matches — token estimate is a better gate)
   const allPrompt = buildUserPrompt(matches);
   const promptTokens = Math.ceil(allPrompt.length / 3);
   const systemTokens = Math.ceil(SYSTEM_PROMPT.length / 3);
@@ -707,7 +703,7 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
   console.log(`[analyze-match] Est. tokens for ${matches.length} matches: ~${totalEstimate}`);
 
   if (totalEstimate > 5000) {
-    console.log(`[analyze-match] Token estimate too high -> math v2.0`);
+    console.log(`[analyze-match] Token estimate too high (${totalEstimate} > 5000) -> math v2.0`);
     return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
   }
 
