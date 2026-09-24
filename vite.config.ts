@@ -89,9 +89,26 @@ export default defineConfig(({ mode }) => ({
         skipWaiting: true,
         clientsClaim: true,
         // Navigation requests: NetworkFirst to always get fresh CSP headers
+        // and fresh index.html (which references current chunk hashes)
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
+          {
+            // CRITICAL: HTML navigation must be NetworkFirst to prevent
+            // stale index.html from referencing deleted chunk hashes (404)
+            urlPattern: /\/index\.html$/i,
+            handler: "NetworkFirst",
+            options: {
+              cacheName: "html-navigation",
+              expiration: {
+                maxEntries: 1,
+                maxAgeSeconds: 0 // Never cache stale HTML — always prefer network
+              },
+              cacheableResponse: {
+                statuses: [0, 200]
+              }
+            }
+          },
           {
             urlPattern: /^https:\/\/.*\.neon\.tech\/.*/i,
             handler: "NetworkFirst",
