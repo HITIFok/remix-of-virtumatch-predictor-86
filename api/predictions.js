@@ -10,6 +10,17 @@ import { getClientIp } from './_lib/request.js';
 import { errorResponse, successResponse, methodNotAllowed, rateLimited, unauthorized, invalidInput, internalError } from './_lib/errors.js';
 import { validateDeviceId, sanitizeString, validateLimit } from './_lib/validate.js';
 import { createLogger } from './_lib/logger.js';
+// Phase 5.3.14: Server-side scientific integrity — recompute derived fields
+import {
+  recomputeScientificFields,
+  computeTFeature,
+  computeCompletenessScore,
+  computeTemporalSafety,
+  computeScientificEligible,
+  computeProvenanceStatus,
+  validateStoredSnapshot,
+  isValidProvenanceStatus,
+} from './_lib/scientific-integrity.js';
 
 const log = createLogger('predictions');
 
@@ -93,7 +104,8 @@ function validatePrediction(body) {
       config_version: body.config_version ? String(body.config_version).substring(0, 20) : null,
       calibration_version: body.calibration_version ? String(body.calibration_version).substring(0, 20) : null,
       dataset_version: body.dataset_version ? String(body.dataset_version).substring(0, 20) : null,
-      feature_snapshot_hash: body.feature_snapshot_hash ? String(body.feature_snapshot_hash).substring(0, 80) : null,
+      // H4 fix: feature_snapshot_hash is ONLY accepted if feature_snapshot is also present
+      feature_snapshot_hash: (body.feature_snapshot && body.feature_snapshot_hash) ? String(body.feature_snapshot_hash).substring(0, 80) : null,
       prediction_hash: body.prediction_hash ? String(body.prediction_hash).substring(0, 80) : null,
       // Phase 5.3: AI traceability & scientific collection
       ai_context_hash: body.ai_context_hash ? String(body.ai_context_hash).substring(0, 80) : null,
@@ -103,14 +115,18 @@ function validatePrediction(body) {
       ai_prompt_version: body.ai_prompt_version ? String(body.ai_prompt_version).substring(0, 20) : null,
       ai_model: body.ai_model ? String(body.ai_model).substring(0, 50) : null,
       ai_trace: body.ai_trace || null,
-      completeness_score: typeof body.completeness_score === 'number' ? Math.min(Math.max(body.completeness_score, 0), 1) : null,
-      temporal_safety_score: typeof body.temporal_safety_score === 'number' ? Math.min(Math.max(body.temporal_safety_score, 0), 1) : null,
-      temporal_safety_reason: body.temporal_safety_reason ? String(body.temporal_safety_reason).substring(0, 30) : null,
+      // Phase 5.3.14 H1/H2/C2 fix: These fields are NO LONGER trusted from client.
+      // They are recomputed server-side after validatePrediction() returns.
+      // Client-supplied values are intentionally ignored.
+      completeness_score: null,  // recomputed server-side
+      temporal_safety_score: null,  // recomputed server-side
+      temporal_safety_reason: null,  // recomputed server-side
       timestamp_provenance: body.timestamp_provenance || null,
       ai_provenance_risk: body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : null,
-      scientific_collection_eligible: typeof body.scientific_collection_eligible === 'boolean' ? body.scientific_collection_eligible : false,
+      scientific_collection_eligible: false,  // recomputed server-side (default false)
       version_freeze: body.version_freeze || null,
-      t_feature: body.t_feature || null,
+      // t_feature is NOT accepted from client — recomputed server-side from feature_snapshot
+      t_feature: null,
     },
   };
 }
@@ -316,78 +332,67 @@ export default async function handler(req, res) {
 
     try {
       const sql = createSql();
-      // Phase 12 fix (forensic audit BUG-10):
-      // Use the canonical ProvenanceStatus enum defined in
-      // src/lib/feature-snapshot.ts: 'RECORDED' | 'RECONSTRUCTED' | 'UNKNOWN' | 'UNSAFE'.
-      // The legacy DB enum (VALID/PARTIALLY_VALID/INVALID/UNKNOWN) is kept
-      // for backward compatibility on historical rows — migration 010
-      // handles both enums via the CASE-based downgrade detection.
-      //
-      // Rules:
-      //   All required features + source_timestamps present → RECORDED
-      //   Some features present (odds-only, or partial) → RECONSTRUCTED
-      //   No snapshot OR no source_timestamps → UNKNOWN
-      //   (UNSAFE is set later by validateSnapshot when temporal leak detected)
-      let provenanceStatus = 'UNKNOWN';
-      if (d.feature_snapshot && typeof d.feature_snapshot === 'object') {
-        const snap = d.feature_snapshot;
-        const hasOdds = snap.odds && snap.odds.source_timestamp;
-        const hasForm = snap.form && snap.form.home && snap.form.away;
-        const hasStats = snap.stats && snap.stats.home && snap.stats.away;
-        if (hasOdds && hasForm && hasStats) {
-          provenanceStatus = 'RECORDED';  // canonical: full snapshot with timestamps
-        } else if (hasOdds) {
-          provenanceStatus = 'RECONSTRUCTED';  // canonical: partial (odds-only)
-        } else {
-          provenanceStatus = 'UNKNOWN';
-        }
-      }
+
+      // Phase 5.3.14: Server-side recomputation of ALL derived scientific fields.
+      // The POST handler NO LONGER trusts client-supplied values for:
+      //   - completeness_score (H1 fix)
+      //   - temporal_safety_score (H2 fix)
+      //   - temporal_safety_reason (H2 fix)
+      //   - scientific_collection_eligible (C2 fix)
+      //   - provenance_status (C1 fix — also uses 'standings' not 'stats')
+      //   - t_feature (Phase 4 fix — already server-computed, now via shared module)
 
       // Phase 5: Three temporal timestamps
       const tPrediction = new Date().toISOString();
-      // Phase 4 fix (forensic audit BUG-5):
-      // The server MUST NOT blindly trust client-supplied d.t_feature.
-      // The client could inject any ISO date as "scientific proof".
-      // Instead, the server recomputes t_feature from the snapshot's
-      // real source_timestamps — only those that come from external
-      // data sources (odds/ranking/form/h2h). Derived/AI timestamps are
-      // excluded because they are pipeline outputs, not external inputs.
-      //
-      // If the client-provided d.t_feature differs from the recomputed
-      // value, we log a CLIENT_T_FEATURE_MISMATCH audit entry but we
-      // DO NOT modify historical data — the recomputed value wins for
-      // the new INSERT only.
-      const dSourceTimestamps = d.feature_snapshot?.source_timestamps || {};
-      const dOddsTs = d.feature_snapshot?.odds?.source_timestamp || dSourceTimestamps.odds || null;
-      const dRankingTs = dSourceTimestamps.ranking || d.feature_snapshot?.standings?.source_timestamp || null;
-      const dFormTs = dSourceTimestamps.form || d.feature_snapshot?.form?.source_timestamp || null;
-      const dH2hTs = dSourceTimestamps.h2h || d.feature_snapshot?.h2h?.source_timestamp || null;
 
-      // Only external, real source timestamps qualify for T_feature.
-      // Excluded: AI response timestamp, snapshot_timestamp, Date.now(),
-      // created_at, prediction_timestamp, and any timestamp that equals
-      // tPrediction (would be a fabricated injection).
-      const serverValidTimestamps = [dOddsTs, dRankingTs, dFormTs, dH2hTs]
-        .filter(ts => ts != null && typeof ts === 'string')
-        .filter(ts => {
-          const parsed = new Date(ts).getTime();
-          // Reject unparseable timestamps
-          if (isNaN(parsed)) return false;
-          // Reject timestamps that equal tPrediction (clear fabrication)
-          if (parsed === new Date(tPrediction).getTime()) return false;
-          // Reject timestamps that equal snapshot_timestamp (also a fabrication)
-          return true;
-        });
-
-      const serverTFeature = serverValidTimestamps.length > 0
-        ? new Date(Math.max(...serverValidTimestamps.map(ts => new Date(ts).getTime()))).toISOString()
-        : null;
-
-      // Audit mismatch between client-supplied and server-recomputed t_feature
-      if (d.t_feature && d.t_feature !== serverTFeature) {
-        console.log(`[predictions POST] CLIENT_T_FEATURE_MISMATCH: client_t_feature=${d.t_feature} server_t_feature=${serverTFeature || 'NULL'} — server value used`);
+      // Phase 5.3.14 M2 fix: Validate the stored snapshot before INSERT
+      if (d.feature_snapshot && typeof d.feature_snapshot === 'object') {
+        const snapValidation = validateStoredSnapshot(d.feature_snapshot, tPrediction);
+        if (!snapValidation.valid) {
+          await sql.end();
+          return res.status(400).json({
+            success: false,
+            error: 'Feature snapshot validation failed',
+            details: snapValidation.errors,
+            warnings: snapValidation.warnings,
+          });
+        }
+        if (snapValidation.warnings.length > 0) {
+          console.log(`[predictions POST] Snapshot validation warnings: ${snapValidation.warnings.join('; ')}`);
+        }
       }
-      const tFeature = serverTFeature;
+
+      // Phase 5.3.14: Recompute ALL derived scientific fields server-side.
+      // This replaces the old inline provenance computation (C1 fix) and
+      // the trusted client values for completeness/temporal/eligibility (H1/H2/C2 fixes).
+      const scientificFields = recomputeScientificFields({
+        featureSnapshot: d.feature_snapshot,
+        tPrediction: tPrediction,
+        aiResponseHash: d.ai_response_hash,
+      });
+
+      // Override the validated data with server-computed values
+      d.completeness_score = scientificFields.completeness_score;
+      d.temporal_safety_score = scientificFields.temporal_safety_score;
+      d.temporal_safety_reason = scientificFields.temporal_safety_reason;
+      d.scientific_collection_eligible = scientificFields.scientific_collection_eligible;
+      d.t_feature = scientificFields.t_feature;
+
+      // C1 fix: use computeProvenanceStatus from shared module (uses 'standings' not 'stats')
+      const provenanceStatus = scientificFields.provenance_status;
+
+      // Log if client supplied different values (for audit trail)
+      if (typeof body.completeness_score === 'number' && body.completeness_score !== d.completeness_score) {
+        console.log(`[predictions POST] CLIENT_COMPLETENESS_OVERRIDE: client=${body.completeness_score} server=${d.completeness_score}`);
+      }
+      if (typeof body.temporal_safety_score === 'number' && body.temporal_safety_score !== d.temporal_safety_score) {
+        console.log(`[predictions POST] CLIENT_TEMPORAL_SAFETY_OVERRIDE: client=${body.temporal_safety_score} server=${d.temporal_safety_score}`);
+      }
+      if (typeof body.scientific_collection_eligible === 'boolean' && body.scientific_collection_eligible !== d.scientific_collection_eligible) {
+        console.log(`[predictions POST] CLIENT_ELIGIBILITY_OVERRIDE: client=${body.scientific_collection_eligible} server=${d.scientific_collection_eligible}`);
+      }
+
+      const tFeature = d.t_feature;
 
       const result = await sql`
         INSERT INTO predictions (
@@ -657,41 +662,79 @@ export default async function handler(req, res) {
       if (body.ai_trace && typeof body.ai_trace === 'object') {
         tryUpdate('ai_trace', sql.json(body.ai_trace));
       }
-      // Scores
-      if (typeof body.completeness_score === 'number') {
-        tryUpdate('completeness_score', Math.min(Math.max(body.completeness_score, 0), 1));
-      }
-      if (typeof body.temporal_safety_score === 'number') {
-        tryUpdate('temporal_safety_score', Math.min(Math.max(body.temporal_safety_score, 0), 1));
-      }
-      // Phase 5.3.3: temporal_safety_reason and timestamp_provenance
-      tryUpdate('temporal_safety_reason', body.temporal_safety_reason ? String(body.temporal_safety_reason).substring(0, 30) : undefined);
+      // Phase 5.3.14 H1/H2/C2 fix: completeness_score, temporal_safety_score,
+      // temporal_safety_reason, and scientific_collection_eligible are NO LONGER
+      // accepted from client in PATCH. They are recomputed server-side when
+      // feature_snapshot is patched (see below).
+
+      // Phase 5.3.3: timestamp_provenance and ai_provenance_risk are DATA fields
+      // (not derived) — they can be accepted from the enrichment flow.
       if (body.timestamp_provenance && typeof body.timestamp_provenance === 'object') {
         tryUpdate('timestamp_provenance', sql.json(body.timestamp_provenance));
       }
       tryUpdate('ai_provenance_risk', body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : undefined);
-      // Scientific eligibility
-      if (typeof body.scientific_collection_eligible === 'boolean') {
-        tryUpdate('scientific_collection_eligible', body.scientific_collection_eligible);
-      }
       // Version freeze (JSONB)
       if (body.version_freeze && typeof body.version_freeze === 'object') {
         tryUpdate('version_freeze', sql.json(body.version_freeze));
       }
-      // Provenance status — special: only downgrade-blocked (DB handles this).
-      // We allow NULL → value and any value → value (DB will block illegal downgrades).
+
+      // M1 fix: Validate provenance_status against the canonical enum.
+      // Only accept known values (RECORDED, RECONSTRUCTED, UNKNOWN, UNSAFE
+      // + legacy VALID, PARTIALLY_VALID, INVALID). Reject arbitrary strings.
       if (body.provenance_status) {
-        // No immutability check on provenance_status at API level — DB trigger
-        // decides what's a legal transition (migration 010 helper ranks the
-        // enum and blocks true downgrades). We just enqueue.
-        updates.push('provenance_status = $' + (params.length + 1));
-        params.push(String(body.provenance_status).substring(0, 30));
+        if (!isValidProvenanceStatus(body.provenance_status)) {
+          blockedUpdates.push({
+            field: 'provenance_status',
+            reason: `INVALID_ENUM_VALUE — '${body.provenance_status}' is not a recognized provenance status`,
+          });
+        } else {
+          // Valid enum value — enqueue (DB trigger handles downgrade blocking)
+          updates.push('provenance_status = $' + (params.length + 1));
+          params.push(String(body.provenance_status).substring(0, 30));
+        }
       }
-      // Temporal timestamps — strict NULL → value only
+
+      // H3 fix: t_feature is NO LONGER accepted from client in PATCH.
+      // It is computed server-side from feature_snapshot when feature_snapshot
+      // is being patched (NULL → value enrichment).
+      // If the client sends body.t_feature, it is IGNORED (not blocked, just skipped).
+      // The server computes t_feature from the snapshot's source_timestamps.
       if (body.t_feature != null) {
-        // Reject client-supplied t_feature that equals current snapshot timestamp
-        // (would be a fabrication attempt). The DB trigger will also block this.
-        tryUpdate('t_feature', body.t_feature);
+        console.log(`[predictions PATCH] CLIENT_T_FEATURE_IGNORED: client sent t_feature=${body.t_feature} — server will compute from feature_snapshot if present`);
+      }
+
+      // Phase 5.3.14: When feature_snapshot is being patched (NULL → value),
+      // also compute ALL derived fields server-side from the new snapshot.
+      if (body.feature_snapshot && typeof body.feature_snapshot === 'object' && !isSet(current.feature_snapshot)) {
+        // feature_snapshot is being set from NULL → value
+        // Compute t_feature from the snapshot
+        const patchTFeature = computeTFeature(body.feature_snapshot);
+        if (patchTFeature !== null) {
+          tryUpdate('t_feature', patchTFeature);
+        }
+        // Compute completeness_score from the snapshot
+        const patchCompleteness = computeCompletenessScore(body.feature_snapshot);
+        tryUpdate('completeness_score', patchCompleteness);
+        // Compute temporal_safety from t_feature and existing t_prediction
+        const existingTPrediction = current.t_prediction;
+        if (existingTPrediction) {
+          const patchTemporal = computeTemporalSafety(patchTFeature, existingTPrediction);
+          tryUpdate('temporal_safety_score', patchTemporal.score);
+          tryUpdate('temporal_safety_reason', patchTemporal.reason);
+        }
+        // Compute provenance_status from the snapshot
+        const patchProvenance = computeProvenanceStatus(body.feature_snapshot);
+        // Only set if current is NULL (tryUpdate enforces this)
+        tryUpdate('provenance_status', patchProvenance);
+        // Compute scientific_collection_eligible from all conditions
+        const patchEligible = computeScientificEligible(
+          body.feature_snapshot,
+          patchCompleteness,
+          existingTPrediction ? computeTemporalSafety(patchTFeature, existingTPrediction).score : 0.0,
+          patchTFeature,
+          body.ai_response_hash || null,
+        );
+        tryUpdate('scientific_collection_eligible', patchEligible);
       }
 
       // If all attempted updates are illegal, return structured error

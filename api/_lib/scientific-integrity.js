@@ -1,0 +1,377 @@
+// ============================================
+// SCIENTIFIC INTEGRITY — SERVER-SIDE RECOMPUTATION
+// Phase 5.3.14 — Enforce server-side provenance and eligibility
+// ============================================
+//
+// This module provides server-side recomputation functions for scientific
+// fields that were previously trusted from the client.
+//
+// The logic MIRRORS computeAITraces() in api/analyze-match.js but is
+// designed to be called from api/predictions.js POST/PATCH handlers.
+//
+// CRITICAL: This module does NOT modify the prediction model, coefficients,
+// or any canonical hash function. It only recomputes derived scientific
+// fields from the stored feature_snapshot.
+
+// ═══════════════════════════════════════════════════════════════════
+// CANONICAL ENUMS
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Canonical provenance status values (for new writes).
+ * Legacy values (VALID, PARTIALLY_VALID, INVALID) are kept for backward
+ * compatibility but should NOT be produced by new code.
+ */
+const CANONICAL_PROVENANCE_VALUES = new Set([
+  'RECORDED',
+  'RECONSTRUCTED',
+  'UNKNOWN',
+  'UNSAFE',
+]);
+
+/**
+ * All known provenance values (canonical + legacy).
+ * Used for reading historical data.
+ */
+const ALL_KNOWN_PROVENANCE_VALUES = new Set([
+  'RECORDED',
+  'RECONSTRUCTED',
+  'UNKNOWN',
+  'UNSAFE',
+  // Legacy values (from migrations 006/007):
+  'VALID',
+  'PARTIALLY_VALID',
+  'INVALID',
+]);
+
+/**
+ * Validate that a provenance_status value is in the canonical enum.
+ * Returns true for canonical values, false for unknown/arbitrary values.
+ * Legacy values (VALID, PARTIALLY_VALID, INVALID) are accepted but logged.
+ */
+function isValidProvenanceStatus(value) {
+  if (typeof value !== 'string') return false;
+  return ALL_KNOWN_PROVENANCE_VALUES.has(value);
+}
+
+function isCanonicalProvenanceStatus(value) {
+  if (typeof value !== 'string') return false;
+  return CANONICAL_PROVENANCE_VALUES.has(value);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// COMPLETENESS SCORE — mirrors computeAITraces() lines 503-509
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute completeness score from a feature_snapshot.
+ *
+ * Weights (identical to computeAITraces in analyze-match.js):
+ *   odds (home+draw+away)  = 0.30
+ *   standings (home+away)  = 0.20
+ *   form home              = 0.15
+ *   form away              = 0.15
+ *   h2h matches            = 0.20
+ *   Maximum                = 1.00
+ *
+ * @param {object} featureSnapshot - The stored feature_snapshot JSONB
+ * @returns {number} Completeness score (0.0 to 1.0), rounded to 3 decimals
+ */
+function computeCompletenessScore(featureSnapshot) {
+  if (!featureSnapshot || typeof featureSnapshot !== 'object') return 0;
+
+  const odds = featureSnapshot.odds;
+  const standings = featureSnapshot.standings;
+  const form = featureSnapshot.form;
+  const h2h = featureSnapshot.h2h;
+
+  let score = 0;
+  if (odds && odds.home && odds.draw && odds.away) score += 0.3;
+  if (standings && standings.home && standings.away) score += 0.2;
+  if (form && form.home && Array.isArray(form.home) && form.home.length > 0) score += 0.15;
+  if (form && form.away && Array.isArray(form.away) && form.away.length > 0) score += 0.15;
+  if (h2h && h2h.matches && Array.isArray(h2h.matches) && h2h.matches.length > 0) score += 0.2;
+
+  return Math.round(score * 1000) / 1000;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TEMPORAL SAFETY — mirrors computeAITraces() lines 564-588
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute temporal safety score and reason from t_feature and t_prediction.
+ *
+ * Logic (identical to computeAITraces in analyze-match.js):
+ *   t_feature = NULL                    → score 0.0, T_FEATURE_UNKNOWN
+ *   t_feature > t_prediction + 5min     → score 0.0, FUTURE_FEATURE_LEAK
+ *   t_feature > t_prediction (≤5min)    → score 1.0, WITHIN_CLOCK_SKEW
+ *   t_feature ≤ t_prediction            → score 1.0, VERIFIED
+ *
+ * @param {string|null} tFeature - ISO 8601 timestamp or null
+ * @param {string} tPrediction - ISO 8601 timestamp
+ * @returns {{score: number, reason: string}}
+ */
+function computeTemporalSafety(tFeature, tPrediction) {
+  if (!tFeature) {
+    return { score: 0.0, reason: 'T_FEATURE_UNKNOWN' };
+  }
+
+  const tFeatureMs = new Date(tFeature).getTime();
+  const tPredictionMs = new Date(tPrediction).getTime();
+
+  if (isNaN(tFeatureMs) || isNaN(tPredictionMs)) {
+    return { score: 0.0, reason: 'T_FEATURE_UNKNOWN' };
+  }
+
+  const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+
+  if (tFeatureMs > tPredictionMs + CLOCK_SKEW_TOLERANCE_MS) {
+    return { score: 0.0, reason: 'FUTURE_FEATURE_LEAK' };
+  } else if (tFeatureMs > tPredictionMs) {
+    return { score: 1.0, reason: 'WITHIN_CLOCK_SKEW' };
+  } else {
+    return { score: 1.0, reason: 'VERIFIED' };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// T_FEATURE — mirrors computeAITraces() lines 516-528 + Phase 4 fix
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute t_feature from feature_snapshot source_timestamps.
+ *
+ * t_feature = MAX of all available source timestamps (odds, ranking, form, h2h).
+ * If no source timestamps are available, returns null (UNKNOWN).
+ *
+ * @param {object} featureSnapshot
+ * @returns {string|null} ISO 8601 timestamp or null
+ */
+function computeTFeature(featureSnapshot) {
+  if (!featureSnapshot || typeof featureSnapshot !== 'object') return null;
+
+  const sourceTimestamps = featureSnapshot.source_timestamps || {};
+  const availableTimestamps = [
+    sourceTimestamps.odds,
+    sourceTimestamps.ranking,
+    sourceTimestamps.form,
+    sourceTimestamps.h2h,
+    // Also check nested source_timestamp fields
+    featureSnapshot.odds?.source_timestamp,
+    featureSnapshot.standings?.source_timestamp,
+    featureSnapshot.form?.source_timestamp,
+    featureSnapshot.h2h?.source_timestamp,
+  ].filter(ts => ts != null && typeof ts === 'string');
+
+  if (availableTimestamps.length === 0) return null;
+
+  const maxMs = Math.max(...availableTimestamps.map(ts => {
+    const ms = new Date(ts).getTime();
+    return isNaN(ms) ? 0 : ms;
+  }));
+
+  return maxMs > 0 ? new Date(maxMs).toISOString() : null;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SCIENTIFIC ELIGIBILITY — mirrors computeAITraces() lines 611-617
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute scientific_collection_eligible from server-side data.
+ *
+ * Conditions (identical to computeAITraces Phase 9 fix):
+ *   1. feature_snapshot is present (non-null)
+ *   2. completeness_score >= 0.5
+ *   3. temporal_safety_score >= 1.0
+ *   4. t_feature is non-null (real source timestamps exist)
+ *   5. ai_response_hash is non-null (real LLM response was received)
+ *
+ * Note: ai_response_text is not stored in DB, so we use ai_response_hash
+ * as the proxy for "real LLM response was received". This is consistent
+ * with the Phase 9 fix which requires aiActuallyUsed (ai_response_hash
+ * AND ai_response_text both non-null). Since ai_response_hash is only
+ * non-null when ai_response_text was non-null (computeAITraces line 488),
+ * checking ai_response_hash alone is equivalent.
+ *
+ * @param {object|null} featureSnapshot
+ * @param {number} completenessScore
+ * @param {number} temporalSafetyScore
+ * @param {string|null} tFeature
+ * @param {string|null} aiResponseHash
+ * @returns {boolean}
+ */
+function computeScientificEligible(featureSnapshot, completenessScore, temporalSafetyScore, tFeature, aiResponseHash) {
+  return !!featureSnapshot &&
+    completenessScore >= 0.5 &&
+    temporalSafetyScore >= 1.0 &&
+    tFeature !== null &&
+    aiResponseHash !== null;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PROVENANCE STATUS — C1 fix: use 'standings' not 'stats'
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Compute provenance_status from feature_snapshot.
+ *
+ * Phase 5.3.14 C1 fix: The previous code used snap.stats which doesn't
+ * exist in the stored snapshot (it uses 'standings'). This caused
+ * hasStats to always be false, making RECORDED unreachable.
+ *
+ * Fixed logic:
+ *   All features + source_timestamps present → RECORDED
+ *   Some features present (odds has source_timestamp) → RECONSTRUCTED
+ *   No snapshot or no source_timestamps → UNKNOWN
+ *
+ * @param {object|null} featureSnapshot
+ * @returns {string} One of RECORDED, RECONSTRUCTED, UNKNOWN
+ */
+function computeProvenanceStatus(featureSnapshot) {
+  if (!featureSnapshot || typeof featureSnapshot !== 'object') {
+    return 'UNKNOWN';
+  }
+
+  const snap = featureSnapshot;
+  // C1 FIX: use 'standings' (the actual key in feature_snapshot), not 'stats'
+  const hasOdds = snap.odds && snap.odds.source_timestamp;
+  const hasForm = snap.form && snap.form.home && snap.form.away;
+  const hasStandings = snap.standings && snap.standings.home && snap.standings.away; // FIXED: standings not stats
+  const hasH2h = snap.h2h && snap.h2h.source_timestamp;
+
+  if (hasOdds && hasForm && hasStandings && hasH2h) {
+    return 'RECORDED';  // canonical: full snapshot with all source_timestamps
+  } else if (hasOdds) {
+    return 'RECONSTRUCTED';  // canonical: partial (odds has source_timestamp)
+  } else {
+    return 'UNKNOWN';  // no source_timestamps available
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SNAPSHOT VALIDATION — M2 fix: validate stored snapshot at INSERT time
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Validate a stored feature_snapshot before INSERT.
+ *
+ * This is a SIMPLER validation than feature-snapshot.ts validateSnapshot()
+ * because the stored snapshot has a different structure (it's the AIContext
+ * serialization, not a FeatureSnapshot object).
+ *
+ * Checks:
+ *   1. schema_version is present
+ *   2. odds exists with numeric home, draw, away
+ *   3. source_timestamps exists (even if all values are null)
+ *   4. No temporal leakage: if source_timestamps are present and
+ *      t_prediction is known, none should be > t_prediction
+ *
+ * @param {object} featureSnapshot
+ * @param {string} tPrediction - ISO 8601 timestamp
+ * @returns {{valid: boolean, errors: string[], warnings: string[]}}
+ */
+function validateStoredSnapshot(featureSnapshot, tPrediction) {
+  const errors = [];
+  const warnings = [];
+
+  if (!featureSnapshot || typeof featureSnapshot !== 'object') {
+    return { valid: false, errors: ['feature_snapshot is not a valid object'], warnings };
+  }
+
+  // 1. schema_version
+  if (!featureSnapshot.schema_version) {
+    warnings.push('feature_snapshot has no schema_version');
+  }
+
+  // 2. odds
+  const odds = featureSnapshot.odds;
+  if (!odds || typeof odds.home !== 'number' || typeof odds.draw !== 'number' || typeof odds.away !== 'number') {
+    errors.push('feature_snapshot.odds must have numeric home, draw, away');
+  }
+
+  // 3. source_timestamps
+  const sourceTimestamps = featureSnapshot.source_timestamps;
+  if (!sourceTimestamps || typeof sourceTimestamps !== 'object') {
+    warnings.push('feature_snapshot has no source_timestamps object');
+  }
+
+  // 4. Temporal leakage check
+  if (tPrediction && sourceTimestamps) {
+    const predMs = new Date(tPrediction).getTime();
+    if (!isNaN(predMs)) {
+      const allTimestamps = [
+        sourceTimestamps.odds,
+        sourceTimestamps.ranking,
+        sourceTimestamps.form,
+        sourceTimestamps.h2h,
+      ].filter(ts => ts != null);
+
+      for (const ts of allTimestamps) {
+        const tsMs = new Date(ts).getTime();
+        if (!isNaN(tsMs) && tsMs > predMs) {
+          errors.push(`Temporal leak: source_timestamp ${ts} > t_prediction ${tPrediction}`);
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FULL RECOMPUTATION — compute all derived scientific fields server-side
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Recompute ALL derived scientific fields from the feature_snapshot and
+ * other known data. This is the SINGLE source of truth for server-side
+ * scientific field computation.
+ *
+ * @param {object} params
+ * @param {object|null} params.featureSnapshot - The stored snapshot
+ * @param {string} params.tPrediction - ISO 8601 timestamp (server time)
+ * @param {string|null} params.aiResponseHash - From client body (enrichment flow)
+ * @returns {object} All recomputed scientific fields
+ */
+function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHash }) {
+  const tFeature = computeTFeature(featureSnapshot);
+  const completenessScore = computeCompletenessScore(featureSnapshot);
+  const temporalSafety = computeTemporalSafety(tFeature, tPrediction);
+  const provenanceStatus = computeProvenanceStatus(featureSnapshot);
+  const scientificEligible = computeScientificEligible(
+    featureSnapshot,
+    completenessScore,
+    temporalSafety.score,
+    tFeature,
+    aiResponseHash,
+  );
+
+  return {
+    t_feature: tFeature,
+    completeness_score: completenessScore,
+    temporal_safety_score: temporalSafety.score,
+    temporal_safety_reason: temporalSafety.reason,
+    provenance_status: provenanceStatus,
+    scientific_collection_eligible: scientificEligible,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════
+
+export {
+  CANONICAL_PROVENANCE_VALUES,
+  ALL_KNOWN_PROVENANCE_VALUES,
+  isValidProvenanceStatus,
+  isCanonicalProvenanceStatus,
+  computeCompletenessScore,
+  computeTemporalSafety,
+  computeTFeature,
+  computeScientificEligible,
+  computeProvenanceStatus,
+  validateStoredSnapshot,
+  recomputeScientificFields,
+};
