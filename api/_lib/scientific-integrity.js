@@ -145,13 +145,19 @@ function computeTemporalSafety(tFeature, tPrediction) {
  * t_feature = MAX of all available source timestamps (odds, ranking, form, h2h).
  * If no source timestamps are available, returns null (UNKNOWN).
  *
+ * Phase 5.3.15.1 F-HIGH-1 fix: Restored the Phase 4 anti-fabrication check
+ * that rejects source timestamps exactly equal to tPrediction.
+ *
  * @param {object} featureSnapshot
+ * @param {string} [tPrediction] - Server time (for anti-fabrication check)
  * @returns {string|null} ISO 8601 timestamp or null
  */
-function computeTFeature(featureSnapshot) {
+function computeTFeature(featureSnapshot, tPrediction) {
   if (!featureSnapshot || typeof featureSnapshot !== 'object') return null;
 
   const sourceTimestamps = featureSnapshot.source_timestamps || {};
+  const tPredictionMs = tPrediction ? new Date(tPrediction).getTime() : null;
+
   const availableTimestamps = [
     sourceTimestamps.odds,
     sourceTimestamps.ranking,
@@ -162,7 +168,16 @@ function computeTFeature(featureSnapshot) {
     featureSnapshot.standings?.source_timestamp,
     featureSnapshot.form?.source_timestamp,
     featureSnapshot.h2h?.source_timestamp,
-  ].filter(ts => ts != null && typeof ts === 'string');
+  ].filter(ts => ts != null && typeof ts === 'string')
+   .filter(ts => {
+     const parsed = new Date(ts).getTime();
+     // Reject unparseable timestamps
+     if (isNaN(parsed)) return false;
+     // F-HIGH-1 fix: Phase 4 anti-fabrication check
+     // Reject timestamps exactly equal to tPrediction (clear fabrication)
+     if (tPredictionMs !== null && !isNaN(tPredictionMs) && parsed === tPredictionMs) return false;
+     return true;
+   });
 
   if (availableTimestamps.length === 0) return null;
 
@@ -188,21 +203,25 @@ function computeTFeature(featureSnapshot) {
  *   4. t_feature is non-null (real source timestamps exist)
  *   5. ai_response_hash is non-null (real LLM response was received)
  *
- * Note: ai_response_text is not stored in DB, so we use ai_response_hash
- * as the proxy for "real LLM response was received". This is consistent
- * with the Phase 9 fix which requires aiActuallyUsed (ai_response_hash
- * AND ai_response_text both non-null). Since ai_response_hash is only
- * non-null when ai_response_text was non-null (computeAITraces line 488),
- * checking ai_response_hash alone is equivalent.
+ * Phase 5.3.15.1 F-MED-1 fix: Added aiModel parameter.
+ * When ai_model = 'math-v2', there is no real LLM response.
+ * A client sending ai_response_hash with ai_model='math-v2' is a fabrication
+ * attempt — the hash is ignored and eligibility is false.
  *
  * @param {object|null} featureSnapshot
  * @param {number} completenessScore
  * @param {number} temporalSafetyScore
  * @param {string|null} tFeature
  * @param {string|null} aiResponseHash
+ * @param {string|null} [aiModel] - AI model name (for math-v2 check)
  * @returns {boolean}
  */
-function computeScientificEligible(featureSnapshot, completenessScore, temporalSafetyScore, tFeature, aiResponseHash) {
+function computeScientificEligible(featureSnapshot, completenessScore, temporalSafetyScore, tFeature, aiResponseHash, aiModel) {
+  // F-MED-1 fix: math-v2 fallback never has a real LLM response.
+  // Even if the client sends a fake ai_response_hash with ai_model='math-v2',
+  // eligibility must be false.
+  if (aiModel === 'math-v2') return false;
+
   return !!featureSnapshot &&
     completenessScore >= 0.5 &&
     temporalSafetyScore >= 1.0 &&
@@ -329,14 +348,34 @@ function validateStoredSnapshot(featureSnapshot, tPrediction) {
  * other known data. This is the SINGLE source of truth for server-side
  * scientific field computation.
  *
+ * Phase 5.3.15.1 F-CRIT-1 fix: When feature_snapshot is NULL, ALL derived
+ * fields are returned as NULL (not defaults like 0/false/'T_FEATURE_UNKNOWN').
+ * This preserves the NULL→value enrichment path for PATCH — tryUpdate()
+ * allows NULL→value but blocks non-null→different-value.
+ *
  * @param {object} params
  * @param {object|null} params.featureSnapshot - The stored snapshot
  * @param {string} params.tPrediction - ISO 8601 timestamp (server time)
  * @param {string|null} params.aiResponseHash - From client body (enrichment flow)
+ * @param {string|null} [params.aiModel] - AI model name (for math-v2 check)
  * @returns {object} All recomputed scientific fields
  */
-function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHash }) {
-  const tFeature = computeTFeature(featureSnapshot);
+function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHash, aiModel }) {
+  // F-CRIT-1 fix: When feature_snapshot is NULL, return NULL for ALL derived fields.
+  // This preserves the NULL→value enrichment path for PATCH.
+  if (!featureSnapshot || typeof featureSnapshot !== 'object') {
+    return {
+      t_feature: null,
+      completeness_score: null,      // was 0 — now null (F-CRIT-1)
+      temporal_safety_score: null,  // was 0.0 — now null (F-CRIT-1)
+      temporal_safety_reason: null, // was 'T_FEATURE_UNKNOWN' — now null (F-CRIT-1)
+      provenance_status: null,      // was 'UNKNOWN' — now null (F-CRIT-1)
+      scientific_collection_eligible: null, // was false — now null (F-CRIT-1)
+    };
+  }
+
+  // When feature_snapshot is present, compute all derived fields
+  const tFeature = computeTFeature(featureSnapshot, tPrediction);  // F-HIGH-1: pass tPrediction
   const completenessScore = computeCompletenessScore(featureSnapshot);
   const temporalSafety = computeTemporalSafety(tFeature, tPrediction);
   const provenanceStatus = computeProvenanceStatus(featureSnapshot);
@@ -346,6 +385,7 @@ function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHas
     temporalSafety.score,
     tFeature,
     aiResponseHash,
+    aiModel,  // F-MED-1: pass aiModel for math-v2 check
   );
 
   return {

@@ -570,20 +570,28 @@ function computeAITraces(matches, aiResponseText, groqModel) {
     } else {
       const tFeatureMs = new Date(tFeature).getTime();
       const tPredictionMs = new Date(tPrediction).getTime();
-      const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
-      if (tFeatureMs > tPredictionMs + CLOCK_SKEW_TOLERANCE_MS) {
-        // Feature data is genuinely in the future (beyond tolerance) → LEAK DETECTED
+      // F-MED-2 fix: Add isNaN check (align with scientific-integrity.js)
+      // Previously, if tFeature was a non-null invalid date string, NaN > predMs
+      // was false → fell to VERIFIED (score 1.0). Now correctly returns UNKNOWN.
+      if (isNaN(tFeatureMs) || isNaN(tPredictionMs)) {
         temporalSafetyScore = 0.0;
-        temporalSafetyReason = 'FUTURE_FEATURE_LEAK';
-      } else if (tFeatureMs > tPredictionMs) {
-        // Feature data slightly in the future but within clock skew tolerance
-        temporalSafetyScore = 1.0;
-        temporalSafetyReason = 'WITHIN_CLOCK_SKEW';
-        console.log(`[analyze-match] Temporal: t_feature ${Math.round((tFeatureMs - tPredictionMs) / 1000)}s ahead of t_prediction (within 5min tolerance)`);
+        temporalSafetyReason = 'T_FEATURE_UNKNOWN';
       } else {
-        // Normal: t_feature <= t_prediction → temporally safe
-        temporalSafetyScore = 1.0;
-        temporalSafetyReason = 'VERIFIED';
+        const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes
+        if (tFeatureMs > tPredictionMs + CLOCK_SKEW_TOLERANCE_MS) {
+          // Feature data is genuinely in the future (beyond tolerance) → LEAK DETECTED
+          temporalSafetyScore = 0.0;
+          temporalSafetyReason = 'FUTURE_FEATURE_LEAK';
+        } else if (tFeatureMs > tPredictionMs) {
+          // Feature data slightly in the future but within clock skew tolerance
+          temporalSafetyScore = 1.0;
+          temporalSafetyReason = 'WITHIN_CLOCK_SKEW';
+          console.log(`[analyze-match] Temporal: t_feature ${Math.round((tFeatureMs - tPredictionMs) / 1000)}s ahead of t_prediction (within 5min tolerance)`);
+        } else {
+          // Normal: t_feature <= t_prediction → temporally safe
+          temporalSafetyScore = 1.0;
+          temporalSafetyReason = 'VERIFIED';
+        }
       }
     }
 

@@ -123,7 +123,7 @@ function validatePrediction(body) {
       temporal_safety_reason: null,  // recomputed server-side
       timestamp_provenance: body.timestamp_provenance || null,
       ai_provenance_risk: body.ai_provenance_risk ? String(body.ai_provenance_risk).substring(0, 30) : null,
-      scientific_collection_eligible: false,  // recomputed server-side (default false)
+      scientific_collection_eligible: null,  // F-CRIT-1: was false — now null, recomputed server-side
       version_freeze: body.version_freeze || null,
       // t_feature is NOT accepted from client — recomputed server-side from feature_snapshot
       t_feature: null,
@@ -369,6 +369,7 @@ export default async function handler(req, res) {
         featureSnapshot: d.feature_snapshot,
         tPrediction: tPrediction,
         aiResponseHash: d.ai_response_hash,
+        aiModel: d.ai_model,  // F-MED-1: pass aiModel for math-v2 check
       });
 
       // Override the validated data with server-computed values
@@ -733,6 +734,7 @@ export default async function handler(req, res) {
           existingTPrediction ? computeTemporalSafety(patchTFeature, existingTPrediction).score : 0.0,
           patchTFeature,
           body.ai_response_hash || null,
+          body.ai_model || current.ai_model,  // F-MED-1: pass aiModel for math-v2 check
         );
         tryUpdate('scientific_collection_eligible', patchEligible);
       }
