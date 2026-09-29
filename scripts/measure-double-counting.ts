@@ -77,18 +77,28 @@ function runWithoutFormAndMomentum(
   fs.writeFileSync(tmpInput, JSON.stringify(input));
 
   try {
-    const helperScript = path.resolve(path.join(__dirname, 'backtest-ablation-helper.ts'));
     const envObj: Record<string, string> = {
       ...process.env as Record<string, string>,
       VIRTUMATCH_COEF_MOMENTUM_SCALE: '100000',
     };
 
-    execSync(`npx tsx ${helperScript} ${tmpInput} ${tmpOutput}`, {
-      cwd: path.resolve(__dirname, '..'),
+    // Phase 5.3.22.1 FIX: use local tsx binary + process.cwd() (not __dirname)
+    const repoRoot = process.cwd();
+    const helperScript = path.join(repoRoot, 'scripts', 'backtest-ablation-helper.ts');
+    const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const tsxCmd = fs.existsSync(tsxBin) ? tsxBin : 'npx tsx';
+
+    execSync(`${tsxCmd} ${helperScript} ${tmpInput} ${tmpOutput}`, {
+      cwd: repoRoot,
       timeout: 30000,
       stdio: 'pipe',
       env: envObj,
+      encoding: 'utf-8' as const,
     });
+
+    if (!fs.existsSync(tmpOutput)) {
+      throw new Error('WITHOUT_FORM_AND_MOMENTUM: child process completed but output file not created');
+    }
 
     const result = JSON.parse(fs.readFileSync(tmpOutput, 'utf8'));
     const prediction: '1' | 'X' | '2' = result.predicted as '1' | 'X' | '2';
@@ -105,21 +115,12 @@ function runWithoutFormAndMomentum(
       warnings: recon.warnings,
     };
   } catch (err) {
-    // Fallback to in-process (without the override)
-    const result = analyzeMatch(recon.match, undefined, recon.teamStats, filteredResults);
-    const prediction: '1' | 'X' | '2' = result.winner1X2.startsWith('1') ? '1'
-      : result.winner1X2.startsWith('2') ? '2' : 'X';
-    return {
-      variant: 'WITHOUT_FORM_AND_MOMENTUM' as AblationVariant,
-      probHome: result.probHome,
-      probDraw: result.probDraw,
-      probAway: result.probAway,
-      prediction,
-      confidence: result.aiConfidence,
-      scoreHome: result.scoreHome,
-      scoreAway: result.scoreAway,
-      warnings: [...recon.warnings, 'WITHOUT_FORM_AND_MOMENTUM: child process failed, used in-process fallback (momentum NOT disabled)'],
-    };
+    // Phase 5.3.22.1 FIX: NO SILENT FALLBACK — throw loudly
+    throw new Error(
+      `ABLATION_EXECUTION_FAILED: WITHOUT_FORM_AND_MOMENTUM child process failed.\n` +
+      `Error: ${(err as Error).message}\n` +
+      `NO FALLBACK — env override ablation cannot fall back to in-process execution.`
+    );
   } finally {
     try { fs.unlinkSync(tmpInput); } catch {}
     try { fs.unlinkSync(tmpOutput); } catch {}

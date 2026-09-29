@@ -313,15 +313,29 @@ function runAblationViaChildProcess(
   fs.writeFileSync(tmpInput, JSON.stringify(input));
 
   try {
-    const helperScript = path.resolve(path.join(__dirname, 'backtest-ablation-helper.ts'));
     const envObj: Record<string, string> = { ...process.env as Record<string, string>, ...envOverrides };
 
-    execSync(`npx tsx ${helperScript} ${tmpInput} ${tmpOutput}`, {
-      cwd: path.resolve(__dirname, '..'),
+    // Phase 5.3.22.1 FIX: use local node_modules/.bin/tsx directly instead of
+    // `npx tsx` (which fails when tsx is not in system PATH — causing silent
+    // fallback to in-process execution WITHOUT the env override).
+    // Also fix: use process.cwd() instead of __dirname (not available in ESM context
+    // when running via `npx tsx scripts/measure-double-counting.ts`)
+    const repoRoot = process.cwd();
+    const helperScript = path.join(repoRoot, 'scripts', 'backtest-ablation-helper.ts');
+    const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const tsxCmd = fs.existsSync(tsxBin) ? tsxBin : 'npx tsx';
+
+    const execResult = execSync(`${tsxCmd} ${helperScript} ${tmpInput} ${tmpOutput}`, {
+      cwd: repoRoot,
       timeout: 30000,
       stdio: 'pipe',
       env: envObj,
+      encoding: 'utf-8' as const,
     });
+
+    if (!fs.existsSync(tmpOutput)) {
+      throw new Error(`Child process completed but output file not created. stdout: ${execResult?.substring(0, 500)}`);
+    }
 
     const result = JSON.parse(fs.readFileSync(tmpOutput, 'utf8'));
     const prediction: '1' | 'X' | '2' = result.predicted as '1' | 'X' | '2';
@@ -338,22 +352,18 @@ function runAblationViaChildProcess(
       warnings,
     };
   } catch (err) {
-    warnings.push(`${variant}: child process failed: ${(err as Error).message}`);
-    // Fallback to in-process (without the override — momentum will still be active)
-    const result = analyzeMatch(recon.match, undefined, recon.teamStats, recon.historicalResults);
-    const prediction: '1' | 'X' | '2' = result.winner1X2.startsWith('1') ? '1'
-      : result.winner1X2.startsWith('2') ? '2' : 'X';
-    return {
-      variant,
-      probHome: result.probHome,
-      probDraw: result.probDraw,
-      probAway: result.probAway,
-      prediction,
-      confidence: result.aiConfidence,
-      scoreHome: result.scoreHome,
-      scoreAway: result.scoreAway,
-      warnings,
-    };
+    // Phase 5.3.22.1 FIX: NO SILENT FALLBACK for env-override ablations.
+    // A fallback that doesn't apply the env override would produce a result
+    // identical to FULL_MODEL — making the ablation meaningless. FAIL loudly.
+    const errMsg = (err as Error).message || String(err);
+    const stderr = (err as any).stderr || '';
+    throw new Error(
+      `ABLATION_EXECUTION_FAILED: ${variant} child process failed.\n` +
+      `Error: ${errMsg}\n` +
+      `Stderr: ${typeof stderr === 'string' ? stderr.substring(0, 500) : ''}\n` +
+      `Env overrides: ${JSON.stringify(envOverrides)}\n` +
+      `NO FALLBACK — env override ablation cannot fall back to in-process execution.`
+    );
   } finally {
     try { fs.unlinkSync(tmpInput); } catch {}
     try { fs.unlinkSync(tmpOutput); } catch {}
