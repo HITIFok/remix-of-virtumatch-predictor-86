@@ -308,11 +308,16 @@ export function usePredictions() {
 
       const savedData = await res.json();
 
-      await loadPredictions() // Skip auto-verify after save (just saved)
-
-      // Phase 5.3.1 FIX: API returns { prediction: ... } not { row: ... }
-      // Support both shapes for backward compatibility
+      // Phase 5.3.28: Remove redundant loadPredictions() call — the POST handler
+      // already returns the saved prediction (predictions.js L454 returns
+      // { success: true, prediction: mapToCamelCase(saved) }). Update local
+      // state directly from the POST response instead of re-fetching ALL
+      // predictions via GET /api/predictions (which does SELECT * LIMIT 200).
+      // This eliminates 1 full Neon SELECT per save.
       const predictionData = savedData?.prediction || savedData?.row || savedData;
+      if (predictionData) {
+        setPredictions(prev => [predictionData as Prediction, ...prev]);
+      }
       console.log(`[savePrediction] POST ${res.status}: id=${predictionData?.id}, has_snapshot=${!!predictionData?.featureSnapshot}, has_ctx_hash=${!!predictionData?.aiContextHash}`);
       return predictionData as Prediction
     } catch (err: any) {
@@ -322,7 +327,7 @@ export function usePredictions() {
       }
       throw err
     }
-  }, [loadPredictions])
+  }, [])
 
   // Supprimer une prédiction par ID
   const deletePrediction = useCallback(async (id: string) => {
