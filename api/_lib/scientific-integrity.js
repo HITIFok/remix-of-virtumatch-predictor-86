@@ -208,19 +208,45 @@ function computeTFeature(featureSnapshot, tPrediction) {
  * A client sending ai_response_hash with ai_model='math-v2' is a fabrication
  * attempt — the hash is ignored and eligibility is false.
  *
+ * Phase 5.3.17.5 — CRITICAL HARDENING (audit mandate §6):
+ *   Added aiCallStatus parameter. When set to PARSE_FAILED, eligibility is
+ *   FORCED to false EVEN IF ai_response_hash is non-null. The hash proves
+ *   only that a response was received, NOT that the prediction is exploitable.
+ *   PARSE_FAILED means parsing failed → not a complete scientific observation.
+ *
+ *   Allowed values (from migration 011):
+ *     NOT_CALLED       → false (no Groq call)
+ *     HTTP_ERROR       → false (Groq call failed)
+ *     TIMEOUT          → false (Groq call timed out)
+ *     EMPTY_RESPONSE   → false (Groq returned empty content)
+ *     PARSE_FAILED     → false (content received but parse failed — hash NON-NULL but not exploitable)
+ *     PARSE_OK         → continue with the other 5 conditions
+ *     null (legacy)   → continue with the other 5 conditions (backward-compat)
+ *
  * @param {object|null} featureSnapshot
  * @param {number} completenessScore
  * @param {number} temporalSafetyScore
  * @param {string|null} tFeature
  * @param {string|null} aiResponseHash
  * @param {string|null} [aiModel] - AI model name (for math-v2 check)
+ * @param {string|null} [aiCallStatus] - Phase 5.3.17.5: PARSE_FAILED → false
  * @returns {boolean}
  */
-function computeScientificEligible(featureSnapshot, completenessScore, temporalSafetyScore, tFeature, aiResponseHash, aiModel) {
+function computeScientificEligible(featureSnapshot, completenessScore, temporalSafetyScore, tFeature, aiResponseHash, aiModel, aiCallStatus) {
   // F-MED-1 fix: math-v2 fallback never has a real LLM response.
   // Even if the client sends a fake ai_response_hash with ai_model='math-v2',
   // eligibility must be false.
   if (aiModel === 'math-v2') return false;
+
+  // Phase 5.3.17.5 — ai_call_status gate (audit mandate §6 + §15)
+  // Any non-PARSE_OK status forces eligibility=false. PARSE_FAILED is the
+  // critical case: hash is NON-NULL but parsing failed, so the prediction
+  // is NOT a complete scientific observation of the LLM pipeline.
+  // null (legacy rows, pre-migration 011) → fall through to the original
+  // checks below for backward compatibility (audit mandate §7 + §22).
+  if (aiCallStatus !== null && aiCallStatus !== undefined && aiCallStatus !== 'PARSE_OK') {
+    return false;
+  }
 
   return !!featureSnapshot &&
     completenessScore >= 0.5 &&
@@ -353,14 +379,19 @@ function validateStoredSnapshot(featureSnapshot, tPrediction) {
  * This preserves the NULL→value enrichment path for PATCH — tryUpdate()
  * allows NULL→value but blocks non-null→different-value.
  *
+ * Phase 5.3.17.5: Added aiCallStatus parameter, passed through to
+ * computeScientificEligible. PARSE_FAILED forces eligible=false even if
+ * ai_response_hash is non-null.
+ *
  * @param {object} params
  * @param {object|null} params.featureSnapshot - The stored snapshot
  * @param {string} params.tPrediction - ISO 8601 timestamp (server time)
  * @param {string|null} params.aiResponseHash - From client body (enrichment flow)
  * @param {string|null} [params.aiModel] - AI model name (for math-v2 check)
+ * @param {string|null} [params.aiCallStatus] - Phase 5.3.17.5: PARSE_FAILED → false
  * @returns {object} All recomputed scientific fields
  */
-function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHash, aiModel }) {
+function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHash, aiModel, aiCallStatus }) {
   // F-CRIT-1 fix: When feature_snapshot is NULL, return NULL for ALL derived fields.
   // This preserves the NULL→value enrichment path for PATCH.
   if (!featureSnapshot || typeof featureSnapshot !== 'object') {
@@ -386,6 +417,7 @@ function recomputeScientificFields({ featureSnapshot, tPrediction, aiResponseHas
     tFeature,
     aiResponseHash,
     aiModel,  // F-MED-1: pass aiModel for math-v2 check
+    aiCallStatus,  // Phase 5.3.17.5: pass aiCallStatus for PARSE_FAILED gate
   );
 
   return {

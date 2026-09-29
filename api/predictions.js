@@ -115,6 +115,19 @@ function validatePrediction(body) {
       ai_prompt_version: body.ai_prompt_version ? String(body.ai_prompt_version).substring(0, 20) : null,
       ai_model: body.ai_model ? String(body.ai_model).substring(0, 50) : null,
       ai_trace: body.ai_trace || null,
+      // Phase 5.3.17.5: AI call status + response length
+      // ai_call_status: enum { NOT_CALLED, HTTP_ERROR, TIMEOUT, EMPTY_RESPONSE,
+      //   PARSE_FAILED, PARSE_OK }. NULL for legacy rows (LEGACY_UNKNOWN).
+      // Validation: only accept the canonical enum values; reject arbitrary strings.
+      ai_call_status: body.ai_call_status
+        ? (['NOT_CALLED', 'HTTP_ERROR', 'TIMEOUT', 'EMPTY_RESPONSE', 'PARSE_FAILED', 'PARSE_OK']
+           .includes(String(body.ai_call_status)) ? String(body.ai_call_status) : null)
+        : null,
+      // ai_response_length: integer character count of the raw LLM response.
+      // NULL when no response was received (NOT_CALLED/HTTP_ERROR/TIMEOUT/EMPTY_RESPONSE).
+      ai_response_length: (typeof body.ai_response_length === 'number' && Number.isInteger(body.ai_response_length) && body.ai_response_length >= 0)
+        ? body.ai_response_length
+        : (body.ai_response_length != null ? parseInt(body.ai_response_length, 10) || null : null),
       // Phase 5.3.14 H1/H2/C2 fix: These fields are NO LONGER trusted from client.
       // They are recomputed server-side after validatePrediction() returns.
       // Client-supplied values are intentionally ignored.
@@ -197,6 +210,9 @@ function mapToCamelCase(row) {
     aiPromptVersion: row.ai_prompt_version,
     aiModel: row.ai_model,
     aiTrace: row.ai_trace,
+    // Phase 5.3.17.5: AI call status + response length
+    aiCallStatus: row.ai_call_status,
+    aiResponseLength: row.ai_response_length,
     // Phase 5.3: Scientific Collection fields
     completenessScore: row.completeness_score,
     temporalSafetyScore: row.temporal_safety_score,
@@ -365,11 +381,13 @@ export default async function handler(req, res) {
       // Phase 5.3.14: Recompute ALL derived scientific fields server-side.
       // This replaces the old inline provenance computation (C1 fix) and
       // the trusted client values for completeness/temporal/eligibility (H1/H2/C2 fixes).
+      // Phase 5.3.17.5: also pass aiCallStatus so PARSE_FAILED forces eligible=FALSE.
       const scientificFields = recomputeScientificFields({
         featureSnapshot: d.feature_snapshot,
         tPrediction: tPrediction,
         aiResponseHash: d.ai_response_hash,
         aiModel: d.ai_model,  // F-MED-1: pass aiModel for math-v2 check
+        aiCallStatus: d.ai_call_status,  // Phase 5.3.17.5: PARSE_FAILED → false
       });
 
       // Override the validated data with server-computed values
@@ -419,6 +437,7 @@ export default async function handler(req, res) {
           timestamp_provenance, ai_provenance_risk,
           ai_context_hash, ai_input_hash, ai_prompt_hash, ai_response_hash,
           ai_prompt_version, ai_model, ai_trace,
+          ai_call_status, ai_response_length,
           scientific_collection_eligible, version_freeze
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
@@ -443,6 +462,7 @@ export default async function handler(req, res) {
           ${d.completeness_score}, ${d.temporal_safety_score}, ${d.temporal_safety_reason}, ${d.timestamp_provenance ? sql.json(d.timestamp_provenance) : null}, ${d.ai_provenance_risk},
           ${d.ai_context_hash}, ${d.ai_input_hash}, ${d.ai_prompt_hash}, ${d.ai_response_hash},
           ${d.ai_prompt_version}, ${d.ai_model}, ${d.ai_trace ? sql.json(d.ai_trace) : null},
+          ${d.ai_call_status}, ${d.ai_response_length},
           ${d.scientific_collection_eligible}, ${d.version_freeze ? sql.json(d.version_freeze) : null}
         )
         RETURNING *
@@ -600,6 +620,7 @@ export default async function handler(req, res) {
           calibration_version, dataset_version,
           ai_context_hash, ai_input_hash, ai_prompt_hash, ai_response_hash,
           ai_prompt_version, ai_model, ai_trace,
+          ai_call_status, ai_response_length,
           completeness_score, temporal_safety_score,
           temporal_safety_reason, timestamp_provenance, ai_provenance_risk,
           scientific_collection_eligible, version_freeze,
@@ -659,6 +680,28 @@ export default async function handler(req, res) {
       tryUpdate('ai_response_hash', body.ai_response_hash ? String(body.ai_response_hash).substring(0, 80) : undefined);
       tryUpdate('ai_prompt_version', body.ai_prompt_version ? String(body.ai_prompt_version).substring(0, 20) : undefined);
       tryUpdate('ai_model', body.ai_model ? String(body.ai_model).substring(0, 50) : undefined);
+      // Phase 5.3.17.5: ai_call_status + ai_response_length are accepted in PATCH
+      // and follow the SAME NULL→value immutability rule as the other AI fields.
+      // Validation: only canonical enum values accepted.
+      if (body.ai_call_status) {
+        const candidate = String(body.ai_call_status);
+        if (['NOT_CALLED', 'HTTP_ERROR', 'TIMEOUT', 'EMPTY_RESPONSE', 'PARSE_FAILED', 'PARSE_OK'].includes(candidate)) {
+          tryUpdate('ai_call_status', candidate);
+        } else {
+          blockedUpdates.push({
+            field: 'ai_call_status',
+            reason: `INVALID_ENUM_VALUE — '${candidate}' is not a recognized ai_call_status`,
+          });
+        }
+      }
+      if (body.ai_response_length != null) {
+        const len = typeof body.ai_response_length === 'number'
+          ? body.ai_response_length
+          : parseInt(body.ai_response_length, 10);
+        if (Number.isInteger(len) && len >= 0) {
+          tryUpdate('ai_response_length', len);
+        }
+      }
       // AI trace (JSONB)
       if (body.ai_trace && typeof body.ai_trace === 'object') {
         tryUpdate('ai_trace', sql.json(body.ai_trace));
@@ -728,6 +771,8 @@ export default async function handler(req, res) {
         // Only set if current is NULL (tryUpdate enforces this)
         tryUpdate('provenance_status', patchProvenance);
         // Compute scientific_collection_eligible from all conditions
+        // Phase 5.3.17.5: pass ai_call_status so PARSE_FAILED forces eligible=FALSE
+        // even if ai_response_hash is non-null (audit mandate §6).
         const patchEligible = computeScientificEligible(
           body.feature_snapshot,
           patchCompleteness,
@@ -735,6 +780,7 @@ export default async function handler(req, res) {
           patchTFeature,
           body.ai_response_hash || null,
           body.ai_model || current.ai_model,  // F-MED-1: pass aiModel for math-v2 check
+          body.ai_call_status || current.ai_call_status || null,  // Phase 5.3.17.5
         );
         tryUpdate('scientific_collection_eligible', patchEligible);
       }

@@ -379,9 +379,29 @@ function mathPredict(m) {
 
 // ─── GROQ PROVIDER ────────────────────────────────────────────────────────
 
+// ─── AI CALL STATUS ENUM (Phase 5.3.17.5) ────────────────────────────────
+//   NOT_CALLED       — Groq was never invoked (no key, budget, deadline)
+//   HTTP_ERROR       — Groq returned non-2xx (4xx/5xx, except 404 → fallback)
+//   TIMEOUT          — Promise.race or fetch timeout fired
+//   EMPTY_RESPONSE   — Groq 200 OK but content === ''
+//   PARSE_FAILED     — content non-empty but parsePredictions() could not extract
+//   PARSE_OK         — content non-empty and parsed successfully
+// Legacy NULL (pre-migration 011 rows) is interpreted as LEGACY_UNKNOWN — NOT
+// automatically coerced to NOT_CALLED (audit mandate §7 + §22).
+const AI_CALL_STATUS = {
+  NOT_CALLED: 'NOT_CALLED',
+  HTTP_ERROR: 'HTTP_ERROR',
+  TIMEOUT: 'TIMEOUT',
+  EMPTY_RESPONSE: 'EMPTY_RESPONSE',
+  PARSE_FAILED: 'PARSE_FAILED',
+  PARSE_OK: 'PARSE_OK',
+};
+
 async function callGroqSingle(apiKey, model, userPrompt) {
   const url = 'https://api.groq.com/openai/v1/chat/completions';
   console.log(`[analyze-match] Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
+
+  const requestStart = Date.now();
 
   try {
     const response = await fetch(url, {
@@ -402,22 +422,60 @@ async function callGroqSingle(apiKey, model, userPrompt) {
       }),
     });
 
+    const response_time_ms = Date.now() - requestStart;
+
     if (response.ok) {
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || '';
       const actualTokens = data.usage?.total_tokens || 0;
-      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok)`);
-      return content;
+      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok, ${response_time_ms}ms, len=${content.length})`);
+
+      // Phase 5.3.17.5: structured return so caller can distinguish
+      // EMPTY_RESPONSE from PARSE_FAILED vs PARSE_OK
+      if (content === '') {
+        return {
+          status: AI_CALL_STATUS.EMPTY_RESPONSE,
+          content: null,                 // empty content → hash will be NULL
+          http_status: 200,
+          error_message: null,
+          response_time_ms,
+        };
+      }
+      return {
+        status: AI_CALL_STATUS.PARSE_OK,   // tentatively OK; caller will downgrade to PARSE_FAILED if parse fails
+        content,
+        http_status: 200,
+        error_message: null,
+        response_time_ms,
+      };
     }
 
     const errorBody = await response.text();
-    const status = response.status;
-    console.log(`[analyze-match] Groq ${status}: ${errorBody.substring(0, 150)}`);
-    // FIX 5.3.2: Return structured error so caller can try fallback model
-    return { __error: true, status, message: errorBody.substring(0, 200) };
+    const http_status = response.status;
+    console.log(`[analyze-match] Groq ${http_status}: ${errorBody.substring(0, 150)}`);
+
+    // FIX 5.3.2 (preserved): 404 triggers model fallback rather than terminal failure.
+    // The caller checks `http_status === 404` to decide whether to try the next model.
+    return {
+      status: AI_CALL_STATUS.HTTP_ERROR,
+      content: null,                 // HTTP error → no usable content → hash NULL
+      http_status,
+      error_message: errorBody.substring(0, 200),
+      response_time_ms,
+    };
   } catch (err) {
-    console.log(`[analyze-match] Groq error: ${err.message}`);
-    return { __error: true, status: 0, message: err.message };
+    // Network failure / abort / timeout — distinguish via err.name
+    const response_time_ms = Date.now() - requestStart;
+    const isTimeout = err.name === 'AbortError' || err.name === 'TimeoutError';
+    const status = isTimeout ? AI_CALL_STATUS.TIMEOUT : AI_CALL_STATUS.HTTP_ERROR;
+    console.log(`[analyze-match] Groq ${status}: ${err.message}`);
+    return {
+      status,
+      content: null,
+      http_status: 0,
+      error_message: err.message,
+      response_time_ms,
+    };
   }
 }
 
@@ -469,9 +527,63 @@ const DEADLINE_MS = 5000;
 // For each match, compute the canonical AI context, snapshot, and hashes.
 // This data is returned alongside predictions so the frontend can
 // forward it to api/predictions for persistence.
-function computeAITraces(matches, aiResponseText, groqModel) {
+//
+// Phase 5.3.17.5 — Signature change:
+//   OLD: computeAITraces(matches, aiResponseText, groqModel)
+//   NEW: computeAITraces(matches, aiCallInfo, groqModel)
+// where aiCallInfo is an object: {
+//   status: AI_CALL_STATUS.*,
+//   content: string | null,           // non-null iff status is PARSE_OK or PARSE_FAILED
+//   http_status: number | null,
+//   error_message: string | null,
+//   response_time_ms: number,
+// }
+//
+// CRITICAL GUARANTEE (audit mandate §5 + §12):
+//   The response hash is computed from `content` INDEPENDENTLY of parse success.
+//   If `content` is a non-empty string, `ai_response_hash` is NON-NULL — even
+//   if the caller has not yet called parsePredictions() or if parsing failed.
+//
+//   The `ai_call_status` is taken from aiCallInfo.status and is NOT mutated here.
+//   The caller (analyzeFast) is responsible for downgrading PARSE_OK → PARSE_FAILED
+//   when parsePredictions() fails, BEFORE calling computeAITraces.
+//
+// Backward compatibility:
+//   For legacy callers that still pass a string (or null) as the 2nd argument,
+//   we accept that form and wrap it: string → {status:PARSE_OK, content:string};
+//   null/undefined → {status:NOT_CALLED, content:null}. This preserves the
+//   existing internal API surface for any code paths not yet migrated.
+function computeAITraces(matches, aiCallInfoOrLegacyText, groqModel) {
+  // Normalize the 2nd argument into a structured aiCallInfo object.
+  let aiCallInfo;
+  if (aiCallInfoOrLegacyText === null || aiCallInfoOrLegacyText === undefined) {
+    aiCallInfo = { status: AI_CALL_STATUS.NOT_CALLED, content: null, http_status: null, error_message: null, response_time_ms: 0 };
+  } else if (typeof aiCallInfoOrLegacyText === 'string') {
+    // Legacy string form: treat as non-empty content with PARSE_OK status
+    // (caller would have downgraded already if parsing had failed).
+    aiCallInfo = aiCallInfoOrLegacyText === ''
+      ? { status: AI_CALL_STATUS.EMPTY_RESPONSE, content: null, http_status: 200, error_message: null, response_time_ms: 0 }
+      : { status: AI_CALL_STATUS.PARSE_OK, content: aiCallInfoOrLegacyText, http_status: 200, error_message: null, response_time_ms: 0 };
+  } else if (typeof aiCallInfoOrLegacyText === 'object') {
+    aiCallInfo = aiCallInfoOrLegacyText;
+  } else {
+    aiCallInfo = { status: AI_CALL_STATUS.NOT_CALLED, content: null, http_status: null, error_message: null, response_time_ms: 0 };
+  }
+
   const traces = [];
   const AI_PROMPT_VERSION = '7.0';
+
+  // ─── Phase 5.3.17.5 — INDEPENDENT RESPONSE HASH COMPUTATION ───────────
+  // The hash is computed ONCE here, BEFORE the per-match loop, because the
+  // raw LLM response is shared across all matches in a batch. If `content`
+  // is non-empty, the hash is NON-NULL regardless of any per-match parse
+  // outcome. This is the key fix that closes the B2c/B6 bug identified in
+  // Phase 5.3.17.4.
+  const aiResponseText = aiCallInfo.content;
+  const aiResponseHash = aiResponseText ? computeAIResponseHash(aiResponseText) : null;
+  const aiResponseLength = aiResponseText ? aiResponseText.length : null;
+  const aiResponseReceivedAt = aiResponseText ? new Date().toISOString() : null;
+  const aiCallStatus = aiCallInfo.status || AI_CALL_STATUS.NOT_CALLED;
 
   for (let i = 0; i < matches.length; i++) {
     const match = { ...matches[i], matchIndex: i + 1 };
@@ -483,9 +595,6 @@ function computeAITraces(matches, aiResponseText, groqModel) {
     // Prompt hash: system prompt + per-match user prompt
     const userPrompt = buildUserPromptFromMatches([match]);
     const aiPromptHash = computeAIPromptHash(SYSTEM_PROMPT, userPrompt);
-
-    // Response hash: full AI response (shared across all matches in batch)
-    const aiResponseHash = aiResponseText ? computeAIResponseHash(aiResponseText) : null;
 
     // Build feature_snapshot for persistence
     const featureSnapshot = {
@@ -601,22 +710,27 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       aiProvenanceRisk = 'PROMPT_INTEGRATES_ODDS';
     }
 
-    // Phase 9 fix (forensic audit BUG-11):
+    // Phase 9 fix (forensic audit BUG-11) + Phase 5.3.17.5 hardening:
     // A prediction can only be scientific_collection_eligible = true if ALL
     // of the following hold:
     //   1. feature_snapshot is present
     //   2. completeness_score >= 0.5 (sufficient data)
     //   3. temporal_safety_score >= 1.0 (T_feature verified)
     //   4. t_feature is non-null (real source timestamps exist)
-    //   5. AI was actually used (provider != 'math-v2') — a math fallback is
-    //      NOT a complete observation of the LLM pipeline
-    //   6. ai_response_hash is non-null (real LLM response was received)
+    //   5. ai_call_status === PARSE_OK (a real LLM response was received AND parsed)
+    //   6. ai_response_hash is non-null (cryptographic proof of the response content)
+    //
+    // CRITICAL (audit mandate §6):
+    //   PARSE_FAILED + ai_response_hash != NULL → scientific_eligible = FALSE
+    //   The hash proves only that a response was received, NOT that the
+    //   prediction is exploitable. PARSE_FAILED means parsing failed, so
+    //   the prediction is not a complete scientific observation of the LLM.
     //
     // A math-v2 fallback prediction CANNOT be eligible because it has no
     // real AI response to audit. The audit mandate §9: "Une prédiction
     // math-v2 ne doit jamais être considérée comme une observation complète
     // du pipeline LLM."
-    const aiActuallyUsed = aiResponseHash !== null && aiResponseText !== null;
+    const aiActuallyUsed = aiCallStatus === AI_CALL_STATUS.PARSE_OK && aiResponseHash !== null;
     const scientificEligible =
       !!featureSnapshot &&
       completenessScore >= 0.5 &&
@@ -666,6 +780,15 @@ function computeAITraces(matches, aiResponseText, groqModel) {
       ai_response_hash: aiResponseHash,
       ai_prompt_version: AI_PROMPT_VERSION,
       ai_model: groqModel || 'math-v2',
+      // ─── Phase 5.3.17.5 — NEW TRACE FIELDS ───────────────────────────
+      // ai_call_status: the canonical status of the AI call (NOT_CALLED /
+      //   HTTP_ERROR / TIMEOUT / EMPTY_RESPONSE / PARSE_FAILED / PARSE_OK).
+      //   Legacy NULL (pre-migration 011 rows) is interpreted as LEGACY_UNKNOWN.
+      ai_call_status: aiCallStatus,
+      // ai_response_length: character count of the raw LLM response. NULL
+      //   when no response was received (NOT_CALLED/HTTP_ERROR/TIMEOUT/EMPTY_RESPONSE).
+      //   NON-NULL when a response was received (PARSE_OK/PARSE_FAILED).
+      ai_response_length: aiResponseLength,
       ai_trace: {
         context: ctx,
         snapshot,
@@ -674,10 +797,20 @@ function computeAITraces(matches, aiResponseText, groqModel) {
           ai_input_hash: aiInputHash,
           ai_prompt_hash: aiPromptHash,
           ai_response_hash: aiResponseHash,
+          // Phase 5.3.17.5: persist ai_call_status in ai_trace.hashes for
+          // cross-field consistency verification (audit mandate §17 + §11).
+          ai_call_status: aiCallStatus,
         },
         prompt_version: AI_PROMPT_VERSION,
         model: groqModel || 'math-v2',
         timestamp: tPrediction,
+        // Phase 5.3.17.5: per-call diagnostic fields (audit mandate §17).
+        // ai_response_length is duplicated here for in-trace readability.
+        // ai_response_received_at is the moment we received the LLM response
+        // (NULL if no response was received). This is NOT a new SQL column —
+        // it lives only inside the ai_trace JSONB.
+        ai_response_length: aiResponseLength,
+        ai_response_received_at: aiResponseReceivedAt,
       },
       completeness_score: completenessScore,
       temporal_safety_score: temporalSafetyScore,
@@ -696,49 +829,98 @@ function computeAITraces(matches, aiResponseText, groqModel) {
 async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
   const deadline = Date.now() + deadlineMs;
 
-  // Always compute AI traces (even for math fallback)
-  const aiTraces = computeAITraces(matches, null, groqModel);
+  // ─── Phase 5.3.17.5 — Pre-compute traces with NOT_CALLED status ──────
+  // Used as the initial baseline for ALL early-return branches (B1, B3, B4)
+  // where Groq is never called or the call is short-circuited before invocation.
+  // For branches where Groq IS called but fails, we recompute traces with the
+  // appropriate failure status (HTTP_ERROR / TIMEOUT / EMPTY_RESPONSE /
+  // PARSE_FAILED) BEFORE returning, so the persisted trace reflects reality.
+  const notCalledCallInfo = {
+    status: AI_CALL_STATUS.NOT_CALLED,
+    content: null,
+    http_status: null,
+    error_message: null,
+    response_time_ms: 0,
+  };
+  const aiTracesNotCalled = computeAITraces(matches, notCalledCallInfo, groqModel);
 
+  // ─── Branch B1: no GROQ_API_KEY — Groq never called ──────────────────
   if (!groqKey) {
     console.log('[analyze-match] No GROQ_API_KEY -> instant math v2.0');
-    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTracesNotCalled };
   }
 
-  // For 1 match: try Groq directly
+  // ─── Single-match path (matches.length === 1) ────────────────────────
   if (matches.length === 1) {
     const prompt = buildUserPrompt(matches);
     // FIX 5.3.2: Model fallback chain — try primary, then fallback on 404
     const FALLBACK_MODELS = ['qwen/qwen3.8-27b', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
     const modelsToTry = [groqModel, ...FALLBACK_MODELS.filter(m => m !== groqModel)];
-    let content = null;
-    let usedModel = groqModel;
+    let lastCallInfo = null;       // structured Groq result from the LAST attempt
+    let lastUsedModel = groqModel;
+    let content = null;            // non-null only if a 200 OK with non-empty content was received
+    let parsedPreds = null;        // result of parsePredictions(content) — null until parsing attempted
+
     for (const model of modelsToTry) {
-      const result = await callGroqSingle(groqKey, model, prompt);
-      if (result && !result.__error) {
-        content = result;
-        usedModel = model;
-        break;
+      const callResult = await callGroqSingle(groqKey, model, prompt);
+      // callResult is now a structured object: { status, content, http_status, error_message, response_time_ms }
+
+      if (callResult.status === AI_CALL_STATUS.PARSE_OK) {
+        // 200 OK with non-empty content — try to parse
+        const preds = parsePredictions(callResult.content);
+        if (preds.length === 1) {
+          // SUCCESS path — Groq returned a usable prediction
+          console.log(`[analyze-match] Single match via Groq (model: ${model})`);
+          const successCallInfo = { ...callResult, status: AI_CALL_STATUS.PARSE_OK };
+          const tracesWithResponse = computeAITraces(matches, successCallInfo, model);
+          return { predictions: preds, provider: 'groq-v6', ai_traces: tracesWithResponse };
+        }
+        // Content was non-empty but parsing returned 0 or 2+ items → PARSE_FAILED
+        // Per audit mandate §5: the response hash MUST still be preserved.
+        lastCallInfo = { ...callResult, status: AI_CALL_STATUS.PARSE_FAILED };
+        lastUsedModel = model;
+        content = callResult.content;
+        parsedPreds = preds;
+        console.log(`[analyze-match] Model ${model}: content received (len=${content.length}) but parse failed (preds.length=${preds.length}). Hash preserved, falling to math-v2.`);
+        break;  // don't try more models — we got a response, parsing failed
       }
-      if (result?.__error && result.status === 404) {
+
+      if (callResult.status === AI_CALL_STATUS.EMPTY_RESPONSE) {
+        // 200 OK but empty content — try next model
+        lastCallInfo = callResult;
+        lastUsedModel = model;
+        console.log(`[analyze-match] Model ${model}: empty response, trying next...`);
+        continue;
+      }
+
+      if (callResult.status === AI_CALL_STATUS.HTTP_ERROR && callResult.http_status === 404) {
+        // 404 → try next model in fallback chain (existing 5.3.2 behavior preserved)
+        lastCallInfo = callResult;
+        lastUsedModel = model;
         console.log(`[analyze-match] Model ${model} not found (404), trying next...`);
         continue;
       }
-      // Non-404 error (rate limit, timeout, etc.) — stop trying
+
+      // HTTP_ERROR (non-404) or TIMEOUT — stop trying, preserve the call info
+      lastCallInfo = callResult;
+      lastUsedModel = model;
+      console.log(`[analyze-match] Model ${model}: ${callResult.status} (${callResult.http_status || 'n/a'}) — stopping fallback chain`);
       break;
     }
-    if (content) {
-      const preds = parsePredictions(content);
-      if (preds.length === 1) {
-        console.log(`[analyze-match] Single match via Groq (model: ${usedModel})`);
-        // Recompute traces with AI response hash
-        const tracesWithResponse = computeAITraces(matches, content, usedModel);
-        return { predictions: preds, provider: 'groq-v6', ai_traces: tracesWithResponse };
-      }
-    }
-    console.log('[analyze-match] Groq failed for single -> math v2.0');
-    return { predictions: [mathPredict(matches[0])], provider: 'math-v2', ai_traces: aiTraces };
+
+    // If we reach here: Groq was called but no successful parse happened.
+    // Determine the final aiCallInfo to persist in traces.
+    const fallbackCallInfo = lastCallInfo || notCalledCallInfo;
+    // ─── Phase 5.3.17.5 — CRITICAL FIX ──────────────────────────────────
+    // Always recompute traces with the actual call info. If `content` is
+    // non-null (PARSE_FAILED case), the trace's ai_response_hash will be
+    // NON-NULL even though parsing failed. This is the key fix.
+    const tracesWithFailure = computeAITraces(matches, fallbackCallInfo, lastUsedModel);
+    console.log('[analyze-match] Groq failed for single -> math v2.0 (trace preserved)');
+    return { predictions: [mathPredict(matches[0])], provider: 'math-v2', ai_traces: tracesWithFailure };
   }
 
+  // ─── Batch path (matches.length >= 2) ────────────────────────────────
   // For 2+ matches: try Groq if the prompt fits within token budget
   // (removed old hard limit of >3 matches — token estimate is a better gate)
   const allPrompt = buildUserPrompt(matches);
@@ -748,54 +930,104 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
 
   console.log(`[analyze-match] Est. tokens for ${matches.length} matches: ~${totalEstimate}`);
 
+  // ─── Branch B4: token budget exceeded — Groq never called ────────────
   if (totalEstimate > 5000) {
     console.log(`[analyze-match] Token estimate too high (${totalEstimate} > 5000) -> math v2.0`);
-    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTracesNotCalled };
   }
 
+  // ─── Branch B3: deadline already expired — Groq never called ─────────
   const timeLeft = deadline - Date.now();
   if (timeLeft <= 0) {
-    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
+    console.log('[analyze-match] Deadline already expired -> math v2.0');
+    return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTracesNotCalled };
   }
 
   // FIX 5.3.2: Model fallback chain for batch too
   const FALLBACK_MODELS_BATCH = ['qwen/qwen3.8-27b', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'];
   const modelsToTryBatch = [groqModel, ...FALLBACK_MODELS_BATCH.filter(m => m !== groqModel)];
-  let content = null;
-  let usedModelBatch = groqModel;
+  let lastCallInfoBatch = null;
+  let lastUsedModelBatch = groqModel;
+  let contentBatch = null;
+
   for (const model of modelsToTryBatch) {
+    // ─── Branch B5: Promise.race timeout vs callGroqSingle ─────────────
+    // If the timeout fires first, result === null (legacy sentinel).
+    // We translate that to AI_CALL_STATUS.TIMEOUT.
     const result = await Promise.race([
       callGroqSingle(groqKey, model, allPrompt),
       new Promise((resolve) => setTimeout(() => resolve(null), timeLeft)),
     ]);
-    if (result && !result?.__error) {
-      content = result;
-      usedModelBatch = model;
+
+    if (result === null) {
+      // Timeout won the race — preserve as TIMEOUT
+      lastCallInfoBatch = {
+        status: AI_CALL_STATUS.TIMEOUT,
+        content: null,
+        http_status: 0,
+        error_message: `Promise.race timeout after ${timeLeft}ms`,
+        response_time_ms: timeLeft,
+      };
+      lastUsedModelBatch = model;
+      console.log(`[analyze-match] Batch: model ${model} timed out after ${timeLeft}ms`);
       break;
     }
-    if (result?.__error && result.status === 404) {
+
+    // result is now a structured object
+    if (result.status === AI_CALL_STATUS.PARSE_OK) {
+      // 200 OK with non-empty content — try to parse
+      const preds = parsePredictions(result.content);
+      if (preds.length >= 1) {
+        // SUCCESS path — at least one prediction parsed
+        const allPredictions = [];
+        for (let i = 0; i < matches.length; i++) {
+          allPredictions.push(i < preds.length ? preds[i] : mathPredict(matches[i]));
+        }
+        const mathCount = matches.length - Math.min(preds.length, matches.length);
+        const provider = mathCount === 0 ? 'groq-v6' : mathCount === matches.length ? 'math-v2' : 'groq-v6+math-v2';
+        const successCallInfo = { ...result, status: AI_CALL_STATUS.PARSE_OK };
+        const tracesWithResponse = computeAITraces(matches, successCallInfo, model);
+        return { predictions: allPredictions, provider, ai_traces: tracesWithResponse };
+      }
+      // Content non-empty but parse returned 0 items → PARSE_FAILED
+      // Per audit mandate §5: the response hash MUST still be preserved.
+      lastCallInfoBatch = { ...result, status: AI_CALL_STATUS.PARSE_FAILED };
+      lastUsedModelBatch = model;
+      contentBatch = result.content;
+      console.log(`[analyze-match] Batch model ${model}: content received (len=${contentBatch.length}) but parse returned 0 items. Hash preserved, falling to math-v2.`);
+      break;
+    }
+
+    if (result.status === AI_CALL_STATUS.EMPTY_RESPONSE) {
+      lastCallInfoBatch = result;
+      lastUsedModelBatch = model;
+      console.log(`[analyze-match] Batch model ${model}: empty response, trying next...`);
+      continue;
+    }
+
+    if (result.status === AI_CALL_STATUS.HTTP_ERROR && result.http_status === 404) {
+      lastCallInfoBatch = result;
+      lastUsedModelBatch = model;
       console.log(`[analyze-match] Batch: Model ${model} not found (404), trying next...`);
       continue;
     }
+
+    // HTTP_ERROR (non-404) or TIMEOUT — stop trying
+    lastCallInfoBatch = result;
+    lastUsedModelBatch = model;
+    console.log(`[analyze-match] Batch model ${model}: ${result.status} — stopping fallback chain`);
     break;
   }
 
-  if (content) {
-    const preds = parsePredictions(content);
-    if (preds.length >= 1) {
-      const allPredictions = [];
-      for (let i = 0; i < matches.length; i++) {
-        allPredictions.push(i < preds.length ? preds[i] : mathPredict(matches[i]));
-      }
-      const mathCount = matches.length - Math.min(preds.length, matches.length);
-      const provider = mathCount === 0 ? 'groq-v6' : mathCount === matches.length ? 'math-v2' : 'groq-v6+math-v2';
-      const tracesWithResponse = computeAITraces(matches, content, usedModelBatch);
-      return { predictions: allPredictions, provider, ai_traces: tracesWithResponse };
-    }
-  }
-
-  console.log('[analyze-match] Groq failed/timeout -> math v2.0');
-  return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: aiTraces };
+  // ─── Phase 5.3.17.5 — Recompute traces with the actual call info ─────
+  // If lastCallInfoBatch is non-null, content might be non-null (PARSE_FAILED
+  // case) → ai_response_hash will be NON-NULL even though parsing failed.
+  // If lastCallInfoBatch is null (no model was tried — defensive case), use
+  // NOT_CALLED.
+  const fallbackCallInfoBatch = lastCallInfoBatch || notCalledCallInfo;
+  const tracesWithFailureBatch = computeAITraces(matches, fallbackCallInfoBatch, lastUsedModelBatch);
+  console.log('[analyze-match] Groq failed/timeout -> math v2.0 (trace preserved)');
+  return { predictions: matches.map(mathPredict), provider: 'math-v2', ai_traces: tracesWithFailureBatch };
 }
 
 // ─── AUTH: HMAC device token or legacy fallback ────────────────────────────
@@ -900,7 +1132,7 @@ export default async function handler(req, res) {
     const aiTraces = result.ai_traces || [];
     if (aiTraces.length > 0) {
       const t0 = aiTraces[0];
-      console.log(`[analyze-match] DIAGNOSTIC: ai_traces[0] keys=${Object.keys(t0).join(',')}, has_snapshot=${!!t0.feature_snapshot}, has_ctx_hash=${!!t0.ai_context_hash}, has_inp_hash=${!!t0.ai_input_hash}, has_res_hash=${!!t0.ai_response_hash}, eligible=${t0.scientific_collection_eligible}`);
+      console.log(`[analyze-match] DIAGNOSTIC: ai_traces[0] keys=${Object.keys(t0).join(',')}, has_snapshot=${!!t0.feature_snapshot}, has_ctx_hash=${!!t0.ai_context_hash}, has_inp_hash=${!!t0.ai_input_hash}, has_res_hash=${!!t0.ai_response_hash}, ai_call_status=${t0.ai_call_status}, res_len=${t0.ai_response_length ?? 'NULL'}, eligible=${t0.scientific_collection_eligible}`);
     } else {
       console.warn(`[analyze-match] DIAGNOSTIC: ai_traces is EMPTY! provider=${result.provider}`);
     }
