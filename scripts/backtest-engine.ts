@@ -21,12 +21,15 @@
 //   - WITHOUT_AI is identical to FULL_MODEL
 //   - The only way to test WITH AI is to re-call Groq (FORBIDDEN in backtest)
 
-import { analyzeMatch, type MatchInput, type MatchResult } from '../src/lib/prediction-engine';
+import { analyzeMatch, type MatchInput, type MatchResult, type TeamStats, type HistoricalResult } from '../src/lib/prediction-engine';
 import {
   reconstructMatchInputFromSnapshot,
   type StoredFeatureSnapshot,
   type ReconstructedInputs,
 } from '../src/lib/snapshot-reconstruction';
+import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
 // ═══════════════════════════════════════════════════════════════════
 // ABLATION TYPES
@@ -259,7 +262,106 @@ export function normalizedOddsBaseline(oddHome: number, oddDraw: number, oddAway
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// ABLATION RUNNER
+// CHILD-PROCESS RUNNER (for coefficient-override ablations)
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Run an ablation via child process with env var overrides.
+ *
+ * This is REQUIRED for ablations that need coefficient overrides
+ * (e.g. WITHOUT_MOMENTUM sets VIRTUMATCH_COEF_MOMENTUM_SCALE=100000).
+ *
+ * The child process has a fresh module cache → reads env vars at import time
+ * → properly applies the override.
+ *
+ * The parent process env is NOT contaminated — env vars are only set in the
+ * child process's env object, not in process.env of the parent.
+ */
+function runAblationViaChildProcess(
+  recon: ReconstructedInputs,
+  variant: AblationVariant,
+  warnings: string[],
+): AblationResult {
+  const cfg = ABLATION_MATRIX[variant];
+
+  // Serialize teamStats Map → array for JSON transport
+  const teamStatsArray = Array.from(recon.teamStats.entries()).map(([name, ts]) => ({ ...ts, name }));
+
+  // Build env vars based on variant
+  const envOverrides: Record<string, string> = {};
+  if (variant === 'WITHOUT_MOMENTUM') {
+    // MOMENTUM_SCALE=100000 makes momentum boost ≈ 0 (divided by 100000)
+    envOverrides['VIRTUMATCH_COEF_MOMENTUM_SCALE'] = '100000';
+  }
+
+  // Build input JSON
+  const input = {
+    home: recon.match.home,
+    away: recon.match.away,
+    league: recon.match.league,
+    oddHome: recon.match.oddHome,
+    oddDraw: recon.match.oddDraw,
+    oddAway: recon.match.oddAway,
+    teamStatsArray,
+    historicalResults: recon.historicalResults,
+  };
+
+  // Write to temp files
+  const tmpDir = '/tmp';
+  const tmpInput = path.join(tmpDir, `backtest-${variant}-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  const tmpOutput = path.join(tmpDir, `backtest-${variant}-out-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+  fs.writeFileSync(tmpInput, JSON.stringify(input));
+
+  try {
+    const helperScript = path.resolve(path.join(__dirname, 'backtest-ablation-helper.ts'));
+    const envObj: Record<string, string> = { ...process.env as Record<string, string>, ...envOverrides };
+
+    execSync(`npx tsx ${helperScript} ${tmpInput} ${tmpOutput}`, {
+      cwd: path.resolve(__dirname, '..'),
+      timeout: 30000,
+      stdio: 'pipe',
+      env: envObj,
+    });
+
+    const result = JSON.parse(fs.readFileSync(tmpOutput, 'utf8'));
+    const prediction: '1' | 'X' | '2' = result.predicted as '1' | 'X' | '2';
+
+    return {
+      variant,
+      probHome: result.probHome,
+      probDraw: result.probDraw,
+      probAway: result.probAway,
+      prediction,
+      confidence: result.confidence || 0,
+      scoreHome: result.scoreHome || 0,
+      scoreAway: result.scoreAway || 0,
+      warnings,
+    };
+  } catch (err) {
+    warnings.push(`${variant}: child process failed: ${(err as Error).message}`);
+    // Fallback to in-process (without the override — momentum will still be active)
+    const result = analyzeMatch(recon.match, undefined, recon.teamStats, recon.historicalResults);
+    const prediction: '1' | 'X' | '2' = result.winner1X2.startsWith('1') ? '1'
+      : result.winner1X2.startsWith('2') ? '2' : 'X';
+    return {
+      variant,
+      probHome: result.probHome,
+      probDraw: result.probDraw,
+      probAway: result.probAway,
+      prediction,
+      confidence: result.aiConfidence,
+      scoreHome: result.scoreHome,
+      scoreAway: result.scoreAway,
+      warnings,
+    };
+  } finally {
+    try { fs.unlinkSync(tmpInput); } catch {}
+    try { fs.unlinkSync(tmpOutput); } catch {}
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ABLATION RUNNER (in-process for non-override ablations)
 // ═══════════════════════════════════════════════════════════════════
 
 export interface AblationResult {
@@ -298,9 +400,8 @@ export function runAblation(
 
   if (cfg.requiresChildProcess) {
     // For WITHOUT_MOMENTUM etc. — child process is needed for env var override.
-    // In this in-process implementation, we CANNOT properly disable momentum.
-    // We document this as a limitation.
-    warnings.push(`${variant} requires child-process execution for coefficient override — running in-process WITHOUT the override (momentum will still be active)`);
+    // Phase 5.3.21: Now properly implemented via child-process execution.
+    return runAblationViaChildProcess(recon, variant, warnings);
   }
 
   // ── POISSON_ONLY — independent computation ──

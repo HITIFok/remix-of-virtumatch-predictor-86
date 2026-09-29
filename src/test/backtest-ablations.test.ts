@@ -155,21 +155,23 @@ describe('Phase 5.3.20 — Reproducibility', () => {
     }
   });
 
-  it('5 different snapshots produce deterministic results', () => {
+  it('5 different snapshots produce deterministic results (in-process ablations only)', () => {
+    // WITHOUT_MOMENTUM uses child-process — tested separately with longer timeout
+    const inProcessVariants = ['FULL_MODEL', 'WITHOUT_AI', 'WITHOUT_H2H', 'WITHOUT_FORM', 'WITHOUT_STATS', 'ODDS_ONLY', 'POISSON_ONLY', 'WITHOUT_ANTITRAP'] as AblationVariant[];
     for (let i = 0; i < 5; i++) {
       const snap = makeSnapshot();
       snap.odds.home = 1.5 + i * 0.5;
       snap.odds.draw = 3.0 + i * 0.2;
       snap.odds.away = 4.0 - i * 0.3;
 
-      const runA = runAllAblations(snap, 'H', 'A', 'L');
-      const runB = runAllAblations(snap, 'H', 'A', 'L');
-
-      const fullA = runA.FULL_MODEL;
-      const fullB = runB.FULL_MODEL;
-      expect(fullA.probHome).toBe(fullB.probHome);
-      expect(fullA.probDraw).toBe(fullB.probDraw);
-      expect(fullA.probAway).toBe(fullB.probAway);
+      const recon = reconstructMatchInputFromSnapshot(snap, 'H', 'A', 'L');
+      for (const v of inProcessVariants) {
+        const a = runAblation(recon, v);
+        const b = runAblation(recon, v);
+        expect(a.probHome).toBe(b.probHome);
+        expect(a.probDraw).toBe(b.probDraw);
+        expect(a.probAway).toBe(b.probAway);
+      }
     }
   });
 });
@@ -323,4 +325,52 @@ describe('Phase 5.3.20 — AI replay limitation', () => {
     expect(full.probAway).toBe(noAI.probAway);
     expect(full.prediction).toBe(noAI.prediction);
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════
+// TEST 6 — WITHOUT_MOMENTUM CHILD-PROCESS (Phase 5.3.21)
+// ═══════════════════════════════════════════════════════════════════
+
+describe('Phase 5.3.21 — WITHOUT_MOMENTUM child-process', () => {
+  it('produces valid probabilities via child-process execution', () => {
+    const snap = makeSnapshot();
+    // Ensure form data has enough entries for momentum to be active (>= 3)
+    snap.form.home = [
+      { result: 'V', opponent: 'TeamX', scoreHome: 2, scoreAway: 0 },
+      { result: 'N', opponent: 'TeamY', scoreHome: 1, scoreAway: 1 },
+      { result: 'V', opponent: 'TeamZ', scoreHome: 3, scoreAway: 1 },
+      { result: 'D', opponent: 'TeamW', scoreHome: 0, scoreAway: 2 },
+    ];
+    const recon = reconstructMatchInputFromSnapshot(snap, 'HomeTeam', 'AwayTeam', 'TestLeague');
+    const result = runAblation(recon, 'WITHOUT_MOMENTUM');
+    expect(result.probHome + result.probDraw + result.probAway).toBeCloseTo(1.0, 2);
+    expect(result.warnings.length).toBe(0);
+  }, 60000);  // 60s timeout for child-process
+
+  it('parent process env is NOT contaminated by child-process overrides', () => {
+    // Verify MOMENTUM_SCALE is not set in the parent process env
+    const beforeScale = process.env.VIRTUMATCH_COEF_MOMENTUM_SCALE;
+    const snap = makeSnapshot();
+    const recon = reconstructMatchInputFromSnapshot(snap, 'H', 'A', 'L');
+    const result = runAblation(recon, 'WITHOUT_MOMENTUM');
+    // After child process, parent env should be unchanged
+    const afterScale = process.env.VIRTUMATCH_COEF_MOMENTUM_SCALE;
+    expect(afterScale).toBe(beforeScale);
+    expect(result.warnings.length).toBe(0);
+  }, 60000);
+
+  it('WITHOUT_MOMENTUM is deterministic across 2 runs', () => {
+    const snap = makeSnapshot();
+    snap.form.home = [
+      { result: 'V', opponent: 'X', scoreHome: 2, scoreAway: 0 },
+      { result: 'N', opponent: 'Y', scoreHome: 1, scoreAway: 1 },
+      { result: 'V', opponent: 'Z', scoreHome: 3, scoreAway: 1 },
+    ];
+    const recon = reconstructMatchInputFromSnapshot(snap, 'H', 'A', 'L');
+    const a = runAblation(recon, 'WITHOUT_MOMENTUM');
+    const b = runAblation(recon, 'WITHOUT_MOMENTUM');
+    expect(a.probHome).toBe(b.probHome);
+    expect(a.probDraw).toBe(b.probDraw);
+    expect(a.probAway).toBe(b.probAway);
+  }, 120000);
 });
