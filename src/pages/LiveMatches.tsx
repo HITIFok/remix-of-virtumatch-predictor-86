@@ -367,7 +367,7 @@ export default function LiveMatches() {
     preloadedCount,
   } = useLiveMatches();
 
-  const { savePrediction, updatePredictionScientificFields } = usePredictions();
+  const { savePrediction, updatePredictionScientificFields, predictions: dbPredictions } = usePredictions();
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [batchPredicting, setBatchPredicting] = useState(false);
@@ -567,7 +567,8 @@ export default function LiveMatches() {
                 console.log(`[enhanceWithAI] Awaiting pending save for ${matchKey} before PATCH...`);
                 await pendingSave.catch(() => {}); // Don't fail if INSERT errored
               }
-              const predId = predictionIdMap.current.get(matchKey);
+              const predId = predictionIdMap.current.get(matchKey)
+                || dbPredictions.find(p => `${p.homeTeam}-${p.awayTeam}` === matchKey)?.id;
               if (predId) {
                 // UPDATE existing prediction with AI trace fields via PATCH
                 console.log(`[enhanceWithAI] PATCHING ${matchKey} → ${predId} with ${Object.keys(aiTraces[i]).length} trace fields`);

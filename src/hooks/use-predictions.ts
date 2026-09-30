@@ -407,6 +407,17 @@ export function usePredictions() {
         console.warn('[updatePredictionScientificFields] PATCH failed:', res.status, errBody?.error);
         return false;
       }
+      // Phase 5.3.31: Sync local state from PATCH response.
+      // The PATCH handler returns { success: true, prediction: mapToCamelCase(result[0]) }
+      // (predictions.js L818) — use this to update the local predictions state
+      // without a GET refetch, keeping the Phase 5.3.28 optimization intact.
+      const patchResult = await res.json();
+      const updatedPrediction = patchResult?.prediction;
+      if (updatedPrediction) {
+        setPredictions(prev => prev.map(p =>
+          p.id === predictionId ? { ...p, ...updatedPrediction } as Prediction : p
+        ));
+      }
       console.log('[updatePredictionScientificFields] PATCH success:', predictionId);
       return true;
     } catch (err) {
