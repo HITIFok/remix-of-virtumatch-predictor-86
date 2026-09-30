@@ -278,8 +278,18 @@ export function useLiveMatches() {
 
       if (apiData && apiData.matches.length > 0) {
         setMatches(apiData.matches);
-        setResults(apiData.results);
-        setRanking(apiData.ranking);
+        // Phase 5.3.43.6: Don't overwrite results/ranking with empty arrays.
+        // The live scraper may return matches but empty results/ranking
+        // (partial scrape). Previously loaded data must be preserved to
+        // maintain snapshot completeness for batch predictions.
+        // If the API returns non-empty data, use it (normal behavior).
+        // If the API returns empty data, keep the existing state.
+        if (apiData.results && apiData.results.length > 0) {
+          setResults(apiData.results);
+        }
+        if (apiData.ranking && apiData.ranking.length > 0) {
+          setRanking(apiData.ranking);
+        }
         setLastUpdate(new Date().toISOString());
         setDataSource("api");
         apiDataReceivedRef.current = true;
