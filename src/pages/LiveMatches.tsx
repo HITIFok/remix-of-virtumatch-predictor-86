@@ -746,6 +746,13 @@ export default function LiveMatches() {
         },
         getMatchLabel: (match: ScrapedMatch, index: number) =>
           `${match.home} vs ${match.away}`,
+        // Phase 5.3.43.3: Preventive 2s throttling between sequential Groq
+        // calls. Reduces rate-limit (429) risk by spacing requests.
+        // Applied AFTER match N completes, BEFORE match N+1 starts.
+        // For 10 matches: 9 × 2000ms = 18s of preventive delay.
+        // This does NOT guarantee 429 absence — it only reduces cadence.
+        // The Phase 5.3.43 Retry-After mechanism remains as reactive backup.
+        interCallDelayMs: 2000,
       });
 
       setBatchPredicting(false);
