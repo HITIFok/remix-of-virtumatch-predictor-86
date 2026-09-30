@@ -171,6 +171,7 @@ function MatchCard({
   onPredict,
   predicting,
   predictionsLoading,
+  batchPredicting,
   showScores,
   aiPrediction,
 }: {
@@ -178,6 +179,7 @@ function MatchCard({
   onPredict: (m: ScrapedMatch) => void;
   predicting: boolean;
   predictionsLoading: boolean;
+  batchPredicting: boolean;
   showScores: boolean;
   aiPrediction?: any; // v14: Groq AI prediction result (MatchResult)
 }) {
@@ -331,7 +333,8 @@ function MatchCard({
             variant={hasLeak ? "outline" : "fire"}
             className={`w-full ${hasLeak ? "border-violet-400/40 text-violet-400 hover:bg-violet-400/10" : ""}`}
             /* Phase 5.3.32: UI guard — same predicate as the handler guard in handlePredict(). */
-            disabled={shouldBlockPredict({ predicting, predictionsLoading, oddHome: match.oddHome })}
+            /* Phase 5.3.43: also blocks when batchPredicting=true (concurrency guard). */
+            disabled={shouldBlockPredict({ predicting, predictionsLoading, oddHome: match.oddHome, batchPredicting })}
             onClick={() => onPredict(match)}
           >
             {predicting ? (
@@ -632,10 +635,14 @@ export default function LiveMatches() {
     // Phase 5.3.32: Handler guard — same predicate as the UI guard in MatchCard.
     // Blocks Predict during initial dbPredictions load to prevent the race
     // where predictionIdMap + dbPredictions are both empty.
+    // Phase 5.3.43: also blocks when batchPredicting=true (concurrency guard —
+    // prevents individual Predict from running during a batch, which would
+    // cause concurrent Groq calls and rate-limit (429) issues).
     if (shouldBlockPredict({
       predicting: predictingRef.current === matchKey,
       predictionsLoading,
       oddHome: match.oddHome,
+      batchPredicting,
     })) return;
     predictingRef.current = matchKey;
     setPredictingId(matchKey);
@@ -957,6 +964,7 @@ export default function LiveMatches() {
                                 onPredict={handlePredict}
                                 predicting={predictingId === matchKey}
                                 predictionsLoading={predictionsLoading}
+                                batchPredicting={batchPredicting}
                                 showScores={showScores}
                                 aiPrediction={prediction}
                               />

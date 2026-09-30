@@ -55,10 +55,16 @@ export interface BatchPredictResult {
  *   4. outcomes array length === matches.length
  *   5. Each outcome has its OWN success/errorMessage — no cross-contamination
  *
+ * Phase 5.3.43: added optional interCallDelayMs for throttling between
+ * sequential Groq calls. This helps avoid rate-limit (429) issues when
+ * processing many matches in rapid succession. The delay is applied
+ * AFTER each match's enhanceSingle completes, BEFORE the next match starts.
+ *
  * @param matches - Array of matches to process sequentially
  * @param enhanceSingle - Function that takes ONE match and returns a Promise
  *                         (resolves on success, rejects on failure/timeout)
  * @param onProgress - Optional callback fired before each match is processed
+ * @param interCallDelayMs - Optional delay between matches (default 0 — no delay)
  * @returns { successCount, errorCount, outcomes[] } — per-match breakdown
  */
 export async function orchestrateBatchPredict<TMatch>(
@@ -67,12 +73,15 @@ export async function orchestrateBatchPredict<TMatch>(
     enhanceSingle: (match: TMatch) => Promise<void>;
     onProgress?: (progress: BatchPredictProgress) => void;
     getMatchLabel?: (match: TMatch, index: number) => string;
+    /** Phase 5.3.43: delay between matches in ms (default 0 — no delay). */
+    interCallDelayMs?: number;
   },
 ): Promise<BatchPredictResult> {
   if (matches.length === 0) {
     return { successCount: 0, errorCount: 0, outcomes: [] };
   }
 
+  const interCallDelayMs = options.interCallDelayMs ?? 0;
   let successCount = 0;
   let errorCount = 0;
   const outcomes: BatchPredictOutcome[] = [];
@@ -99,6 +108,13 @@ export async function orchestrateBatchPredict<TMatch>(
       const errorMessage = err instanceof Error ? err.message : String(err);
       outcomes.push({ index: i, matchLabel, success: false, errorMessage });
       // CRITICAL: do NOT re-throw — continue to next match (isolation)
+    }
+
+    // Phase 5.3.43: optional inter-call delay to avoid rate-limit (429).
+    // Applied AFTER each match completes, BEFORE the next match starts.
+    // Skip the delay after the LAST match (no next match to throttle before).
+    if (interCallDelayMs > 0 && i < matches.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, interCallDelayMs));
     }
   }
 

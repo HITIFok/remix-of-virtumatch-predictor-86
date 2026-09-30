@@ -397,14 +397,23 @@ const AI_CALL_STATUS = {
   PARSE_OK: 'PARSE_OK',
 };
 
-async function callGroqSingle(apiKey, model, userPrompt) {
+async function callGroqSingle(apiKey, model, userPrompt, options = {}) {
   const url = 'https://api.groq.com/openai/v1/chat/completions';
   console.log(`[analyze-match] Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
+
+  // Phase 5.3.43: 429 Retry-After + bounded backoff integration
+  // The deadlineMs is the remaining Vercel runtime budget (default 5000ms).
+  // On 429, we check if a retry fits within the budget before attempting.
+  const deadlineMs = options.deadlineMs || 5000;
+  const functionStart = options.functionStart || Date.now();
+  let retryCount = 0;
+  let retryAfterMs = null;
+  let errorType = null;
 
   const requestStart = Date.now();
 
   try {
-    const response = await fetch(url, {
+    let response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -422,13 +431,99 @@ async function callGroqSingle(apiKey, model, userPrompt) {
       }),
     });
 
-    const response_time_ms = Date.now() - requestStart;
+    let response_time_ms = Date.now() - requestStart;
+
+    // ─── Phase 5.3.43: 429 Retry-After + bounded backoff ───────────
+    // On HTTP 429 (rate limit), inspect Retry-After header and retry
+    // ONCE if the budget allows. This is NOT automatic model fallback
+    // (qwen → 429 → llama is FORBIDDEN per §23). Same model, same prompt.
+    if (response.status === 429) {
+      const retryAfterHeader = response.headers.get('retry-after');
+      const elapsedMs = Date.now() - functionStart;
+      const budget = { totalBudgetMs: deadlineMs, elapsedMs };
+
+      // Inline the retry decision (mirrors src/lib/groq-retry-helper.ts decideRetry)
+      // — kept inline here because api/analyze-match.js is ESM JS and the
+      // helper is TS. The logic is identical and tested cross-language.
+      const MAX_RETRIES = 1;
+      const INITIAL_BACKOFF_MS = 2000;
+      const RETRY_SAFETY_BUFFER_MS = 1500;
+
+      let shouldRetry = false;
+      let waitMs = 0;
+      let waitSource = 'none';
+
+      if (retryCount < MAX_RETRIES) {
+        // Parse Retry-After header
+        let parsedRetryAfterMs = null;
+        if (retryAfterHeader) {
+          const trimmed = retryAfterHeader.trim();
+          const asSeconds = Number(trimmed);
+          if (!isNaN(asSeconds) && asSeconds > 0 && /^\d+(\.\d+)?$/.test(trimmed)) {
+            parsedRetryAfterMs = Math.ceil(asSeconds * 1000);
+          } else {
+            const parsedDate = Date.parse(trimmed);
+            if (!isNaN(parsedDate)) {
+              const delta = parsedDate - Date.now();
+              if (delta > 0) parsedRetryAfterMs = delta;
+            }
+          }
+        }
+        retryAfterMs = parsedRetryAfterMs;
+
+        if (parsedRetryAfterMs !== null && parsedRetryAfterMs > 0) {
+          waitMs = parsedRetryAfterMs;
+          waitSource = 'retry-after-header';
+        } else {
+          waitMs = INITIAL_BACKOFF_MS;
+          waitSource = 'bounded-backoff';
+        }
+
+        const remainingBudget = budget.totalBudgetMs - budget.elapsedMs;
+        if (waitMs + RETRY_SAFETY_BUFFER_MS <= remainingBudget) {
+          shouldRetry = true;
+        }
+      }
+
+      if (shouldRetry) {
+        console.log(`[analyze-match] Groq 429 (rate limit) — retrying after ${waitMs}ms (${waitSource}), retry ${retryCount + 1}/${MAX_RETRIES}`);
+        errorType = 'RATE_LIMIT';
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        retryCount++;
+
+        // Retry — same model, same prompt (NO model fallback per §23)
+        const retryStart = Date.now();
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+            ],
+            temperature: 0.3,
+            max_tokens: 4096,
+            response_format: { type: 'json_object' },
+          }),
+        });
+        response_time_ms = Date.now() - requestStart; // total time including wait
+        console.log(`[analyze-match] Groq retry ${retryCount} → ${response.status} (${Date.now() - retryStart}ms)`);
+      } else {
+        console.log(`[analyze-match] Groq 429 — no retry (budget=${deadlineMs}ms, elapsed=${elapsedMs}ms, retryAfter=${retryAfterHeader || 'absent'})`);
+        errorType = 'RATE_LIMIT';
+      }
+    }
 
     if (response.ok) {
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || '';
       const actualTokens = data.usage?.total_tokens || 0;
-      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok, ${response_time_ms}ms, len=${content.length})`);
+      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok, ${response_time_ms}ms, len=${content.length}${retryCount > 0 ? `, retries=${retryCount}` : ''})`);
 
       // Phase 5.3.17.5: structured return so caller can distinguish
       // EMPTY_RESPONSE from PARSE_FAILED vs PARSE_OK
@@ -439,6 +534,9 @@ async function callGroqSingle(apiKey, model, userPrompt) {
           http_status: 200,
           error_message: null,
           response_time_ms,
+          retry_count: retryCount,
+          retry_after_ms: retryAfterMs,
+          error_type: errorType,
         };
       }
       return {
@@ -447,21 +545,28 @@ async function callGroqSingle(apiKey, model, userPrompt) {
         http_status: 200,
         error_message: null,
         response_time_ms,
+        retry_count: retryCount,
+        retry_after_ms: retryAfterMs,
+        error_type: errorType,
       };
     }
 
     const errorBody = await response.text();
     const http_status = response.status;
-    console.log(`[analyze-match] Groq ${http_status}: ${errorBody.substring(0, 150)}`);
+    console.log(`[analyze-match] Groq ${http_status}: ${errorBody.substring(0, 150)}${retryCount > 0 ? ` (after ${retryCount} retry)` : ''}`);
 
     // FIX 5.3.2 (preserved): 404 triggers model fallback rather than terminal failure.
     // The caller checks `http_status === 404` to decide whether to try the next model.
+    // Phase 5.3.43: 429 does NOT trigger model fallback (only same-model retry, already attempted above).
     return {
       status: AI_CALL_STATUS.HTTP_ERROR,
       content: null,                 // HTTP error → no usable content → hash NULL
       http_status,
       error_message: errorBody.substring(0, 200),
       response_time_ms,
+      retry_count: retryCount,
+      retry_after_ms: retryAfterMs,
+      error_type: errorType || (http_status === 429 ? 'RATE_LIMIT' : 'HTTP_ERROR'),
     };
   } catch (err) {
     // Network failure / abort / timeout — distinguish via err.name
@@ -475,6 +580,9 @@ async function callGroqSingle(apiKey, model, userPrompt) {
       http_status: 0,
       error_message: err.message,
       response_time_ms,
+      retry_count: retryCount,
+      retry_after_ms: retryAfterMs,
+      error_type: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
     };
   }
 }
@@ -584,6 +692,15 @@ function computeAITraces(matches, aiCallInfoOrLegacyText, groqModel) {
   const aiResponseLength = aiResponseText ? aiResponseText.length : null;
   const aiResponseReceivedAt = aiResponseText ? new Date().toISOString() : null;
   const aiCallStatus = aiCallInfo.status || AI_CALL_STATUS.NOT_CALLED;
+
+  // Phase 5.3.43: extract new diagnostic fields from callInfo (with safe defaults)
+  // These are propagated to ai_trace.hashes for forensic traceability.
+  // All fields default to null/0 when absent (e.g., legacy callInfo objects
+  // from NOT_CALLED path that don't have these fields).
+  const aiHttpStatus = aiCallInfo.http_status ?? null;
+  const aiRetryCount = aiCallInfo.retry_count ?? 0;
+  const aiRetryAfterMs = aiCallInfo.retry_after_ms ?? null;
+  const aiErrorType = aiCallInfo.error_type ?? null;
 
   for (let i = 0; i < matches.length; i++) {
     const match = { ...matches[i], matchIndex: i + 1 };
@@ -800,6 +917,13 @@ function computeAITraces(matches, aiCallInfoOrLegacyText, groqModel) {
           // Phase 5.3.17.5: persist ai_call_status in ai_trace.hashes for
           // cross-field consistency verification (audit mandate §17 + §11).
           ai_call_status: aiCallStatus,
+          // Phase 5.3.43: NEW diagnostic fields for 429 forensic traceability.
+          // These are stored INSIDE the ai_trace JSONB (no schema change).
+          // Defaults to null/0 when absent (legacy NOT_CALLED callInfo).
+          ai_http_status: aiHttpStatus,
+          ai_retry_count: aiRetryCount,
+          ai_retry_after_ms: aiRetryAfterMs,
+          ai_error_type: aiErrorType,
         },
         prompt_version: AI_PROMPT_VERSION,
         model: groqModel || 'math-v2',
@@ -826,7 +950,7 @@ function computeAITraces(matches, aiCallInfoOrLegacyText, groqModel) {
   return traces;
 }
 
-async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
+async function analyzeFast(matches, groqKey, groqModel, deadlineMs, functionStart = Date.now()) {
   const deadline = Date.now() + deadlineMs;
 
   // ─── Phase 5.3.17.5 — Pre-compute traces with NOT_CALLED status ──────
@@ -862,8 +986,11 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
     let parsedPreds = null;        // result of parsePredictions(content) — null until parsing attempted
 
     for (const model of modelsToTry) {
-      const callResult = await callGroqSingle(groqKey, model, prompt);
-      // callResult is now a structured object: { status, content, http_status, error_message, response_time_ms }
+      const callResult = await callGroqSingle(groqKey, model, prompt, {
+        deadlineMs,
+        functionStart,
+      });
+      // callResult is now a structured object: { status, content, http_status, error_message, response_time_ms, retry_count, retry_after_ms, error_type }
 
       if (callResult.status === AI_CALL_STATUS.PARSE_OK) {
         // 200 OK with non-empty content — try to parse
@@ -955,7 +1082,7 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs) {
     // If the timeout fires first, result === null (legacy sentinel).
     // We translate that to AI_CALL_STATUS.TIMEOUT.
     const result = await Promise.race([
-      callGroqSingle(groqKey, model, allPrompt),
+      callGroqSingle(groqKey, model, allPrompt, { deadlineMs, functionStart }),
       new Promise((resolve) => setTimeout(() => resolve(null), timeLeft)),
     ]);
 
@@ -1123,7 +1250,7 @@ export default async function handler(req, res) {
     // Adjust deadline based on remaining time
     const remainingMs = globalDeadline - Date.now() - 1000; // 1s buffer for response
     const effectiveDeadline = Math.max(1000, Math.min(DEADLINE_MS, remainingMs));
-    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL, effectiveDeadline);
+    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL, effectiveDeadline, startTime);
 
     const elapsed = Date.now() - startTime;
     console.log(`[analyze-match] Done via ${result.provider}: ${result.predictions.length} predictions in ${elapsed}ms`);

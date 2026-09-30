@@ -39,6 +39,14 @@ export interface PredictGuardInput {
   predictionsLoading: boolean;
   /** Home odds — must be strictly positive for prediction to be valid. */
   oddHome: number;
+  /**
+   * Phase 5.3.43: True while a batch predict is running.
+   * When true, individual Predict buttons are disabled to prevent
+   * concurrent Groq calls that could trigger rate-limit (429).
+   * This is a MUTUAL EXCLUSION guard — batch and individual cannot
+   * run simultaneously.
+   */
+  batchPredicting?: boolean;
 }
 
 /**
@@ -48,11 +56,14 @@ export interface PredictGuardInput {
  *   1. `predictionsLoading === true`  — Phase 5.3.32 race fix
  *   2. `predicting === true`           — re-entrancy guard (existing)
  *   3. `oddHome <= 0`                  — invalid odds (existing)
+ *   4. `batchPredicting === true`      — Phase 5.3.43 concurrency guard
  *
  * Non-blocking when:
- *   - All three flags are false → Predict may proceed.
+ *   - All four flags are false → Predict may proceed.
  *   - `predictionsLoading` flipped to false after an HTTP error —
  *     Predict is re-enabled (no permanent lock).
+ *   - `batchPredicting` is false (batch finished or not started) —
+ *     individual Predict is re-enabled.
  *
  * Truthiness note: `oddHome` is checked with `<= 0`, so `0` is
  * treated as invalid (same as the existing UI guard at L329). This
@@ -64,6 +75,7 @@ export function shouldBlockPredict(input: PredictGuardInput): boolean {
   return (
     input.predictionsLoading ||
     input.predicting ||
-    input.oddHome <= 0
+    input.oddHome <= 0 ||
+    input.batchPredicting === true
   );
 }
