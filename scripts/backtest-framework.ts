@@ -675,6 +675,25 @@ async function main() {
     try {
       const postgres = (await import('postgres')).default;
       const sql = postgres(dbUrl);
+      // ═══════════════════════════════════════════════════════════════════
+      // Phase 5.3.36 — CANONICAL D1 ALIGNMENT
+      // ═══════════════════════════════════════════════════════════════════
+      // Previously this WHERE clause used the LOOSE D3 criterion:
+      //   status IN correct/incorrect + actual_outcome + valid odds → ~479 rows
+      // That included rows WITHOUT AI traceability or snapshot completeness.
+      //
+      // Now we apply the CANONICAL D1 criterion inline (7 conditions from
+      // api/_lib/scientific-integrity.js::computeScientificEligible) PLUS
+      // the ground_truth + valid_odds gate. The 7 conditions are mirrored
+      // here ONLY because we cannot easily import the JS function into a
+      // TS script that runs under tsx (the api/_lib module uses .js extension
+      // and is designed for the Vercel runtime, not tsx). The cross-language
+      // consistency is verified by Phase 5.3.36 tests.
+      //
+      // IMPORTANT: when modifying this query, also update
+      //   src/test/phase5.3.36-canonical-alignment.test.ts
+      // to verify the inline conditions match computeScientificEligible.
+      // ═══════════════════════════════════════════════════════════════════
       const rows = await sql`
         SELECT id, created_at, verified_at, home_team, away_team, league, league_id, round, match_id,
                odd_home, odd_draw, odd_away,
@@ -682,17 +701,28 @@ async function main() {
                prediction, confidence,
                predicted_home_score, predicted_away_score,
                actual_home_score, actual_away_score, actual_outcome, actual_score,
-               status, prob_gg, over25_prob
+               status, prob_gg, over25_prob,
+               -- Phase 5.3.36: also fetch the 7 canonical fields for inline D1 check
+               feature_snapshot, completeness_score, temporal_safety_score,
+               t_feature, ai_response_hash, ai_model, ai_call_status
         FROM predictions
         WHERE status IN ('correct', 'incorrect')
           AND actual_outcome IS NOT NULL
           AND odd_home > 0 AND odd_draw > 0 AND odd_away > 0
+          -- Phase 5.3.36: inline D1 canonical conditions (mirror of computeScientificEligible)
+          AND feature_snapshot IS NOT NULL
+          AND COALESCE(completeness_score, 0) >= 0.5
+          AND COALESCE(temporal_safety_score, 0) >= 1.0
+          AND t_feature IS NOT NULL
+          AND ai_response_hash IS NOT NULL
+          AND COALESCE(ai_model, '') != 'math-v2'
+          AND (ai_call_status IS NULL OR ai_call_status = 'PARSE_OK')
         ORDER BY created_at ASC
       `;
       await sql.end();
       data = rows as VerifiedPrediction[];
-      dataSource = `Neon PostgreSQL (${data.length} verified predictions)`;
-      console.log(`  ✓ Loaded ${data.length} verified predictions from DB`);
+      dataSource = `Neon PostgreSQL (${data.length} D1-canonical eligible predictions)`;
+      console.log(`  ✓ Loaded ${data.length} D1-canonical eligible predictions from DB (Phase 5.3.36)`);
     } catch (err) {
       console.error(`  ✗ DB connection failed: ${(err as Error).message}`);
       console.log('  → Falling back to synthetic dataset');
