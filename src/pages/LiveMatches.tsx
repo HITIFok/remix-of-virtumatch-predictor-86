@@ -567,8 +567,20 @@ export default function LiveMatches() {
                 console.log(`[enhanceWithAI] Awaiting pending save for ${matchKey} before PATCH...`);
                 await pendingSave.catch(() => {}); // Don't fail if INSERT errored
               }
+              // Phase 5.3.31.3 FIX: Use match_id (when available) to identify an
+              // existing prediction for PATCH — avoids team-name collisions where
+              // the same home/away string maps to two distinct Sporty matchIds
+              // (e.g. 1001 vs 2002). Legacy team-name fallback ONLY kicks in
+              // when t.match.id is absent (undefined), e.g. legacy scraped rows
+              // without a Sporty id. When t.match.id is present but no
+              // dbPredictions entry matches that matchId, predId is undefined
+              // (no wrong-UUID selection by team name).
               const predId = predictionIdMap.current.get(matchKey)
-                || dbPredictions.find(p => `${p.homeTeam}-${p.awayTeam}` === matchKey)?.id;
+                || (
+                  t.match.id != null
+                    ? dbPredictions.find(p => p.matchId === t.match.id)?.id
+                    : dbPredictions.find(p => `${p.homeTeam}-${p.awayTeam}` === matchKey)?.id
+                );
               if (predId) {
                 // UPDATE existing prediction with AI trace fields via PATCH
                 console.log(`[enhanceWithAI] PATCHING ${matchKey} → ${predId} with ${Object.keys(aiTraces[i]).length} trace fields`);
