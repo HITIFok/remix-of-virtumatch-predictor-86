@@ -5,6 +5,7 @@ import AnimatedBackground from "@/components/AnimatedBackground";
 import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
+import { shouldBlockPredict } from "@/lib/predict-guard";
 import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { config } from "@/config/env";
 import { getAuthHeaders } from "@/lib/device";
@@ -168,12 +169,14 @@ function MatchCard({
   match,
   onPredict,
   predicting,
+  predictionsLoading,
   showScores,
   aiPrediction,
 }: {
   match: ScrapedMatch;
   onPredict: (m: ScrapedMatch) => void;
   predicting: boolean;
+  predictionsLoading: boolean;
   showScores: boolean;
   aiPrediction?: any; // v14: Groq AI prediction result (MatchResult)
 }) {
@@ -326,7 +329,8 @@ function MatchCard({
             size="sm"
             variant={hasLeak ? "outline" : "fire"}
             className={`w-full ${hasLeak ? "border-violet-400/40 text-violet-400 hover:bg-violet-400/10" : ""}`}
-            disabled={predicting || match.oddHome <= 0}
+            /* Phase 5.3.32: UI guard — same predicate as the handler guard in handlePredict(). */
+            disabled={shouldBlockPredict({ predicting, predictionsLoading, oddHome: match.oddHome })}
             onClick={() => onPredict(match)}
           >
             {predicting ? (
@@ -367,7 +371,13 @@ export default function LiveMatches() {
     preloadedCount,
   } = useLiveMatches();
 
-  const { savePrediction, updatePredictionScientificFields, predictions: dbPredictions } = usePredictions();
+  // Phase 5.3.32: predictionsLoading gates Predict — prevents the race where
+  // a remount + click Predict fires before loadPredictions() resolves, leaving
+  // predictionIdMap and dbPredictions both empty and triggering a secondary
+  // INSERT. The hook's `loading` state is flipped to false by a `finally`
+  // block in loadPredictions(), so HTTP 401 / 500 / network / JSON errors
+  // cannot leave Predict permanently disabled.
+  const { savePrediction, updatePredictionScientificFields, predictions: dbPredictions, loading: predictionsLoading } = usePredictions();
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [batchPredicting, setBatchPredicting] = useState(false);
@@ -614,7 +624,14 @@ export default function LiveMatches() {
   const handlePredict = async (match: ScrapedMatch) => {
     const matchKey = `${match.home}-${match.away}`;
 
-    if (predictingRef.current === matchKey) return;
+    // Phase 5.3.32: Handler guard — same predicate as the UI guard in MatchCard.
+    // Blocks Predict during initial dbPredictions load to prevent the race
+    // where predictionIdMap + dbPredictions are both empty.
+    if (shouldBlockPredict({
+      predicting: predictingRef.current === matchKey,
+      predictionsLoading,
+      oddHome: match.oddHome,
+    })) return;
     predictingRef.current = matchKey;
     setPredictingId(matchKey);
 
@@ -871,6 +888,7 @@ export default function LiveMatches() {
                                 match={match}
                                 onPredict={handlePredict}
                                 predicting={predictingId === matchKey}
+                                predictionsLoading={predictionsLoading}
                                 showScores={showScores}
                                 aiPrediction={prediction}
                               />
