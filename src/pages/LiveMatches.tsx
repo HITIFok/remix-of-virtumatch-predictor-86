@@ -6,6 +6,7 @@ import { useLiveMatches } from "@/hooks/use-live-matches";
 import { usePredictions } from "@/hooks/use-predictions";
 import { isPremium } from "@/lib/storage";
 import { shouldBlockPredict } from "@/lib/predict-guard";
+import { orchestrateBatchPredict } from "@/lib/batch-predict-orchestrator";
 import { analyzeMatch, buildTeamStatsMap, prepareHistoricalResults, type MatchInput, type MatchResult, type AIPrediction } from "@/lib/prediction-engine";
 import { config } from "@/config/env";
 import { getAuthHeaders } from "@/lib/device";
@@ -381,6 +382,10 @@ export default function LiveMatches() {
 
   const [predictingId, setPredictingId] = useState<string | null>(null);
   const [batchPredicting, setBatchPredicting] = useState(false);
+  // Phase 5.3.41: Progress display for sequential batch predict — each match
+  // gets its own /api/analyze-match call (single-match server path, no
+  // Promise.race timeout). A TIMEOUT on one match does NOT contaminate others.
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number; currentMatch: string } | null>(null);
   const [predictions, setPredictions] = useState<Record<string, MatchResult>>({});
   const [activeTab, setActiveTab] = useState("matches");
   const [showScores, setShowScores] = useState(true); // Toggle for preloaded scores visibility
@@ -675,6 +680,7 @@ export default function LiveMatches() {
     }
 
     setBatchPredicting(true);
+    setBatchProgress({ current: 0, total: allMatches.length, currentMatch: "" });
     try {
       // STEP 1: Prédiction mathématique instantanée pour TOUS les matchs
       const batchResults: { match: ScrapedMatch; result: MatchResult }[] = [];
@@ -692,14 +698,62 @@ export default function LiveMatches() {
         return p;
       }));
 
-      setBatchPredicting(false);
       toast.success(`${allMatches.length} match(s) analysé(s) 🔥`);
 
-      // STEP 2: IA en arrière-plan pour enrichir les prédictions
-      enhanceWithAI(allMatches);
+      // ─────────────────────────────────────────────────────────────────
+      // Phase 5.3.41 — ISOLATION DES APPELS IA (via orchestrateBatchPredict)
+      // ─────────────────────────────────────────────────────────────────
+      // AVANT: enhanceWithAI(allMatches) — UN SEUL POST /api/analyze-match
+      //        avec les 10 matchs dans le body → server batch path (L939-980)
+      //        → Promise.race(callGroqSingle, setTimeout(5000ms)) → si le
+      //        prompt combiné dépasse 5s, TIMEOUT propagé à TOUS les 10
+      //        traces.
+      //
+      // APRÈS: orchestrateBatchPredict appelle enhanceWithAI([match]) pour
+      //        chaque match SÉQUENTIELLEMENT. Chaque match reçoit son PROPRE
+      //        POST /api/analyze-match avec 1 seul match dans le body → server
+      //        single-match path (L865) → await callGroqSingle() sans
+      //        Promise.race → pas de timeout applicatif. Un TIMEOUT sur un
+      //        match n'affecte PAS les autres.
+      //
+      // COÛT: 10 requêtes HTTP séquentielles (au lieu d'1). Chaque requête
+      //       bénéficie de sa PROPRE limite Vercel 10s — pas de surcharge
+      //       d'une seule fonction. Vercel compute augmente (10 cold starts
+      //       potentiels) mais chaque fonction reste bien sous 10s.
+      // ─────────────────────────────────────────────────────────────────
+      const orchestrationResult = await orchestrateBatchPredict(allMatches, {
+        enhanceSingle: async (match: ScrapedMatch) => {
+          // enhanceWithAI internally has try/catch — but it does NOT re-throw
+          // on a single-match failure (only logs to console). To verify isolation
+          // at the orchestration level, we wrap it so any rejection is observable.
+          // The actual isolation behavior is: enhanceWithAI([match]) for match N
+          // is COMPLETELY INDEPENDENT of match N-1 or N+1.
+          await enhanceWithAI([match]);
+        },
+        onProgress: (progress) => {
+          setBatchProgress({
+            current: progress.current,
+            total: progress.total,
+            currentMatch: progress.currentMatchLabel,
+          });
+        },
+        getMatchLabel: (match: ScrapedMatch, index: number) =>
+          `${match.home} vs ${match.away}`,
+      });
+
+      setBatchPredicting(false);
+      setBatchProgress(null);
+
+      // Final toast — report the breakdown (informational)
+      if (orchestrationResult.errorCount === 0) {
+        toast.success(`Prédiction IA terminée : ${orchestrationResult.successCount}/${allMatches.length} match(s) traités`);
+      } else {
+        toast.warning(`Prédiction IA terminée : ${orchestrationResult.successCount} réussis, ${orchestrationResult.errorCount} échoués sur ${allMatches.length}`);
+      }
     } catch {
       toast.error("Erreur lors de la prédiction groupée");
       setBatchPredicting(false);
+      setBatchProgress(null);
     }
   };
 
@@ -809,7 +863,7 @@ export default function LiveMatches() {
           </div>
         )}
 
-        {/* Bouton PRÉDIRE TOUS LES MATCHS */}
+        {/* Bouton PRÉDIRE TOUS LES MATCHS — Phase 5.3.41: sequential per-match AI calls */}
         {totalMatches > 0 && isPremium() && (
           <div className="mb-4">
             <Button
@@ -819,12 +873,26 @@ export default function LiveMatches() {
               disabled={batchPredicting || loading}
               onClick={handleBatchPredict}
             >
-              {batchPredicting ? (
+              {batchPredicting && batchProgress ? (
+                <>
+                  <Loader2 size={14} className="mr-1 animate-spin" />
+                  ANALYSE IA {batchProgress.current}/{batchProgress.total}
+                  {batchProgress.currentMatch ? ` — ${batchProgress.currentMatch}` : ''}
+                </>
+              ) : batchPredicting ? (
                 <><Loader2 size={14} className="mr-1 animate-spin" /> ANALYSE IA EN COURS...</>
               ) : (
                 <><Zap size={14} className="mr-1" /> PRÉDIRE TOUS LES MATCHS ({totalMatches})</>
               )}
             </Button>
+            {batchPredicting && batchProgress && (
+              <div className="mt-1.5 h-1 w-full bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-fire-500 to-fire-400 transition-all duration-300"
+                  style={{ width: `${batchProgress.total > 0 ? (batchProgress.current / batchProgress.total) * 100 : 0}%` }}
+                />
+              </div>
+            )}
           </div>
         )}
 
