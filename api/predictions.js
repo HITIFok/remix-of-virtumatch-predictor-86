@@ -66,6 +66,9 @@ function validatePrediction(body) {
       league: body.league ? sanitize(body.league, 200) : null,
       league_id: body.league_id ? String(body.league_id).substring(0, 20) : null,
       round: body.round ? parseInt(body.round, 10) || null : null,
+      // Phase 5.3.46: expected_start from Sporty API (match.kickoff)
+      // NULL if not provided — no substitution with t_prediction or created_at
+      expected_start: body.expected_start || null,
       odd_home: clampNum(body.odd_home, 0, 100),
       odd_draw: clampNum(body.odd_draw, 0, 100),
       odd_away: clampNum(body.odd_away, 0, 100),
@@ -223,6 +226,7 @@ function mapToCamelCase(row) {
     versionFreeze: row.version_freeze,
     tFeature: row.t_feature,
     tPrediction: row.t_prediction,
+    expectedStart: row.expected_start,
     datasetSplit: row.dataset_split,
   };
 }
@@ -416,6 +420,7 @@ export default async function handler(req, res) {
       const result = await sql`
         INSERT INTO predictions (
           match_id, home_team, away_team, league, league_id, round,
+          expected_start,
           odd_home, odd_draw, odd_away,
           prob_home, prob_draw, prob_away,
           prediction, confidence,
@@ -441,6 +446,7 @@ export default async function handler(req, res) {
           scientific_collection_eligible, version_freeze
         ) VALUES (
           ${d.match_id}, ${d.home_team}, ${d.away_team}, ${d.league}, ${d.league_id}, ${d.round},
+          ${d.expected_start},
           ${d.odd_home}, ${d.odd_draw}, ${d.odd_away},
           ${d.prob_home}, ${d.prob_draw}, ${d.prob_away},
           ${d.prediction}, ${d.confidence},

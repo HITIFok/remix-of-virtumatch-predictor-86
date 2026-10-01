@@ -428,6 +428,10 @@ export default function LiveMatches() {
         league: match.league,
         league_id: match.leagueId || null,
         round: match.round || null,
+        // Phase 5.3.46: Persist Sporty API's expectedStart as expected_start.
+        // Source: match.kickoff (mapped from m.expectedStart in fetch-live.js L479)
+        // Used for post-hoc temporal validation: expected_start > t_prediction → PRE_MATCH
+        expected_start: match.kickoff || undefined,
         odd_home: match.oddHome,
         odd_draw: match.oddDraw,
         odd_away: match.oddAway,

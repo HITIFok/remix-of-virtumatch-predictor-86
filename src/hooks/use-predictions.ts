@@ -250,6 +250,8 @@ export function usePredictions() {
     first_half_goal_prob?: number
     expected_goals?: number
     winner_1x2?: string
+    // Phase 5.3.46: expected_start from Sporty API (match.kickoff)
+    expected_start?: string
     // Phase 5.3: AI traceability & scientific collection
     feature_snapshot?: any
     feature_snapshot_hash?: string
