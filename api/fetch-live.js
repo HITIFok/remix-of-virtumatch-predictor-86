@@ -4,6 +4,7 @@
 // v17: Multi-round playout scan + team names in quick-results + Tier 1/2 cross-validation
 
 import { setCorsHeaders } from './_lib/cors.js';
+import { normalizeExpectedStart } from './_lib/normalize-expected-start.js';
 
 const SPORTY_API_BASE = process.env.SPORTY_API_BASE || '';
 
@@ -476,7 +477,15 @@ export default async function handler(req, res) {
 
           matches.push({
             id: m.id, home: m.homeTeam?.name || '', away: m.awayTeam?.name || '',
-            round: roundNum, league: leagueName, status, kickoff: m.expectedStart || '',
+            round: roundNum, league: leagueName, status,
+            // Phase 5.3.49 — normalize Sporty's expectedStart sentinel.
+            // Sporty returns "0001-01-01T00:00:00Z" for matches with no
+            // scheduled kickoff; that string is truthy and PostgreSQL silently
+            // accepts the cast, polluting expected_start with 0001-01-01.
+            // Collapsing to '' here lets the downstream chain
+            // (match.kickoff || undefined → body.expected_start || null → SQL NULL)
+            // store NULL instead of a false kickoff.
+            kickoff: normalizeExpectedStart(m.expectedStart),
             oddHome, oddDraw, oddAway, scoreHome, scoreAway, minute, goals,
             predeterminedScore: predeterminedScore || null,
             prediction,
