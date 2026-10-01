@@ -541,19 +541,49 @@ export default function LiveMatches() {
     try {
       const enriched = enrichMatchesForAI(toEnrich.map(t => t.match), results, ranking);
       const authHeaders = await getAuthHeaders();
-      const res = await fetch(`${config.api.analyzeMatchUrl}`, {
-        method: 'POST',
-        headers: { ...authHeaders, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ matches: enriched }),
-      });
-      // Safety: Vercel may return HTML on timeout (not JSON)
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        console.warn(`[LiveMatches] AI returned non-JSON (${res.status}): too many matches or server timeout`);
-        return;
+      // Phase 5.3.43.7: Frontend rate-limit retry loop.
+      // The API returns immediately on 429 (no Vercel sleep). The frontend
+      // waits Retry-After and retries the POST. This keeps each Vercel
+      // function call short (~2-5s) while respecting Groq's rate limit.
+      const MAX_FRONTEND_RATE_LIMIT_RETRIES = 1;
+      const MAX_FRONTEND_RETRY_AFTER_MS = 30000; // 30s cap — don't wait longer
+
+      let data: any = null;
+      let resOk = false;
+      let frontendRetryCount = 0;
+
+      for (let attempt = 0; attempt <= MAX_FRONTEND_RATE_LIMIT_RETRIES; attempt++) {
+        const res = await fetch(`${config.api.analyzeMatchUrl}`, {
+          method: 'POST',
+          headers: { ...authHeaders, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ matches: enriched, retryCount: frontendRetryCount }),
+        });
+        // Safety: Vercel may return HTML on timeout (not JSON)
+        const contentType = res.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          console.warn(`[LiveMatches] AI returned non-JSON (${res.status}): too many matches or server timeout`);
+          return;
+        }
+        data = await res.json();
+        resOk = res.ok;
+
+        // Phase 5.3.43.7: Check for rate-limit from the API response
+        if (data?.rateLimited === true && attempt < MAX_FRONTEND_RATE_LIMIT_RETRIES) {
+          const waitMs = data.retryAfterMs || 2000; // fallback bounded backoff
+          if (waitMs <= MAX_FRONTEND_RETRY_AFTER_MS) {
+            console.log(`[enhanceWithAI] Rate limited — waiting ${waitMs}ms before frontend retry (${attempt + 1}/${MAX_FRONTEND_RATE_LIMIT_RETRIES})`);
+            await new Promise(resolve => setTimeout(resolve, waitMs));
+            frontendRetryCount++;
+            continue; // retry the POST with retryCount=1
+          } else {
+            console.warn(`[enhanceWithAI] Rate limited — Retry-After ${waitMs}ms exceeds ${MAX_FRONTEND_RETRY_AFTER_MS}ms — giving up`);
+            break; // proceed with the rate-limited traces
+          }
+        }
+        break; // not rate-limited, or max retries reached
       }
-      const data = await res.json();
-      if (res.ok && data?.predictions?.length > 0) {
+
+      if (resOk && data?.predictions?.length > 0) {
         const aiPreds = data.predictions as AIPrediction[];
         // FIX 5.3.2: Capture processMatch results in a local map (not stale React state)
         const enrichedResults = new Map<string, MatchResult>();

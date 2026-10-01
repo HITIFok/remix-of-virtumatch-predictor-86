@@ -401,19 +401,17 @@ async function callGroqSingle(apiKey, model, userPrompt, options = {}) {
   const url = 'https://api.groq.com/openai/v1/chat/completions';
   console.log(`[analyze-match] Groq | Key: ${maskKey(apiKey)} | Model: ${model}`);
 
-  // Phase 5.3.43: 429 Retry-After + bounded backoff integration
-  // The deadlineMs is the remaining Vercel runtime budget (default 5000ms).
-  // On 429, we check if a retry fits within the budget before attempting.
-  const deadlineMs = options.deadlineMs || 5000;
-  const functionStart = options.functionStart || Date.now();
-  let retryCount = 0;
+  // Phase 5.3.43.7: NO inline retry. The function makes ONE call to Groq.
+  // On 429, it parses Retry-After and returns immediately to the frontend.
+  // The FRONTEND orchestrator handles the wait + retry (outside Vercel's 10s budget).
+  // The retryCount is passed from the frontend via options.retryCount (0 for first call, 1 for retry).
+  const retryCount = options.retryCount || 0;
   let retryAfterMs = null;
-  let errorType = null;
 
   const requestStart = Date.now();
 
   try {
-    let response = await fetch(url, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -431,145 +429,88 @@ async function callGroqSingle(apiKey, model, userPrompt, options = {}) {
       }),
     });
 
-    let response_time_ms = Date.now() - requestStart;
-
-    // ─── Phase 5.3.43: 429 Retry-After + bounded backoff ───────────
-    // On HTTP 429 (rate limit), inspect Retry-After header and retry
-    // ONCE if the budget allows. This is NOT automatic model fallback
-    // (qwen → 429 → llama is FORBIDDEN per §23). Same model, same prompt.
-    if (response.status === 429) {
-      const retryAfterHeader = response.headers.get('retry-after');
-      const elapsedMs = Date.now() - functionStart;
-      const budget = { totalBudgetMs: deadlineMs, elapsedMs };
-
-      // Inline the retry decision (mirrors src/lib/groq-retry-helper.ts decideRetry)
-      // — kept inline here because api/analyze-match.js is ESM JS and the
-      // helper is TS. The logic is identical and tested cross-language.
-      const MAX_RETRIES = 1;
-      const INITIAL_BACKOFF_MS = 2000;
-      const RETRY_SAFETY_BUFFER_MS = 1500;
-
-      let shouldRetry = false;
-      let waitMs = 0;
-      let waitSource = 'none';
-
-      if (retryCount < MAX_RETRIES) {
-        // Parse Retry-After header
-        let parsedRetryAfterMs = null;
-        if (retryAfterHeader) {
-          const trimmed = retryAfterHeader.trim();
-          const asSeconds = Number(trimmed);
-          if (!isNaN(asSeconds) && asSeconds > 0 && /^\d+(\.\d+)?$/.test(trimmed)) {
-            parsedRetryAfterMs = Math.ceil(asSeconds * 1000);
-          } else {
-            const parsedDate = Date.parse(trimmed);
-            if (!isNaN(parsedDate)) {
-              const delta = parsedDate - Date.now();
-              if (delta > 0) parsedRetryAfterMs = delta;
-            }
-          }
-        }
-        retryAfterMs = parsedRetryAfterMs;
-
-        if (parsedRetryAfterMs !== null && parsedRetryAfterMs > 0) {
-          waitMs = parsedRetryAfterMs;
-          waitSource = 'retry-after-header';
-        } else {
-          waitMs = INITIAL_BACKOFF_MS;
-          waitSource = 'bounded-backoff';
-        }
-
-        const remainingBudget = budget.totalBudgetMs - budget.elapsedMs;
-        if (waitMs + RETRY_SAFETY_BUFFER_MS <= remainingBudget) {
-          shouldRetry = true;
-        }
-      }
-
-      if (shouldRetry) {
-        console.log(`[analyze-match] Groq 429 (rate limit) — retrying after ${waitMs}ms (${waitSource}), retry ${retryCount + 1}/${MAX_RETRIES}`);
-        errorType = 'RATE_LIMIT';
-        // Wait before retry
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        retryCount++;
-
-        // Retry — same model, same prompt (NO model fallback per §23)
-        const retryStart = Date.now();
-        response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [
-              { role: 'system', content: SYSTEM_PROMPT },
-              { role: 'user', content: userPrompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 4096,
-            response_format: { type: 'json_object' },
-          }),
-        });
-        response_time_ms = Date.now() - requestStart; // total time including wait
-        console.log(`[analyze-match] Groq retry ${retryCount} → ${response.status} (${Date.now() - retryStart}ms)`);
-      } else {
-        console.log(`[analyze-match] Groq 429 — no retry (budget=${deadlineMs}ms, elapsed=${elapsedMs}ms, retryAfter=${retryAfterHeader || 'absent'})`);
-        errorType = 'RATE_LIMIT';
-      }
-    }
+    const response_time_ms = Date.now() - requestStart;
 
     if (response.ok) {
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content || '';
       const actualTokens = data.usage?.total_tokens || 0;
-      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok, ${response_time_ms}ms, len=${content.length}${retryCount > 0 ? `, retries=${retryCount}` : ''})`);
+      console.log(`[analyze-match] Groq OK (${actualTokens || '?'}tok, ${response_time_ms}ms, len=${content.length}${retryCount > 0 ? `, frontendRetry=${retryCount}` : ''})`);
 
-      // Phase 5.3.17.5: structured return so caller can distinguish
-      // EMPTY_RESPONSE from PARSE_FAILED vs PARSE_OK
       if (content === '') {
         return {
           status: AI_CALL_STATUS.EMPTY_RESPONSE,
-          content: null,                 // empty content → hash will be NULL
+          content: null,
           http_status: 200,
           error_message: null,
           response_time_ms,
           retry_count: retryCount,
-          retry_after_ms: retryAfterMs,
-          error_type: errorType,
+          retry_after_ms: null,
+          error_type: null,
         };
       }
       return {
-        status: AI_CALL_STATUS.PARSE_OK,   // tentatively OK; caller will downgrade to PARSE_FAILED if parse fails
+        status: AI_CALL_STATUS.PARSE_OK,
         content,
         http_status: 200,
         error_message: null,
         response_time_ms,
         retry_count: retryCount,
+        retry_after_ms: null,
+        error_type: null,
+      };
+    }
+
+    // ─── Phase 5.3.43.7: On 429, parse Retry-After and return IMMEDIATELY ───
+    // The frontend orchestrator handles the wait + retry.
+    // The Vercel function does NOT sleep — it returns in ~1-2s.
+    const http_status = response.status;
+
+    if (http_status === 429) {
+      // Parse Retry-After header (seconds or HTTP-date)
+      const retryAfterHeader = response.headers.get('retry-after');
+      if (retryAfterHeader) {
+        const trimmed = retryAfterHeader.trim();
+        const asSeconds = Number(trimmed);
+        if (!isNaN(asSeconds) && asSeconds > 0 && /^\d+(\.\d+)?$/.test(trimmed)) {
+          retryAfterMs = Math.ceil(asSeconds * 1000);
+        } else {
+          const parsedDate = Date.parse(trimmed);
+          if (!isNaN(parsedDate)) {
+            const delta = parsedDate - Date.now();
+            if (delta > 0) retryAfterMs = delta;
+          }
+        }
+      }
+      const errorBody = await response.text();
+      console.log(`[analyze-match] Groq 429 (rate limit) — retryAfter=${retryAfterMs}ms (header: ${retryAfterHeader || 'absent'}), frontendRetry=${retryCount}`);
+      return {
+        status: AI_CALL_STATUS.HTTP_ERROR,
+        content: null,
+        http_status: 429,
+        error_message: errorBody.substring(0, 200),
+        response_time_ms,
+        retry_count: retryCount,
         retry_after_ms: retryAfterMs,
-        error_type: errorType,
+        error_type: 'RATE_LIMIT',
       };
     }
 
     const errorBody = await response.text();
-    const http_status = response.status;
-    console.log(`[analyze-match] Groq ${http_status}: ${errorBody.substring(0, 150)}${retryCount > 0 ? ` (after ${retryCount} retry)` : ''}`);
+    console.log(`[analyze-match] Groq ${http_status}: ${errorBody.substring(0, 150)}`);
 
     // FIX 5.3.2 (preserved): 404 triggers model fallback rather than terminal failure.
-    // The caller checks `http_status === 404` to decide whether to try the next model.
-    // Phase 5.3.43: 429 does NOT trigger model fallback (only same-model retry, already attempted above).
     return {
       status: AI_CALL_STATUS.HTTP_ERROR,
-      content: null,                 // HTTP error → no usable content → hash NULL
+      content: null,
       http_status,
       error_message: errorBody.substring(0, 200),
       response_time_ms,
       retry_count: retryCount,
-      retry_after_ms: retryAfterMs,
-      error_type: errorType || (http_status === 429 ? 'RATE_LIMIT' : 'HTTP_ERROR'),
+      retry_after_ms: null,
+      error_type: 'HTTP_ERROR',
     };
   } catch (err) {
-    // Network failure / abort / timeout — distinguish via err.name
     const response_time_ms = Date.now() - requestStart;
     const isTimeout = err.name === 'AbortError' || err.name === 'TimeoutError';
     const status = isTimeout ? AI_CALL_STATUS.TIMEOUT : AI_CALL_STATUS.HTTP_ERROR;
@@ -581,7 +522,7 @@ async function callGroqSingle(apiKey, model, userPrompt, options = {}) {
       error_message: err.message,
       response_time_ms,
       retry_count: retryCount,
-      retry_after_ms: retryAfterMs,
+      retry_after_ms: null,
       error_type: isTimeout ? 'TIMEOUT' : 'NETWORK_ERROR',
     };
   }
@@ -950,7 +891,7 @@ function computeAITraces(matches, aiCallInfoOrLegacyText, groqModel) {
   return traces;
 }
 
-async function analyzeFast(matches, groqKey, groqModel, deadlineMs, functionStart = Date.now()) {
+async function analyzeFast(matches, groqKey, groqModel, deadlineMs, functionStart = Date.now(), retryCount = 0) {
   const deadline = Date.now() + deadlineMs;
 
   // ─── Phase 5.3.17.5 — Pre-compute traces with NOT_CALLED status ──────
@@ -989,6 +930,7 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs, functionStar
       const callResult = await callGroqSingle(groqKey, model, prompt, {
         deadlineMs,
         functionStart,
+        retryCount,
       });
       // callResult is now a structured object: { status, content, http_status, error_message, response_time_ms, retry_count, retry_after_ms, error_type }
 
@@ -1082,7 +1024,7 @@ async function analyzeFast(matches, groqKey, groqModel, deadlineMs, functionStar
     // If the timeout fires first, result === null (legacy sentinel).
     // We translate that to AI_CALL_STATUS.TIMEOUT.
     const result = await Promise.race([
-      callGroqSingle(groqKey, model, allPrompt, { deadlineMs, functionStart }),
+      callGroqSingle(groqKey, model, allPrompt, { deadlineMs, functionStart, retryCount }),
       new Promise((resolve) => setTimeout(() => resolve(null), timeLeft)),
     ]);
 
@@ -1222,6 +1164,8 @@ export default async function handler(req, res) {
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
     const matches = body.matches;
+    // Phase 5.3.43.7: frontend passes retryCount (0 for first call, 1 for rate-limit retry)
+    const retryCount = body.retryCount || 0;
 
     if (!matches || !Array.isArray(matches) || matches.length === 0) {
       return res.status(400).json({ error: 'matches array required and non-empty' });
@@ -1250,7 +1194,7 @@ export default async function handler(req, res) {
     // Adjust deadline based on remaining time
     const remainingMs = globalDeadline - Date.now() - 1000; // 1s buffer for response
     const effectiveDeadline = Math.max(1000, Math.min(DEADLINE_MS, remainingMs));
-    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL, effectiveDeadline, startTime);
+    const result = await analyzeFast(matches, GROQ_API_KEY, GROQ_MODEL, effectiveDeadline, startTime, retryCount);
 
     const elapsed = Date.now() - startTime;
     console.log(`[analyze-match] Done via ${result.provider}: ${result.predictions.length} predictions in ${elapsed}ms`);
@@ -1264,11 +1208,22 @@ export default async function handler(req, res) {
       console.warn(`[analyze-match] DIAGNOSTIC: ai_traces is EMPTY! provider=${result.provider}`);
     }
 
-    return res.status(200).json({
+    // Phase 5.3.43.7: If any trace has RATE_LIMIT, surface it to the frontend
+    // so the orchestrator can wait Retry-After and retry (outside Vercel's budget).
+    const rateLimitTrace = aiTraces.find(t => t?.ai_trace?.hashes?.ai_error_type === 'RATE_LIMIT');
+    const isRateLimited = !!rateLimitTrace;
+    const retryAfterMs = rateLimitTrace?.ai_trace?.hashes?.ai_retry_after_ms || null;
+
+    const responsePayload = {
       predictions: result.predictions,
       elapsed,
       provider: result.provider,
       ai_traces: aiTraces,
-    });
+    };
+    if (isRateLimited) {
+      responsePayload.rateLimited = true;
+      responsePayload.retryAfterMs = retryAfterMs;
+    }
+    return res.status(200).json(responsePayload);
   })();
 };
