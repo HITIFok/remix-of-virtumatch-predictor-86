@@ -24,24 +24,38 @@ async function initCapacitor() {
   }
 }
 
-// ── Security: Add X-Capacitor-Request header for native app API calls ──
-// This header lets the backend identify native Capacitor requests without
-// relying on the spoofable Origin: localhost CORS bypass.
-if (typeof window !== 'undefined' && (window.location.origin === 'https://localhost' || window.location.origin === 'capacitor://localhost')) {
-  const originalFetch = window.fetch;
-  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
-    // Only add header for our own API calls (not bet261.mg or external)
-    if (url && (url.includes('/api/') || url.includes('vercel.app'))) {
-      const headers = new Headers(init?.headers);
-      if (!headers.has('X-Capacitor-Request')) {
-        headers.set('X-Capacitor-Request', 'true');
-      }
-      return originalFetch(input, { ...init, headers });
-    }
-    return originalFetch(input, init);
-  };
-}
+// ── Phase 5.3.54.1 — REMOVED the X-Capacitor-Request fetch monkey-patch ──
+// Previously, this block intercepted window.fetch when the WebView origin was
+// 'https://localhost' or 'capacitor://localhost' (i.e., running in the APK)
+// and added the custom header 'X-Capacitor-Request: true' to every /api/*
+// call. The header was used by the backend's V-02 (now-removed) CORS bypass
+// that allowed any request carrying this header to skip origin validation.
+//
+// The V-02 fix (in api/_lib/cors.js L42-50) REMOVED that bypass — the
+// backend no longer reads or honors the X-Capacitor-Request header. But
+// the frontend monkey-patch was left behind, still adding the header.
+//
+// This caused a CORS failure in the APK because:
+//   1. The browser sees X-Capacitor-Request (a non-simple custom header)
+//      in the request → triggers a CORS preflight (OPTIONS)
+//   2. The server responds with:
+//      Access-Control-Allow-Headers: Content-Type, Authorization, x-device-id
+//      (X-Capacitor-Request is NOT in the allowlist)
+//   3. The browser blocks the actual request because the requested header
+//      is not permitted by Access-Control-Allow-Headers
+//   4. fetch() rejects with TypeError 'Failed to fetch'
+//   5. useLiveMatches.ts L144 catches → returns null
+//   6. setError(getFriendlyError(leagueName)) fires
+//   7. UI displays: "Les données en direct pour English League ne sont pas
+//      disponibles pour le moment. Veuillez réessayer dans quelques instants."
+//
+// Removing the monkey-patch fixes the APK runtime error. The backend V-02
+// fix's intended design (per its comment in cors.js L26-41) is that native
+// Capacitor apps are authenticated via HMAC device tokens (Authorization:
+// Device <token>) — NOT via the X-Capacitor-Request header. Capacitor
+// origins (https://localhost, capacitor://localhost) are already in the
+// DEFAULT_ORIGINS allowlist (cors.js L5-13), so legitimate native requests
+// pass the origin check normally without any special header.
 
 initCapacitor();
 
