@@ -15,11 +15,20 @@ jobs:
           fetch-depth: 0
 
       - name: Audit — check for leaked secrets
+        env:
+          # Phase 5.3.53.1 — pass the commit message via env var instead of
+          # inline ${{ github.event.head_commit.message }} substitution.
+          # Inline injection causes 'bad substitution' when the commit
+          # message contains literal ${{ ... }} syntax (e.g., when the
+          # commit body references GitHub Actions expressions in code
+          # samples). Env var indirection prevents bash from parsing the
+          # commit message contents as a parameter expansion.
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           echo "=== Security Audit for push to main ==="
           echo "Author: ${{ github.actor }}"
           echo "Commit: ${{ github.sha }}"
-          echo "Message: ${{ github.event.head_commit.message }}"
+          echo "Message: $COMMIT_MESSAGE"
           echo ""
 
           # Check for common secret patterns
