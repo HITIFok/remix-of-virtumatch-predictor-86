@@ -90,6 +90,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Move apk-latest tag to current commit
+        # Phase 5.3.53 — fix the apk-latest tag drift.
+        # softprops/action-gh-release@v2 UPDATES the release assets + body when
+        # a release with the given tag_name already exists, but does NOT move
+        # the underlying git tag pointer. As a result, the release page shows
+        # the fresh APK (uploaded as a new asset) while refs/tags/apk-latest
+        # stays pointing at the original commit (545321e, 2026-09-08).
+        # This step force-moves the tag to the commit the APK was actually
+        # built from (github.sha), keeping the tag in sync with the release.
+        # The workflow has permissions: contents: write (line 13) so the push
+        # succeeds. The previous step's success implies the APK exists.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f apk-latest "${{ github.sha }}"
+          git push -f origin refs/tags/apk-latest
+
       - name: Clean up keystore
         if: always()
         run: rm -f android/app/release-keystore.jks android/keystore.properties
