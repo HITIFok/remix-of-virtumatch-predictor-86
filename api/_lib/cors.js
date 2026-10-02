@@ -15,7 +15,23 @@ const DEFAULT_ORIGINS = [
 function parseAllowedOrigins() {
   const envOrigins = process.env.ALLOWED_ORIGINS;
   if (envOrigins) {
-    return envOrigins.split(',').map(s => s.trim()).filter(Boolean);
+    // Phase 5.3.54 — MERGE env var with DEFAULT_ORIGINS instead of overriding.
+    // Previously this branch returned ONLY the env var list, completely
+    // shadowing DEFAULT_ORIGINS. The production ALLOWED_ORIGINS env var is
+    // typically set to the Vercel production URL + maybe capacitor://localhost
+    // but does NOT include 'https://localhost' (the Capacitor WebView origin
+    // when capacitor.config.ts uses `androidScheme: 'https'`). This caused
+    // CORS preflight to omit Access-Control-Allow-Origin for the APK origin,
+    // blocking all /api/* POST requests from the APK (including /api/fetch-live
+    // which the Matches tab depends on) — manifesting as the runtime error
+    // "Les données en direct pour English League ne sont pas disponibles".
+    //
+    // Fix: Capacitor native app origins are LEGITIMATE origins that must
+    // always be allowed regardless of env var configuration. The env var
+    // remains the authority for ADDITIONAL origins (e.g., preview deployments,
+    // staging URLs) but cannot be used to DENY the native app origins.
+    const envList = envOrigins.split(',').map(s => s.trim()).filter(Boolean);
+    return [...new Set([...envList, ...DEFAULT_ORIGINS])];
   }
   return DEFAULT_ORIGINS;
 }
