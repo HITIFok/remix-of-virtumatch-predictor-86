@@ -33,8 +33,8 @@ describe("Phase AE: API Authorization Matrix", () => {
   // ─── 1. Matrix completeness ────────────────────────────
 
   describe("matrix completeness", () => {
-    it("documents all 11 API endpoints", () => {
-      expect(API_AUTH_MATRIX.length).toBe(11);
+    it("documents all 12 API endpoints", () => {
+      expect(API_AUTH_MATRIX.length).toBe(12);
     });
 
     it("every entry has required fields", () => {
@@ -207,11 +207,11 @@ describe("Phase AE: API Authorization Matrix", () => {
       expect(userBearer.length).toBeGreaterThanOrEqual(4);
     });
 
-    it("Device HMAC is used in 4 endpoints", () => {
+    it("Device HMAC is used in 5 endpoints", () => {
       const deviceHmac = API_AUTH_MATRIX.filter(
         (e) => e.authTypes.includes(AUTH_TYPES.DEVICE_HMAC)
       );
-      expect(deviceHmac.length).toBe(4);
+      expect(deviceHmac.length).toBe(5);
     });
 
     it("Admin Bearer is used in 2 endpoints", () => {

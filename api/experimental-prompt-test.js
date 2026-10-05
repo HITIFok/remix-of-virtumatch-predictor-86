@@ -27,6 +27,8 @@
 
 import { setCorsHeaders } from './_lib/cors.js';
 import { requireAuth } from './_lib/auth.js';
+import { createRateLimiter } from './_lib/ratelimit.js';
+import { getClientIp } from './_lib/request.js';
 import {
   buildUserPromptFromMatches,
   buildAIContext,
@@ -137,10 +139,19 @@ function computeAIResponseHash(content) {
 // HANDLER
 // ════════════════════════════════════════════════════════════════════════════
 
+const experimentalLimiter = createRateLimiter('experimental-prompt-test', { max: 5, windowMs: 60 * 1000 });
+
 export default async function handler(req, res) {
-  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, x-experimental-token');
+  setCorsHeaders(req, res, 'POST, OPTIONS', 'Content-Type, Authorization, x-device-id');
   if (req.method === 'OPTIONS') return res.status(204).end('');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── Rate limiting: 5 req/60s per IP (stricter than production analyze-match) ──
+  const clientIp = getClientIp(req);
+  const rateLimit = experimentalLimiter.check(clientIp);
+  if (!rateLimit.allowed) {
+    return res.status(429).json({ error: 'Too many requests', retryAfter: rateLimit.retryAfter });
+  }
 
   // ── AUTH: use existing requireAuth (HMAC fallback active during migration) ──
   const deviceId = await requireAuth(req);

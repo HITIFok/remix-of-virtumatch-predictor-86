@@ -161,6 +161,19 @@ export const API_AUTH_MATRIX = Object.freeze([
     riskLevel: 'LOW',
     notes: 'CRON key mandatory; timing-safe comparison; 202 fire-and-forget; no CORS (cron-only); data-cleanup action via x-cron-action header (GDPR retention cron)',
   },
+  {
+    endpoint: '/api/experimental-prompt-test',
+    methods: ['POST'],
+    authRequired: true,
+    authTypes: [AUTH_TYPES.DEVICE_HMAC],
+    authFallback: 'Device HMAC fallback accepted during migration (HMAC_ONLY=false); x-device-id header required',
+    rateLimited: true,
+    rateLimit: '5 req/60s per IP (stricter than production analyze-match)',
+    corsEnabled: true,
+    isPublic: false,
+    riskLevel: 'MEDIUM',
+    notes: 'EXPERIMENTAL — Phase 5.3.58.3: calls Groq server-side with v7.0 or v8.0 SYSTEM_PROMPT; max 1 match per call; no Neon writes; no client-supplied Groq key/prompt/model; TEMPORARY — should be removed after experiment is complete',
+  },
 
 
 
