@@ -218,6 +218,9 @@ export default async function handler(req, res) {
     const responseTimeMs = Date.now() - requestStart;
 
     if (!groqResponse.ok) {
+      // Phase 5.3.58.5 — capture Retry-After header from Groq 429 response
+      // so the experimental runner can respect the rate limit window.
+      const retryAfter = groqResponse.headers.get('retry-after');
       return res.status(200).json({
         promptVersion,
         contextHash, inputHash, promptHash,
@@ -227,6 +230,7 @@ export default async function handler(req, res) {
         model: GROQ_MODEL,
         tokens: 0,
         responseTimeMs,
+        retryAfter: retryAfter || null,
         error: `Groq HTTP ${groqResponse.status}`,
       });
     }
